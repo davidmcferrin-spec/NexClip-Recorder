@@ -1,0 +1,9 @@
+[Unit]
+Description=NexCLIP Recorder NexClip schedule poll
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/nexrec/nexrec.env
+ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-nexclip.py --env /etc/nexrec/nexrec.env
+User=www-data
+Group=www-data

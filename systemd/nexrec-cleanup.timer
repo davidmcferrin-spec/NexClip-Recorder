@@ -1,0 +1,11 @@
+[Unit]
+Description=NexCLIP Recorder retention cleanup twice daily
+
+[Timer]
+OnCalendar=*-*-* 06:00:00
+OnCalendar=*-*-* 18:00:00
+Persistent=true
+AccuracySec=5m
+
+[Install]
+WantedBy=timers.target

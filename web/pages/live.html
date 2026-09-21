@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Live</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a class="active" href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="bar">
+    <span class="meta">Layout</span>
+    <div class="seg" id="layout-seg">
+      <button type="button" data-n="1">1</button>
+      <button type="button" data-n="2">2</button>
+      <button type="button" data-n="3">3</button>
+      <button type="button" data-n="4" class="active">4</button>
+      <button type="button" data-n="6">6</button>
+    </div>
+    <span class="meta" id="clock">—</span>
+    <span class="meta">Time-locked live preview (WHEP proxy). Placeholder if MediaMTX is down.</span>
+  </div>
+  <div class="grid n4" id="grid"></div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+(function () {
+  var n = 4;
+  var inputs = [];
+  NexRecAuth.requirePage().then(load);
+
+  function load() {
+    return NexRecAuth.recApi("inputs_list").then(function (data) {
+      inputs = data.inputs || [];
+      render();
+    });
+  }
+
+  function render() {
+    var grid = document.getElementById("grid");
+    grid.className = "grid n" + n;
+    grid.innerHTML = "";
+    var slots = inputs.slice(0, n);
+    while (slots.length < n) slots.push(null);
+    slots.forEach(function (inp, i) {
+      var pane = document.createElement("div");
+      pane.className = "pane";
+      var tag = document.createElement("div");
+      tag.className = "tag";
+      tag.textContent = inp ? inp.name : ("empty " + (i + 1));
+      var clock = document.createElement("div");
+      clock.className = "clock";
+      clock.textContent = "—";
+      var video = document.createElement("video");
+      video.autoplay = true; video.muted = true; video.playsInline = true;
+      var ph = document.createElement("div");
+      ph.className = "ph";
+      ph.innerHTML = inp
+        ? '<span class="rec-dot"></span><span>' + (inp.preview_path || "in0") + ' WHEP</span><span>proxy preview</span>'
+        : "<span>no input</span>";
+      pane.appendChild(video);
+      pane.appendChild(ph);
+      pane.appendChild(tag);
+      pane.appendChild(clock);
+      grid.appendChild(pane);
+      if (inp && inp.preview_path) {
+        NexRecAuth.whepConnect(video, inp.preview_path).then(function () {
+          if (video.srcObject) ph.style.display = "none";
+        });
+      }
+      setInterval(function () {
+        clock.textContent = new Date().toISOString().substr(11, 8) + "Z";
+      }, 250);
+    });
+  }
+
+  document.getElementById("layout-seg").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-n]");
+    if (!btn) return;
+    n = parseInt(btn.getAttribute("data-n"), 10);
+    document.querySelectorAll("#layout-seg button").forEach(function (b) {
+      b.classList.toggle("active", b === btn);
+    });
+    render();
+  });
+  setInterval(function () {
+    document.getElementById("clock").textContent = new Date().toISOString();
+  }, 500);
+})();
+</script>
+</body>
+</html>

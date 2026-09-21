@@ -1,0 +1,10 @@
+{
+  "service_id": "nexclip-recorder",
+  "display_name": "NexCLIP Recorder",
+  "base_path": "/nexclip-recorder",
+  "description": "Multi-input studio recorder. WAN-only resource; identity via NexAPP. Multiple instance_id values are supported.",
+  "version": "0.1.0",
+  "manifest_version": "1",
+  "icon": "icon.svg",
+  "widgets": []
+}

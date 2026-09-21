@@ -1,0 +1,50 @@
+###############################################################################
+# MediaMTX — NexCLIP Recorder preview (cousin of NexVUE edge config).
+# Ingest:  FFmpeg preview publish RTSP 127.0.0.1:8554  (in0..in9)
+# Egress:  browsers WHEP https://<host>:8889/<path>/whep
+#
+# v0 ships with JWT auth off so a local demo can preview. Production should
+# copy NexVUE's JWKS + TLS patches (see ARCHITECTURE.md).
+###############################################################################
+
+logLevel: info
+logDestinations: [stdout]
+
+api: yes
+apiAddress: 127.0.0.1:9997
+apiEncryption: no
+
+hls: no
+rtmp: no
+srt: no
+webrtcICEServers2: []
+
+rtsp: yes
+rtspTransports: [tcp]
+rtspAddress: 127.0.0.1:8554
+
+webrtc: yes
+webrtcAddress: :8889
+webrtcEncryption: no
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: :8189
+webrtcIPsFromInterfaces: yes
+webrtcAdditionalHosts: []
+
+authMethod: internal
+authInternalUsers:
+  - user: any
+    pass:
+    permissions:
+      - action: publish
+        path:
+      - action: read
+        path:
+      - action: playback
+        path:
+
+pathDefaults:
+  source: publisher
+
+paths:
+  ~^in[0-9]$:
