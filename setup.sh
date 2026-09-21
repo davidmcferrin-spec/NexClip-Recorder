@@ -72,7 +72,7 @@ if [[ "$ROOT" != "/opt/NexClip-Recorder" ]]; then
 fi
 
 systemctl daemon-reload
-systemctl enable --now nexrec-export.service nexrec-cleanup.timer || warn "enable units failed"
+systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer || warn "enable units failed"
 
 export NEXREC_ENV_FILE="$ETC/nexrec.env"
 export NEXREC_DATA_DIR="$VAR"

@@ -53,6 +53,23 @@
     <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
     <span class="meta" id="tlabel" style="font-family:var(--nx-mono)">—</span>
   </div>
+  <div class="panel" id="lkfs-panel">
+    <h1>CALM Act · LKFS</h1>
+    <p class="meta">Export editor only. ITU-R BS.1770 / ATSC A/85 target <strong>−24 LKFS</strong>. FFmpeg <code>ebur128</code> on the selected I/O (not live multiviewer).</p>
+    <div class="bar">
+      <button type="button" id="measure-lkfs">Measure selected range</button>
+      <span class="meta" id="lkfs-msg">Mark I/O, then measure. Enqueues sidecar job — PHP does not shell FFmpeg.</span>
+    </div>
+    <div class="lkfs-wrap" id="lkfs-wrap">
+      <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-label="LKFS chart">
+        <line x1="0" y1="75" x2="1000" y2="75" stroke="#f5a524" stroke-dasharray="6 4" stroke-width="1"/>
+        <text x="8" y="20" fill="#9aa8b5" font-size="12">−10</text>
+        <text x="8" y="79" fill="#f5a524" font-size="12">−24 LKFS</text>
+        <text x="8" y="142" fill="#9aa8b5" font-size="12">−40</text>
+        <polyline id="lkfs-line" fill="none" stroke="#3ecf8e" stroke-width="2" points=""/>
+      </svg>
+    </div>
+  </div>
   <div class="panel">
     <h1>Jobs</h1>
     <table><thead><tr><th>ID</th><th>Window</th><th>Status</th><th></th></tr></thead>
@@ -199,6 +216,32 @@
       return NexRecAuth.recApi("exports_list");
     }).then(function (d) { paintJobs(d.exports || []); })
       .catch(function (e) { msg.style.color = "var(--bad)"; msg.textContent = e.message; });
+  };
+  document.getElementById("measure-lkfs").onclick = function () {
+    var msg = document.getElementById("lkfs-msg");
+    if (markIn == null || markOut == null || markOut <= markIn) {
+      msg.textContent = "mark I before O";
+      return;
+    }
+    var visible = inputs.slice(0, n).filter(Boolean);
+    var iid = visible[0] && visible[0].id;
+    if (!iid) { msg.textContent = "no input"; return; }
+    var tin = iso(markIn), tout = iso(markOut);
+    NexRecAuth.recApi("loudness_enqueue", { input_id: iid, t_in: tin, t_out: tout }).then(function (d) {
+      msg.textContent = "queued " + d.job_id + " — python3 worker/nexrec-analyze.py --once";
+      return NexRecAuth.recApi("loudness_chart", { input_id: iid, t_in: tin, t_out: tout });
+    }).then(function (d) {
+      var pts = (d.samples || []).map(function (s, i, arr) {
+        var x = arr.length > 1 ? (i / (arr.length - 1)) * 1000 : 0;
+        var y = 75 - ((Number(s.lkfs) + 24) / 16) * 50;
+        if (y < 4) y = 4; if (y > 146) y = 146;
+        return x.toFixed(1) + "," + y.toFixed(1);
+      });
+      document.getElementById("lkfs-line").setAttribute("points", pts.join(" "));
+      if (!(d.samples || []).length) {
+        msg.textContent = (msg.textContent || "") + " · no samples yet (run analyze worker)";
+      }
+    }).catch(function (e) { msg.textContent = e.message; });
   };
 })();
 </script>

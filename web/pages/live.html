@@ -32,21 +32,82 @@
       <button type="button" data-n="6">6</button>
     </div>
     <span class="meta" id="clock">—</span>
-    <span class="meta">Time-locked live preview (WHEP proxy). Placeholder if MediaMTX is down.</span>
+    <span class="meta">Time-locked live preview (WHEP proxy). Analyzers from preview/proxy decode, not the full-res record path.</span>
   </div>
   <div class="grid n4" id="grid"></div>
+  <div class="analyzers" id="analyzers">
+    <div class="analyzer">
+      <h2>Waveform (WFM)</h2>
+      <p class="hint">IRE graticule — live decode NEXT</p>
+      <canvas id="wfm" width="320" height="84"></canvas>
+    </div>
+    <div class="analyzer">
+      <h2>Vectorscope</h2>
+      <p class="hint">UV / chroma — proxy path</p>
+      <canvas id="vec" width="320" height="84"></canvas>
+    </div>
+    <div class="analyzer">
+      <h2>VU meters</h2>
+      <p class="hint">Stereo from AAC proxy today</p>
+      <div class="vu"><div class="ch"><span></span></div><div class="ch"><span></span></div></div>
+    </div>
+    <div class="analyzer">
+      <h2>RTA · 64-channel spectrum</h2>
+      <p class="hint">64-ch needs SDI/AES, not stereo proxy. Idle placeholder.</p>
+      <div class="rta-bars" id="rta"></div>
+    </div>
+  </div>
 </main>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
   var n = 4;
   var inputs = [];
+  var selected = 0;
   NexRecAuth.requirePage().then(load);
+
+  function paintAnalyzers() {
+    var rta = document.getElementById("rta");
+    if (rta && !rta.childElementCount) {
+      for (var i = 0; i < 64; i++) {
+        var bar = document.createElement("i");
+        bar.style.height = (8 + (i % 7) * 4) + "%";
+        rta.appendChild(bar);
+      }
+    }
+    function line(id, fn) {
+      var c = document.getElementById(id);
+      if (!c || !c.getContext) return;
+      var ctx = c.getContext("2d");
+      var w = c.width, h = c.height;
+      ctx.fillStyle = "#05080c"; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(62,207,142,0.25)"; ctx.lineWidth = 1;
+      for (var y = 0; y < h; y += 14) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
+      ctx.strokeStyle = "#3ecf8e"; ctx.globalAlpha = 0.55; ctx.beginPath();
+      for (var x = 0; x < w; x++) {
+        var v = fn(x / w);
+        var yy = h * 0.5 - v * (h * 0.35);
+        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
+      }
+      ctx.stroke(); ctx.globalAlpha = 1;
+    }
+    line("wfm", function (t) { return Math.sin(t * 12) * 0.15; });
+    var vc = document.getElementById("vec");
+    if (vc && vc.getContext) {
+      var ctx = vc.getContext("2d");
+      var w = vc.width, h = vc.height;
+      ctx.fillStyle = "#05080c"; ctx.fillRect(0, 0, w, h);
+      ctx.strokeStyle = "rgba(62,207,142,0.35)";
+      ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(w,h)*0.38, 0, Math.PI*2); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(w/2, 8); ctx.lineTo(w/2, h-8); ctx.moveTo(8, h/2); ctx.lineTo(w-8, h/2); ctx.stroke();
+    }
+  }
 
   function load() {
     return NexRecAuth.recApi("inputs_list").then(function (data) {
       inputs = data.inputs || [];
       render();
+      paintAnalyzers();
     });
   }
 
@@ -58,10 +119,12 @@
     while (slots.length < n) slots.push(null);
     slots.forEach(function (inp, i) {
       var pane = document.createElement("div");
-      pane.className = "pane";
+      pane.className = "pane" + (i === selected ? " selected" : "");
+      pane.setAttribute("data-slot", String(i));
       var tag = document.createElement("div");
       tag.className = "tag";
       tag.textContent = inp ? inp.name : ("empty " + (i + 1));
+      if (inp && inp.feat_monitors) tag.textContent += " · mon";
       var clock = document.createElement("div");
       clock.className = "clock";
       clock.textContent = "—";
@@ -76,6 +139,12 @@
       pane.appendChild(ph);
       pane.appendChild(tag);
       pane.appendChild(clock);
+      pane.addEventListener("click", function () {
+        selected = i;
+        document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
+          p.classList.toggle("selected", idx === selected);
+        });
+      });
       grid.appendChild(pane);
       if (inp && inp.preview_path) {
         NexRecAuth.whepConnect(video, inp.preview_path).then(function () {

@@ -42,6 +42,7 @@ Please re-open this PR against live NexAPP / NexClip trees if LDAP bind details,
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip schedule **API contract + poll/webhook scaffold**
 - `setup.sh`, Apache conf, systemd units, MediaMTX example config
+- Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen stub, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
 - `make test` and `make demo`
 
 ### Next (called out, not blocking)
@@ -52,6 +53,7 @@ Please re-open this PR against live NexAPP / NexClip trees if LDAP bind details,
 - NexAPP Alias `/nexclip-recorder` + WAN ticket round-trip verified on a hub box
 - Proxy rendition written alongside native (export “proxy” currently transcodes on demand)
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
+- DeckLink-side analyzers, Nielsen SDK, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
 
 ## Demo path (no root, no DeckLink)
 
@@ -92,7 +94,7 @@ sudo systemctl enable --now nexrec-record@demo nexrec-preview@demo
 sudo systemctl enable --now nexrec-cleanup.timer nexrec-export.service
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and NexClip hooks. Host sizing is **Hardware recommendations** (this README).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and NexClip hooks. Host sizing is **Hardware recommendations** (this README). Per-input intelligence flags: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Hardware recommendations
 
@@ -144,6 +146,10 @@ If media lives on a NAS: still keep **10GbE on the recorder box**. Size the NAS 
 ### DeckLink
 
 Need PCIe slots for **Duo / Quad 2**. Install Blackmagic drivers on 24.04; **verify against the current Blackmagic Linux support matrix** before buying a card/box pair.
+
+## Per-input intelligence
+
+Selectable sidecar features (SCTE, freeze/black/bars, captions, optional ASR, Nielsen stub, live WFM/vector/VU/RTA, export LKFS) are documented in **[docs/FEATURES.md](docs/FEATURES.md)**. They do not change the recorded MP4.
 
 ## License
 
