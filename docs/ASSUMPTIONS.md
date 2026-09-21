@@ -1,67 +1,110 @@
-# Assumptions to verify against NexAPP / NexClip / NexVUE
+# Assumptions — corrected from local NexAPP / NexClip trees
 
-This v0 was built with **NexVUE public** as the only sibling source tree.
-`github.com/davidmcferrin-spec/NexAPP` and `.../NexClip` returned 404 from
-this environment (including authenticated git). Please walk these against
-the live repos and correct the recorder — do not treat this list as final
-product law.
+GitHub 404 for private siblings is **expected**. This file reflects the
+owner brief and attached helpers from local trees (2026-09-21). Sources:
+`docs/references/`. Do not re-fetch those repos.
 
 ## Stack
 
-| Assumption | Basis | If wrong |
+| App | Stack | Auth |
 | --- | --- | --- |
-| PHP + Apache + vanilla JS, no Node/Composer/Docker/pip | NexVUE `CLAUDE.md` conventions | Follow NexAPP/NexClip if they diverged |
-| SQLite WAL, not Postgres | NexVUE auth.db / metrics.db / portal.db | Add Postgres DSN if NexClip MAM is already PG; keep SQLite for local demo |
-| systemd timers instead of crontab | NexVUE heartbeat/tls-renew timers | Add `/etc/cron.d/nexrec` if that is the house style |
-| Timezone `America/New_York` + NTP | NexVUE `setup.sh` | Honor station TZ |
+| **NexAPP** 0.10.2 | PHP 8.2+ / Apache / **PostgreSQL** / Ubuntu 24.04+ | Local + **Entra SAML** (not LDAP). Cookie `NexAPP_AUTH` RS256 JWT |
+| **NexClip** 0.1.0 | Python FastAPI + PostgreSQL + Apache vhost | NexAPP redirect SSO + **local passwords**. **LDAP removed** (ADR 0025/0029) |
+| **NexCLIP Recorder** v0 | PHP / Apache / **SQLite WAL** / Python stdlib workers | Local bcrypt + optional local LDAP + NexAPP |
 
-## Auth / NexAPP
+**SQLite on the recorder is intentional.** NexClip/NexAPP use Postgres on
+the hub. Do not require hub Postgres on this box. Theme tokens follow
+NexAPP (`--nx-*`, ADR 0028) with layout remaining ours.
 
-Copied from `NexVUE/web-portal/nexvue-portal-nexapp.php`:
+Timezone remains `America/New_York` + NTP (NexVUE / NexClip pathing).
 
-- Cookie name `NexAPP_AUTH`
-- JWT `alg=RS256`, `iss` match, `exp` required
-- Same-VM `\NexApp\Auth\AccessService()->check($token, $service_id)`
-- Fallback `GET /api/access.php?service_id=…` with Bearer token
-- Login/logout URLs `login.php` / `logout.php`
-- Catalog roles collapse to `admin` vs `user` on the hub; we map hub admin → recorder `admin`, else `operator` (not viewer) so producers can export
+## Auth / NexAPP (real paths)
 
-**Unverified (please confirm in NexAPP):**
+Same-host Alias (lab only):
 
-- WAN-only **ticket** endpoint path (`NEXAPP_TICKET_URL`, default `/api/ticket.php`) and query names (`return`, `nexapp_ticket`, `instance_id`)
-- Whether AccessService already has an `instance_id` / device dimension for multi-host apps
-- LDAP bind/search attributes and group → role mapping (implemented as generic uid/mail/cn)
-- Exact WAN-only “resource” registration (NexAPP Alias vs ticket) and any CSRF/ticket TTL
+1. Verify JWT **RS256** with hub public key (`NEXAPP_PUBLIC_KEY_PATH`,
+   default `/var/www/nexapp/keys/jwt_public.pem`). **Missing key = hard fail.**
+2. Live grant: `\NexApp\Auth\AccessService()->check($token, $service_id)`
+   or `GET /api/access.php?service_id=…` (cookie or Bearer).
+3. JWT `apps` is a **stale snapshot** — always re-check grants.
+4. Hub roles collapse to `user` | `admin` per `service_id`. Recorder maps
+   `admin` → `admin`, `user` → `operator`.
 
-NexVUE Entra is **at NexAPP**, not an OIDC client on the edge. Recorder follows that: no Entra SDK here.
+WAN (primary for recorders — NexAPP **never** connects in; cookie is host-only):
 
-## NexClip studio recorder schedule
+1. Browser → `{NEXAPP_ISSUER}/launch.php?service_id=<id>&next=/…`
+2. One-time `ticket` on the landing URL
+3. Recorder `POST {NEXAPP_ISSUER}/api/launch/redeem.php` with
+   `X-NexApp-Launch-Secret` + `{ticket, service_id}`
+4. Redeem returns `sub, email, name, role, optional next, theme`
 
-See `NEXCLIP-HOOKS.md`. Field names (`input_id`, `start_at`, `end_at`, callback
-path) are **invented from the product brief**, not from NexClip source. Swap
-the JSON to match the MAM when the repo is available. The important split is
-fixed: **this box records continuously**; NexClip schedule creates **exports**.
+Helpers copied under `docs/references/nexapp-*.php`.
 
-## NexVUE / DeckLink / WebRTC
+### One `service_id` per host (NexAPP convention)
 
-- WHEP port **8889**, media **8189**, RTSP loopback **8554**, MediaMTX API loopback **9997** — copied from NexVUE `mediamtx.yml`
-- Preview is proxy quality; NexVUE’s HI/LO ladder is **not** cloned
-- DeckLink exclusive-open → preview must tee in-process (documented; IP preview is a second FFmpeg in v0)
-- NexVUE encodes with GStreamer/QSV; recorder uses **FFmpeg libx264** so files are edit-friendly. Hardware encode (`h264_qsv`) can be a per-input later option, not v0.
+This is a **general NexAPP multi-host rule**, not Recorder-only. Each WAN
+appliance that users launch from the portal — a recorder **or** a
+standalone NexClip host — gets its **own unique `service_id`**. Access
+grants, portal icons, launch URLs, and `config.php`
+`launch.redeem_secrets.<service_id>` stay 1:1 with the machine.
+
+Do **not** share one `service_id` across machines. Do **not** invent an
+`instance_id` grant gate that bypasses AccessService/redeem.
+`NEXREC_INSTANCE_ID` is hostname/display (and NexClip register
+`hostname`) only.
+
+Register **each** host in NexAPP Admin:
+
+1. Catalog row: unique `service_id` (example `nexclip-recorder-ctl1`),
+   display name, HTTPS **launch URL** of that box.
+2. `config.php` → `launch.redeem_secrets.<service_id>` = the secret that
+   box stores as `NEXAPP_LAUNCH_SECRET`.
+3. Access grants: grant users/groups that `service_id` (`user` or
+   `admin`).
+4. Drop the sibling `nexapp-manifest.json` (`service_id`, `base_path`,
+   icon) so the portal tile matches.
+
+A second recorder or a second standalone NexClip repeats the same four
+steps under a different `service_id`. This repo does not change NexClip
+code; it only documents the shared convention.
+
+## LDAP
+
+NexAPP hub is local + Entra SAML, **not LDAP**. NexClip removed LDAP.
+Recorder keeps **optional local LDAP bind** (`NEXREC_LDAP_ENABLED=1`) for
+standalone/air-gapped boxes only. Production Nex\* path is **local users +
+NexAPP (SAML at the hub)** — not hub directory sync.
+
+## NexClip recorder node (Mode 2 only)
+
+This product **is** Mode 2 `continuous_24x7` (ADR 0020). Calendar does
+**not** start/stop FFmpeg. See `docs/NEXCLIP-HOOKS.md`.
+
+**Mode 1 `scheduled_with_safety_net` is out of scope.** Do not poll
+`GET .../schedule`, do not start/stop capture from the calendar, do not
+implement hourly safety_net. That is a different, older node.
+
+Node auth is **enrollment secret + per-node bearer**, not NexAPP SSO.
+Humans use NexAPP/local on the recorder UI.
+
+`recorder_type` on register is only `decklink` | `srt` | `ndi`. RTSP/UDP/
+TCP/RTP/testsrc map to `srt` until NexClip extends the enum.
+
+Slots on NexClip are **4–8**. This host may configure up to 10 ingest
+inputs; only inputs with `nexclip_slot` 1–8 enroll. Hub Postgres stays on
+the NexClip box.
+
+## NexVUE leftovers (preview only)
+
+WHEP 8889 / RTSP 8554 / MediaMTX still match NexVUE’s live-preview path.
+Recording is FFmpeg, not GStreamer.
 
 ## Intelligence / analyzers
 
-| Assumption | Basis | If wrong |
-| --- | --- | --- |
-| SCTE-35 in recorded **MP4** is usually absent | FFmpeg MP4 remux drops MPEG-TS data PIDs | Keep a parallel TS tap or copy SCTE into `emsg`/ID3 |
-| SCTE-104 is SDI VANC, not in IP files | SMPTE 2010 / DeckLink ancillary | Blackmagic SDK VANC reader (NexVUE `decklinksrc` pattern) |
-| SCTE-224 is ESAM/HTTP | SCTE 224 standard | Wire to the station’s ESAM URL; `scte224_ingest` is the stub |
-| No FFmpeg Nielsen decoder | Nielsen Audio Decoder SDK is licensed; Linux notes cite CentOS + license file for CBET L1. `nielsen_inspector` requires that SDK | Station provides `NEXREC_NIELSEN_CMD` |
-| No FFmpeg SMPTE bars filter | `blackdetect`/`freezedetect` exist; bars do not | Histogram/template match; duration threshold already stored |
-| 64-ch RTA cannot come from AAC proxy | Preview is stereo 96k | DeckLink embed / AES67 capture for meters |
-| CALM chart uses ebur128 LUFS as LKFS | ATSC A/85 / BS.1770; LKFS ≡ LUFS for this measurement | If legal wants gated dialog-gated loudness, switch to a BS.1770-4 mode later |
-| whisper.cpp / faster-whisper are optional binaries | No pip in Nex* | Operators install the engine; GPU recommended |
+Sidecar flags in `docs/FEATURES.md`. Not blocking this integration pass.
 
-## UI
+## Open (owner)
 
-Standalone pages use NexAPP `--nx-*` tokens (`nexapp-tokens.css` fallback copied from NexVUE portal) plus a NexVUE-style top nav. If NexClip’s MAM chrome is different, restyle after we can see it — layout (Live / Export / Inputs / Settings) should stay.
+- Extend NexClip `recorder_type` for RTSP/UDP/RTP vs keep `srt` mapping.
+- MAM copy of `delivered_path` into `relative_dir`/`filename` on a shared
+  mount (v0 reports the local export path).

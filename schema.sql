@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS inputs (
   thresh_black_s REAL NOT NULL DEFAULT 2.0,
   thresh_bars_s REAL NOT NULL DEFAULT 5.0,
   transcribe_engine TEXT,
+  nexclip_slot INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -93,7 +94,8 @@ CREATE TABLE IF NOT EXISTS exports (
   created_by TEXT,
   created_at TEXT NOT NULL,
   expires_at TEXT,
-  nexclip_schedule_id TEXT
+  nexclip_schedule_id TEXT,
+  nexclip_capture_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status);

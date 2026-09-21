@@ -22,6 +22,7 @@ INPUT_FEATURE_COLUMNS: list[tuple[str, str]] = [
     ("thresh_black_s", "REAL NOT NULL DEFAULT 2.0"),
     ("thresh_bars_s", "REAL NOT NULL DEFAULT 5.0"),
     ("transcribe_engine", "TEXT"),
+    ("nexclip_slot", "INTEGER"),
 ]
 
 INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
@@ -35,6 +36,7 @@ INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
     "thresh_black_s": 2.0,
     "thresh_bars_s": 5.0,
     "transcribe_engine": "",
+    "nexclip_slot": None,
 }
 
 FTS_DDL = """
@@ -68,6 +70,9 @@ def ensure_input_feature_columns(conn: sqlite3.Connection) -> None:
     for name, decl in INPUT_FEATURE_COLUMNS:
         if name not in have:
             conn.execute(f"ALTER TABLE inputs ADD COLUMN {name} {decl}")
+    exp_cols = table_columns(conn, "exports")
+    if "nexclip_capture_id" not in exp_cols:
+        conn.execute("ALTER TABLE exports ADD COLUMN nexclip_capture_id TEXT")
 
 
 def ensure_fts(conn: sqlite3.Connection) -> bool:
@@ -127,7 +132,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
           preview_enabled,
           feat_scte, feat_av_anomaly, feat_captions, feat_transcribe,
           feat_nielsen, feat_monitors, thresh_freeze_s, thresh_black_s,
-          thresh_bars_s, transcribe_engine,
+          thresh_bars_s, transcribe_engine, nexclip_slot,
           created_at, updated_at
         ) VALUES (
           :id, :name, :source_type, :url, :decklink_device, :decklink_format,
@@ -136,7 +141,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
           :preview_enabled,
           :feat_scte, :feat_av_anomaly, :feat_captions, :feat_transcribe,
           :feat_nielsen, :feat_monitors, :thresh_freeze_s, :thresh_black_s,
-          :thresh_bars_s, :transcribe_engine,
+          :thresh_bars_s, :transcribe_engine, :nexclip_slot,
           :created_at, :updated_at
         )
         ON CONFLICT(id) DO UPDATE SET
@@ -164,6 +169,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
           thresh_black_s=excluded.thresh_black_s,
           thresh_bars_s=excluded.thresh_bars_s,
           transcribe_engine=excluded.transcribe_engine,
+          nexclip_slot=excluded.nexclip_slot,
           updated_at=excluded.updated_at
         """,
         rec,
@@ -225,17 +231,35 @@ def chunks_overlapping(
 
 
 def enqueue_export(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+    rec = dict(rec)
+    rec.setdefault("nexclip_schedule_id", None)
+    rec.setdefault("nexclip_capture_id", None)
     conn.execute(
         """
         INSERT INTO exports (
           id, status, input_ids, t_in, t_out, quality, scope, path, size_bytes,
-          protected, error, created_by, created_at, expires_at, nexclip_schedule_id
+          protected, error, created_by, created_at, expires_at, nexclip_schedule_id,
+          nexclip_capture_id
         ) VALUES (
           :id, :status, :input_ids, :t_in, :t_out, :quality, :scope, :path, :size_bytes,
-          :protected, :error, :created_by, :created_at, :expires_at, :nexclip_schedule_id
+          :protected, :error, :created_by, :created_at, :expires_at, :nexclip_schedule_id,
+          :nexclip_capture_id
         )
         """,
         rec,
+    )
+    conn.commit()
+
+
+def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:
+    row = fetchone(conn, "SELECT value FROM settings WHERE key=?", (key,))
+    return str(row["value"]) if row and row.get("value") is not None else default
+
+
+def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+    conn.execute(
+        "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+        (key, value),
     )
     conn.commit()
 

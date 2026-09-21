@@ -1,6 +1,7 @@
 <?php
 /**
- * Local + LDAP + NexAPP session auth for NexCLIP Recorder.
+ * Local bcrypt + optional recorder-local LDAP + NexAPP session auth.
+ * Production Nex* path is local users + NexAPP (SAML at the hub), not LDAP.
  * SQLite WAL. CLI-safe (no session start unless HTTP).
  */
 declare(strict_types=1);
@@ -64,6 +65,7 @@ function nexrec_ensure_input_feature_columns(): void {
         'thresh_black_s' => 'REAL NOT NULL DEFAULT 2.0',
         'thresh_bars_s' => 'REAL NOT NULL DEFAULT 5.0',
         'transcribe_engine' => 'TEXT',
+        'nexclip_slot' => 'INTEGER',
     ];
     $have = [];
     $res = nexrec_db()->query('PRAGMA table_info(inputs)');
@@ -74,6 +76,14 @@ function nexrec_ensure_input_feature_columns(): void {
         if (empty($have[$name])) {
             nexrec_db()->exec('ALTER TABLE inputs ADD COLUMN ' . $name . ' ' . $decl);
         }
+    }
+    $expHave = [];
+    $res = nexrec_db()->query('PRAGMA table_info(exports)');
+    while ($res !== false && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+        $expHave[(string) $row['name']] = true;
+    }
+    if (empty($expHave['nexclip_capture_id'])) {
+        nexrec_db()->exec('ALTER TABLE exports ADD COLUMN nexclip_capture_id TEXT');
     }
 }
 

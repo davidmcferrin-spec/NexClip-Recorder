@@ -1,8 +1,8 @@
 {
-  "service_id": "nexclip-recorder",
-  "display_name": "NexCLIP Recorder",
+  "service_id": "nexclip-recorder-ctl1",
+  "display_name": "NexCLIP Recorder (ctl1)",
   "base_path": "/nexclip-recorder",
-  "description": "Multi-input studio recorder. WAN-only resource; identity via NexAPP. Multiple instance_id values are supported.",
+  "description": "WAN-only studio recorder. Each host uses a unique NexAPP service_id (manifest, launch URL, redeem secret, Access grants). NexAPP never connects in.",
   "version": "0.1.0",
   "manifest_version": "1",
   "icon": "icon.svg",

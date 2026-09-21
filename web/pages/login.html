@@ -74,7 +74,15 @@
     history.replaceState(null, "", location.pathname + location.search);
   }
   if (ticket) {
-    NexRecAuth.api("nexapp_sso", { jwt: ticket }).then(function (data) {
+    NexRecAuth.api("nexapp_sso", { ticket: ticket }).then(function (data) {
+      if (data.theme && window.NexRecUI && NexRecUI.setTheme) {
+        var t = data.theme === "light" || data.theme === "dark" ? data.theme : null;
+        if (t) NexRecUI.setTheme(t);
+      }
+      var dest = data.next || next;
+      if (typeof dest === "string" && dest.charAt(0) === "/" && dest.indexOf("//") !== 0) {
+        next = dest;
+      }
       var u = data.user;
       if (u && u.must_change_password) showChange("Default password must be changed");
       else location.href = next;

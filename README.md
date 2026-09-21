@@ -4,35 +4,36 @@
 The GitHub repository is `NexClip-Recorder`. It can run:
 
 1. **Standalone** on its own machine (configure + use in the web UI)
-2. As a **NexAPP WAN-only resource** (own host; identity via NexAPP SSO, including **multiple recorder instances**)
-3. As a **recorder worker for NexClip** (studio recorder schedule → exports)
+2. As a **NexAPP WAN-only resource** (own host; identity via NexAPP SSO — **one unique `service_id` per host**)
+3. As a **NexClip Mode 2 worker** (always-on record; hub export-requests → local concat/trim)
 
-This is **v0.1.0**: a shippable scaffold with a working IP ingest → 5-minute (or demo 5-second) MP4 chunk → concat/trim export path, plus architecture for DeckLink, WebRTC preview, auth, retention, and NexClip hooks.
+This is **v0.1.0**: a shippable scaffold with a working IP ingest → 5-minute (or demo 5-second) MP4 chunk → concat/trim export path, plus architecture for DeckLink, WebRTC preview, auth, retention, and the Mode 2 NexClip contract.
 
 ## Stack (matched to siblings)
 
-NexAPP and NexClip were **not readable** from this environment (private / 404). The public sibling **[NexVUE](https://github.com/davidmcferrin-spec/NexVUE)** plus NexVUE’s NexAPP portal integration were used as the source of truth:
+Private NexAPP / NexClip GitHub 404 is **expected**. The owner’s local trees
+(2026-09-21) plus public **[NexVUE](https://github.com/davidmcferrin-spec/NexVUE)**
+are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contract:
+[`docs/ASSUMPTIONS.md`](docs/ASSUMPTIONS.md), [`docs/NEXCLIP-HOOKS.md`](docs/NEXCLIP-HOOKS.md).
 
 | Choice | Why |
 | --- | --- |
-| PHP 8 + Apache + vanilla JS | NexVUE edge + portal. No Node, no frontend framework, no Composer. |
-| **SQLite WAL** (not Postgres) | NexVUE auth, metrics, and portal all use SQLite. A single-host recorder does not need a separate DB server. Switch to Postgres later if NexClip’s MAM already runs one — see `docs/ASSUMPTIONS.md`. |
+| PHP 8 + Apache + vanilla JS | NexAPP / NexVUE edge. No Node, no frontend framework, no Composer. |
+| **SQLite WAL** (not Postgres) | Edge recorder. Hub NexClip/NexAPP keep Postgres. Do not require hub Postgres on this box. |
 | Python 3 **stdlib only** + FFmpeg | Workers. No pip. GNU C++ only if/when DeckLink SDK helpers are required (NexVUE pattern). |
 | systemd units + timers | NexVUE `nexvue-encode@N`, heartbeat timers. Twice-daily cleanup is a systemd timer (cron-equivalent). |
-| Dark UI, NexAPP `--nx-*` tokens | Portal uses IBM Plex + NexAPP tokens; edge uses monospace. Recorder UI follows the **NexAPP token set** with NexVUE-style top nav. |
+| Dark UI, NexAPP `--nx-*` tokens | Theme kit from NexAPP (ADR 0028); layout stays ours. |
 | MediaMTX WHEP for preview | Same WebRTC path as NexVUE. Recording itself is **FFmpeg**, not GStreamer. |
-
-Please re-open this PR against live NexAPP / NexClip trees if LDAP bind details, WAN ticket paths, or the studio recorder schedule JSON differ.
 
 ## What works in this PR vs next
 
 ### Works now (demo / standalone)
 
 - Local auth (bcrypt users, sessions, roles: admin / operator / viewer)
-- LDAP bind **implemented** (disabled until `NEXREC_LDAP_ENABLED=1`)
-- NexAPP SSO **stubs that run**: JWT RS256 verify, AccessService / `/api/access.php`, WAN ticket query, multi-instance id
+- Optional **local LDAP bind** (`NEXREC_LDAP_ENABLED=1`) — standalone/air-gap only. Production Nex\* is local users + NexAPP (SAML at the hub), not hub LDAP.
+- NexAPP SSO: same-host **RS256** + live `AccessService` / `GET /api/access.php`; WAN **`/launch.php` → POST `/api/launch/redeem.php`**. One `service_id` per host.
 - Config schema (`nexrec-example.env`, `inputs-example.env`)
-- Input CRUD in the UI (up to 10)
+- Input CRUD in the UI (up to 10; NexClip slots 1–8)
 - FFmpeg segment recorder for **RTSP / SRT / UDP / TCP / RTP / testsrc**
 - 5-minute (configurable) MP4 chunks, **wall-clock aligned**, NTP/system timecode metadata
 - Chunk index in SQLite
@@ -40,7 +41,7 @@ Please re-open this PR against live NexAPP / NexClip trees if LDAP bind details,
 - Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player wired, placeholder if MediaMTX is down)
 - Export editor: shared timeline, mark in/out, one-stream vs all-visible, full vs proxy
 - Retention cleanup worker + **twice-daily systemd timer**
-- NexClip schedule **API contract + poll/webhook scaffold**
+- NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
 - `setup.sh`, Apache conf, systemd units, MediaMTX example config
 - Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen stub, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
 - `make test` and `make demo`
@@ -49,11 +50,37 @@ Please re-open this PR against live NexAPP / NexClip trees if LDAP bind details,
 
 - Live **DeckLink Duo / Quad 2** ingest (FFmpeg decklink input is assembled; needs drivers + `--enable-decklink` on the box)
 - Production MediaMTX TLS / JWT / ICE the way NexVUE does on-station
-- Real NexClip schedule payload once that repo is available
-- NexAPP Alias `/nexclip-recorder` + WAN ticket round-trip verified on a hub box
+- Copy Mode 2 `delivered_path` into NexClip `relative_dir`/`filename` on a shared MAM volume
+- WAN redeem round-trip verified on a live hub box
 - Proxy rendition written alongside native (export “proxy” currently transcodes on demand)
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
 - DeckLink-side analyzers, Nielsen SDK, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
+
+## NexAPP: register each host
+
+NexAPP never connects into the recorder. Cookie `NexAPP_AUTH` is host-only.
+
+**Convention (all NexAPP WAN apps, including Recorder and standalone NexClip):**
+one unique `service_id` per machine.
+
+In NexAPP Admin, for **this** box:
+
+1. Catalog: `service_id` (example `nexclip-recorder-ctl1`), display name, HTTPS launch URL.
+2. `config.php` `launch.redeem_secrets.<service_id>` — same value as `NEXAPP_LAUNCH_SECRET` here.
+3. Access grants for that `service_id` (`user` | `admin`).
+4. Manifest: `web/nexapp-manifest.json` (`service_id`, `base_path`, icon).
+
+A second recorder — or a second standalone NexClip host — gets a **different**
+`service_id`. Do not share ids. Do not invent `instance_id` as a grant gate.
+
+Operators sign in at `{NEXAPP_ISSUER}/launch.php?service_id=<id>&next=/…`.
+The recorder redeems the ticket at `/api/launch/redeem.php`.
+
+## NexClip: Mode 2 only
+
+This box is `continuous_24x7`. See [`docs/NEXCLIP-HOOKS.md`](docs/NEXCLIP-HOOKS.md).
+Mode 1 `scheduled_with_safety_net` (calendar starts/stops capture) is **not**
+implemented.
 
 ## Demo path (no root, no DeckLink)
 
@@ -94,7 +121,7 @@ sudo systemctl enable --now nexrec-record@demo nexrec-preview@demo
 sudo systemctl enable --now nexrec-cleanup.timer nexrec-export.service
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and NexClip hooks. Host sizing is **Hardware recommendations** (this README). Per-input intelligence flags: [docs/FEATURES.md](docs/FEATURES.md).
+See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and the Mode 2 NexClip contract. Host sizing is **Hardware recommendations** (this README). Per-input intelligence flags: [docs/FEATURES.md](docs/FEATURES.md).
 
 ## Hardware recommendations
 

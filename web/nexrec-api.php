@@ -137,11 +137,11 @@ try {
                id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,
                video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,
                feat_scte,feat_av_anomaly,feat_captions,feat_transcribe,feat_nielsen,feat_monitors,
-               thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,
+               thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,nexclip_slot,
                created_at,updated_at)
              VALUES (
                :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:vb,:ab,:rd,:pp,:pe,
-               :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:c,:u)
+               :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:c,:u)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, source_type=excluded.source_type, url=excluded.url,
                decklink_device=excluded.decklink_device, decklink_format=excluded.decklink_format,
@@ -155,6 +155,7 @@ try {
                feat_nielsen=excluded.feat_nielsen, feat_monitors=excluded.feat_monitors,
                thresh_freeze_s=excluded.thresh_freeze_s, thresh_black_s=excluded.thresh_black_s,
                thresh_bars_s=excluded.thresh_bars_s, transcribe_engine=excluded.transcribe_engine,
+               nexclip_slot=excluded.nexclip_slot,
                updated_at=excluded.updated_at'
         );
         $st->bindValue(':id', $id, SQLITE3_TEXT);
@@ -182,6 +183,15 @@ try {
         $st->bindValue(':tb', nexrec_float_body($body, 'thresh_black_s', 2.0));
         $st->bindValue(':tbar', nexrec_float_body($body, 'thresh_bars_s', 5.0));
         $st->bindValue(':teng', (string) ($body['transcribe_engine'] ?? ''), SQLITE3_TEXT);
+        $slot = (int) ($body['nexclip_slot'] ?? 0);
+        if ($slot < 1 || $slot > 8) {
+            $slot = 0;
+        }
+        if ($slot === 0) {
+            $st->bindValue(':slot', null, SQLITE3_NULL);
+        } else {
+            $st->bindValue(':slot', $slot, SQLITE3_INTEGER);
+        }
         $st->bindValue(':c', $now, SQLITE3_TEXT);
         $st->bindValue(':u', $now, SQLITE3_TEXT);
         $st->execute();
@@ -327,7 +337,7 @@ try {
             'NEXREC_NATIVE_RETENTION_DAYS', 'NEXREC_EXPORT_RETENTION_DAYS',
             'NEXREC_BROADCAST_VIDEO_BITRATE', 'NEXREC_LDAP_ENABLED',
             'NEXREC_NEXAPP_ENABLED', 'NEXREC_NEXCLIP_ENABLED',
-            'NEXAPP_ISSUER', 'NEXCLIP_BASE_URL', 'NEXREC_PREVIEW_ENABLED',
+            'NEXAPP_ISSUER', 'NEXAPP_SERVICE_ID', 'NEXCLIP_BASE_URL', 'NEXREC_PREVIEW_ENABLED',
             'NEXREC_TRANSCRIBE_ENGINE',
         ];
         $out = [];

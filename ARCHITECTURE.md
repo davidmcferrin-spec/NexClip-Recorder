@@ -2,7 +2,10 @@
 
 Product name **NexCLIP Recorder**; repo `NexClip-Recorder`. This document is the
 contract for deployment modes, the FFmpeg pipeline, on-disk chunks, WebRTC
-preview, auth, retention, and NexClip hooks.
+preview, auth, retention, and the NexClip **Mode 2** export-request client.
+
+Private NexAPP / NexClip GitHub 404 is expected. Local-tree excerpts:
+`docs/references/`. Assumptions: `docs/ASSUMPTIONS.md`.
 
 **Host hardware** (Z4/Z6-class, 128 GB RAM, NVENC, 10GbE, ZFS RAIDZ2 media
 pool) is owner-decided — see README **Hardware recommendations**. Do not treat
@@ -30,32 +33,43 @@ Nielsen stub, live analyzers, export LKFS) is owner-required scope — see
            MediaMTX WHEP     │    optional outbound
               preview        ▼
                     ┌──────────────────┐
-                    │ NexAPP (SSO)     │  WAN-only resource / ticket
-                    │ NexClip (MAM)    │  studio recorder schedule
+                    │ NexAPP (SSO)     │  WAN launch.php → redeem ticket
+                    │ NexClip (MAM)    │  Mode 2 export-requests/next
                     └──────────────────┘
 ```
 
 | Mode | How it runs | Identity |
 | --- | --- | --- |
-| **Standalone** | Own host, own UI, local (and optional LDAP) accounts | `NEXREC_DEPLOY_MODE=standalone` |
-| **NexAPP WAN-only** | Still own host (not an Apache Alias unless you choose to). NexAPP is IdP. | JWT / `NexAPP_AUTH` cookie **or** ticket round-trip. `NEXREC_INSTANCE_ID` distinguishes multiple recorders. |
-| **NexClip worker** | Same host records continuously; NexClip schedule drives **export** windows (not necessarily start/stop of ingest). | Shared API key + outbound poll (edge-initiated, like NexVUE heartbeats). |
+| **Standalone** | Own host, own UI, local (and optional **local-only** LDAP) accounts | `NEXREC_DEPLOY_MODE=standalone` |
+| **NexAPP WAN-only** | Still own host (not an Apache Alias unless you choose to). NexAPP is IdP. | Unique `NEXAPP_SERVICE_ID` per host. Same-host: JWT + `access.php`. WAN: `launch.php` ticket redeem. |
+| **NexClip worker** | Same host records continuously (Mode 2). Hub export requests drive **exports**, never start/stop of ingest. | Enrollment secret + per-node bearer. |
 
 Modes compose: a box can be standalone for local ops, NexAPP-authenticated for
 the WAN, and a NexClip worker at the same time.
 
-### Multi-instance NexAPP
+### Multi-host NexAPP (one `service_id` per machine)
 
-Each recorder host **must** set a stable `NEXREC_INSTANCE_ID` (e.g.
-`dcwasof2nexrec01`). NexAPP access checks use:
+This is the general NexAPP WAN pattern (Recorder **and** standalone NexClip
+hosts). Each machine gets its own catalog row:
 
 ```
-GET {NEXAPP_ACCESS_URL}?service_id=nexclip-recorder&instance_id={NEXREC_INSTANCE_ID}
-Authorization: Bearer {token}
+NEXAPP_SERVICE_ID=nexclip-recorder-ctl1
+GET {NEXAPP_ACCESS_URL}?service_id=nexclip-recorder-ctl1
 ```
 
-If the grant is for a different instance, the UI returns 403 and lists
-`allowed_instances` when the hub provides them. Do not share one SQLite file
+WAN landing:
+
+```
+{NEXAPP_ISSUER}/launch.php?service_id=nexclip-recorder-ctl1&next=/live
+POST {NEXAPP_ISSUER}/api/launch/redeem.php
+  X-NexApp-Launch-Secret: {NEXAPP_LAUNCH_SECRET}
+  { "ticket": "…", "service_id": "nexclip-recorder-ctl1" }
+```
+
+Register each host in NexAPP Admin: unique `service_id`, HTTPS launch URL,
+`launch.redeem_secrets.<id>`, Access grants, manifest. Do **not** share a
+`service_id` across machines. Do **not** invent an `instance_id` grant gate.
+`NEXREC_INSTANCE_ID` is hostname/display only. Do not share one SQLite file
 across hosts.
 
 ## 2. Media engine: FFmpeg (not a custom muxer)
@@ -198,12 +212,11 @@ panes:
 | Method | When |
 | --- | --- |
 | Local bcrypt users | Always. Roles `admin`, `operator`, `viewer`. |
-| LDAP | `NEXREC_LDAP_ENABLED=1`. Search + user bind. |
-| NexAPP SSO | JWT RS256 with hub public key; live grant via `AccessService` on same VM **or** `GET /api/access.php`. WAN-only: redirect to NexAPP login with `return=`, accept `nexapp_ticket` or `#nexapp_sso=` (same hash hop NexVUE uses for portal SSO). |
+| LDAP | Optional **recorder-local** only (`NEXREC_LDAP_ENABLED=1`). NexAPP is local + Entra SAML; NexClip removed LDAP. Production Nex\* is not hub LDAP. |
+| NexAPP SSO | Same-host: JWT RS256 (missing PEM = hard fail) + live `AccessService` / `GET /api/access.php?service_id=…`. WAN (primary): `{issuer}/launch.php?service_id=…` then `POST /api/launch/redeem.php` with `X-NexApp-Launch-Secret`. One unique `service_id` per host. |
 
-NexAPP was private here. The implementation follows
-`web-portal/nexvue-portal-nexapp.php` in NexVUE (cookie `NexAPP_AUTH`,
-`service_id`, issuer, PEM). See `docs/ASSUMPTIONS.md`.
+Helpers: `docs/references/nexapp-access-client.php`,
+`docs/references/nexapp-launch-redeem.php`. See `docs/ASSUMPTIONS.md`.
 
 ## 8. Retention and free-space floor
 
@@ -220,16 +233,19 @@ NexAPP was private here. The implementation follows
 
 Protected exports and in-progress recordings are never deleted by step 4.
 
-## 9. NexClip studio recorder schedule
+## 9. NexClip Mode 2 (continuous_24x7)
 
-NexClip’s repo was not readable. The v0 **contract** (implemented as poll +
-webhook) is in `docs/NEXCLIP-HOOKS.md`. Idea: NexClip already schedules
-studio recorders; this box **already records** 24/7 in 5-minute chunks.
-When an event ends (or on webhook), the recorder enqueues an export for
-`[start_at, end_at]` on the mapped `input_id` and POSTs the file URL back.
+This box **is** the Mode 2 node ADR 0020 specified. Contract:
+`docs/NEXCLIP-HOOKS.md`. Calendar never starts or stops FFmpeg.
 
-Inbound webhook (API key) exists so NexClip can push; outbound poll exists
-so a DMZ recorder does not need an inbound hole (NexVUE heartbeat pattern).
+1. `POST /recorders/register` (`X-Enrollment-Secret`)
+2. `POST /recorders/{id}/checkin` — per-slot `buffer_earliest_at`
+3. `GET .../inputs/{slot}/export-requests/next` — 200 claim window or **204 idle**
+4. `POST .../export-requests/{id}/start` → enqueue local concat/trim
+5. `POST .../captures/{id}/complete` `{delivered_path}` or `fail`
+
+**Mode 1 is out of scope** (no `GET .../schedule`, no start/stop capture).
+NexClip never dials into this host; `nexrec-nexclip.timer` polls out.
 
 ## 10. Process model
 
@@ -240,7 +256,7 @@ so a DMZ recorder does not need an inbound hole (NexVUE heartbeat pattern).
 | `nexrec-preview@id` | FFmpeg proxy → MediaMTX (IP only) |
 | `nexrec-export.service` | Drain `exports` queue |
 | `nexrec-cleanup.timer` | Twice-daily retention |
-| `nexrec-nexclip.timer` | Optional schedule poll |
+| `nexrec-nexclip.timer` | Mode 2 register / check-in / export-request poll |
 | `nexrec-analyze.service` | Sidecar: chunk intelligence + CALM ebur128 jobs |
 | `mediamtx.service` | WHEP |
 

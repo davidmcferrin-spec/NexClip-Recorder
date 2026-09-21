@@ -46,6 +46,7 @@
     <div>
       <label>DeckLink device</label><input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
       <label>Preview path</label><input id="preview_path" placeholder="in0">
+      <label>NexClip slot (1–8, Mode 2)</label><input id="nexclip_slot" type="number" min="1" max="8" placeholder="none">
       <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
       <label><input type="checkbox" id="enabled" checked> Enabled</label>
       <label><input type="checkbox" id="live_transcode"> Live transcode to MP4</label>
@@ -89,7 +90,7 @@
   </div>
   <div class="panel">
     <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Retention</th><th>Intel</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Slot</th><th>Retention</th><th>Intel</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
@@ -108,7 +109,8 @@ function refresh() {
         return [r.feat_scte, r.feat_av_anomaly, r.feat_captions, r.feat_transcribe, r.feat_nielsen, r.feat_monitors][i];
       }).join(" ") || "—";
       tr.innerHTML = "<td>" + r.id + "</td><td>" + r.name + "</td><td>" + r.source_type +
-        "</td><td>" + (r.preview_path || "") + "</td><td>" + r.retention_days + "d</td><td>" + intel + "</td><td></td>";
+        "</td><td>" + (r.preview_path || "") + "</td><td>" + (r.nexclip_slot || "—") +
+        "</td><td>" + r.retention_days + "d</td><td>" + intel + "</td><td></td>";
       var btn = document.createElement("button");
       btn.textContent = "Load";
       btn.onclick = function () {
@@ -116,6 +118,7 @@ function refresh() {
         val("source_type").value = r.source_type; val("url").value = r.url || "";
         val("decklink_device").value = r.decklink_device || "";
         val("preview_path").value = r.preview_path || "";
+        val("nexclip_slot").value = r.nexclip_slot || "";
         val("retention_days").value = r.retention_days;
         val("enabled").checked = !!r.enabled;
         val("live_transcode").checked = !!r.live_transcode;
@@ -141,7 +144,8 @@ val("save").onclick = function () {
   NexRecAuth.recApi("input_put", {
     id: val("id").value, name: val("name").value, source_type: val("source_type").value,
     url: val("url").value, decklink_device: val("decklink_device").value,
-    preview_path: val("preview_path").value, retention_days: Number(val("retention_days").value),
+    preview_path: val("preview_path").value, nexclip_slot: Number(val("nexclip_slot").value) || null,
+    retention_days: Number(val("retention_days").value),
     enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
     copy_native: val("copy_native").checked, upconvert_1080i: val("upconvert_1080i").checked,
     feat_scte: val("feat_scte").checked, feat_av_anomaly: val("feat_av_anomaly").checked,

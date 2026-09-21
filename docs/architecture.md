@@ -1,12 +1,12 @@
 # NexCLIP Recorder — Architecture Plan
 
-**Status:** Draft (pre-implementation)  
-**Product:** NexCLIP Recorder  
-**Related:** NexAPP (identity hub), NexClip (MAM; ADR 0020 recorder contract)
+**Status:** Implemented in this repo (v0 scaffold). Local-tree contracts in
+`docs/references/` and `docs/ASSUMPTIONS.md`. GitHub 404 for private siblings
+is expected.
 
-This product is the Mode 2 recorder NexClip already specified and never built: always-on 5-minute chunks, local scrub/export, NexClip studio schedule as an export trigger. Treat NexCLIP Recorder as an appliance that can run alone, and optionally speak NexAPP (WAN SSO) and NexClip (enrollment + export-requests). NexClip and NexAPP are never required to record.
+This product is the Mode 2 recorder NexClip already specified and never built: always-on 5-minute chunks, local scrub/export, NexClip export-requests as the delivery trigger. Treat NexCLIP Recorder as an appliance that can run alone, and optionally speak NexAPP (WAN SSO) and NexClip (enrollment + export-requests). NexClip and NexAPP are never required to record.
 
-NexNOC is the closest sibling for auth and WAN launch. NexClip `docs/decisions/0020-recording-and-scheduling.md` plus `/api/v1/recorders/*` is the contract for the MAM hook.
+**House stack on this box:** Ubuntu 24.04, Apache, PHP 8, vanilla HTML/CSS/JS, **SQLite WAL**, Python stdlib workers + FFmpeg. Hub NexClip/NexAPP keep Postgres. No npm, no Composer, no pip.
 
 ---
 
@@ -16,13 +16,11 @@ Three independent integrations, all optional, all combinable:
 
 | Mode | What it means |
 |------|----------------|
-| **Standalone** | Local UI + local/LDAP users. Records, previews, exports, retention. No NexAPP, no NexClip. |
-| **NexAPP WAN** | Same appliance. Login can use NexAPP launch-ticket SSO (NexNOC pattern). NexAPP never connects into the recorder. |
+| **Standalone** | Local UI + local users (optional **local-only** LDAP). Records, previews, exports, retention. No NexAPP, no NexClip. |
+| **NexAPP WAN** | Same appliance. Login uses NexAPP `launch.php` ticket SSO. NexAPP never connects into the recorder. **One unique `service_id` per host** (general NexAPP convention — Recorder and standalone NexClip hosts alike). |
 | **NexClip worker** | Same appliance. Enrolls with `RECORDER_ENROLLMENT_SECRET`, check-in, poll `export-requests/next`, deliver stitched files. NexClip still does **not** start/stop capture. |
 
-Recording is always local and always Mode 2 (24/7 segmented). NexClip’s Mode 1 (start/stop around events) is a later per-input option, not the core of this repo.
-
-**House stack to match:** Ubuntu 24/26, Apache 443, Python FastAPI on localhost, vanilla HTML/CSS/JS (no npm, no Composer), Postgres, `setup.sh` like NexClip/NexAPP, NexAPP `--nx-*` tokens and IBM Plex.
+Recording is always local and always Mode 2 (24/7 segmented). NexClip’s Mode 1 (`scheduled_with_safety_net`, calendar start/stop) is **out of scope** — older simpler system, not a runtime option here.
 
 ---
 
@@ -122,39 +120,41 @@ Export job: concat demuxer of covering chunks → `atrim`/`trim` to in/out (re-e
 
 ## 5. Auth
 
-Copy **NexNOC**, not current NexClip: NexClip dropped LDAP; NexNOC kept local + LDAP + NexAPP as break-glass.
+Local bcrypt users always. Optional LDAP bind is **recorder-local only**
+(`NEXREC_LDAP_ENABLED=1`) for air-gapped standalone. NexAPP hub auth is
+**local + Entra SAML, not LDAP.** NexClip removed LDAP. Production Nex\*
+path is local users + NexAPP (SAML at the hub).
 
 Login page offers whatever is enabled:
 
-- **Local** (PBKDF2/argon2, like NexClip)
-- **LDAP/AD** (standalone shops, portal down)
-- **NexAPP** (WAN ticket)
+- **Local** (bcrypt)
+- **LDAP/AD** (standalone / portal down — not hub directory sync)
+- **NexAPP** (WAN `launch.php` ticket)
 
-NexAPP catalog role is only a **ceiling** (`user` | `admin`). Local roles (operator vs admin) stay in this app. Map portal Admin → local admin, portal User → operator, same as NexNOC.
+NexAPP catalog role is only a **ceiling** (`user` | `admin`). Map portal
+Admin → local admin, portal User → operator.
 
-### 5.1 Multiple recorders under NexAPP
+### 5.1 One `service_id` per host (settled)
 
-NexAPP today: **one `service_id` → one `launch_url`.** The cookie never leaves `nexapp.nexstar.tv`. Each recorder host must redeem a ticket and mint **its own** session cookie.
+NexAPP: **one `service_id` → one `launch_url`.** The cookie never leaves
+the hub host. Each WAN appliance redeems a ticket and mints **its own**
+session cookie.
 
-Two workable designs with today’s hub:
-
-**A. One catalog row per machine** (works now)
-
-`nexclip-recorder-ctl1`, `nexclip-recorder-ctl2`, each with its own launch URL and `launch.redeem_secrets.<id>`. Portal shows multiple tiles. Drop-in stub like `services/nexnoc/`.
-
-**B. One tile, many machines** (needs a tiny NexAPP change or a chooser)
-
-Keep `service_id=nexclip-recorder`. Either a fleet chooser URL, or extend NexAPP so a service has **multiple launch URLs / instances**. After redeem, the user lands on that host only.
-
-**v1: A.** Later NexAPP enhancement: instance registry (`hostname`, `launch_url`, `redeem_secret`) under one service so there is one tile and N boxes. Do not invent a way to send `NexAPP_AUTH` to the recorder.
+**Settled pattern (general NexAPP, not Recorder-only):** one catalog row
+per machine. A recorder host and a standalone NexClip host each get a
+unique `service_id`, launch URL, redeem secret, Access grants, and
+manifest. Portal shows one tile per machine. Do not share a `service_id`
+across hosts. Do not invent `instance_id` as a grant gate.
 
 Unauthenticated bookmark on a recorder:
 
 ```
-https://nexapp.nexstar.tv/launch.php?service_id=nexclip-recorder-ctl1&next=/editor
+https://nexapp.nexstar.tv/launch.php?service_id=nexclip-recorder-ctl1&next=/export
 ```
 
-Then `POST /api/launch/redeem.php` with `X-NexApp-Launch-Secret`. Never put `sub`/`role` on the query string.
+Then `POST /api/launch/redeem.php` with `X-NexApp-Launch-Secret`. Never put
+`sub`/`role` on the query string. Admin registration steps:
+`docs/ASSUMPTIONS.md`.
 
 ---
 
@@ -169,6 +169,8 @@ When connected, this box **is** the missing Mode 2 node:
 5. `complete` with `delivered_path` (or `fail`)
 
 NexClip still never says “start recording.” Calendar events become **export requests after `effective_end`**. Manual exports from **this** UI stay local; optional later: also push a copy into a NexClip library.
+
+**Mode 1 is out of scope.** Do not poll `GET .../schedule`.
 
 ### 6.1 Contract gaps this product will hit
 
@@ -231,19 +233,23 @@ Roles: **operator** (live + editor + export), **admin** (inputs, auth, storage, 
 3. Proxy tee + MediaMTX live view (1, then 6)
 4. Editor: time-locked 1–6, in/out, concat+trim, full vs proxy
 5. Retention + waterline + twice-daily cleanup
-6. LDAP + NexAPP WAN redeem (multi `service_id` instances)
-7. NexClip enroll/check-in/export-requests (after the `mixed` / 10-slot API bump)
+6. NexAPP WAN redeem (one unique `service_id` per host; LDAP local-only)
+7. NexClip Mode 2 enroll/check-in/export-requests (slots 1–8; IP maps to `srt`)
 8. 1080i option, NVENC, 10-slot soak
 
 ---
 
-## 10. Decisions to settle before coding
+## 10. Remaining product gaps
 
-1. **NexAPP:** one tile per recorder (v1) vs one tile + instance list (NexAPP change).
-2. **NexClip:** bump `num_slots` to 10 and add `mixed` + per-slot type before enrollment.
-3. **GPU:** NVENC on the recorder host, or CPU-only for a 2–4 input lab image.
-4. **Audio:** stereo downmix always, or keep SDI 8-channel in hi-res and stereo on proxy.
-5. **Time zone in filenames:** Eastern to match NexClip pathing, or UTC internally and convert on export.
+Settled: one NexAPP `service_id` per host (Recorder and standalone NexClip);
+Mode 2 only (Mode 1 out of scope).
+
+Still open with NexClip:
+
+1. Bump `num_slots` to 10 and add `mixed` + per-slot type before a 10-input mixed box can enroll honestly (until then, map IP → `srt`, enroll slots 1–8).
+2. **GPU:** NVENC on the recorder host, or CPU-only for a 2–4 input lab image.
+3. **Audio:** stereo downmix always, or keep SDI 8-channel in hi-res and stereo on proxy.
+4. **Time zone in filenames:** Eastern to match NexClip pathing, or UTC internally and convert on export.
 
 ---
 
@@ -251,11 +257,11 @@ Roles: **operator** (live + editor + export), **admin** (inputs, auth, storage, 
 
 | Source | Why |
 |--------|-----|
-| NexClip `docs/decisions/0020-recording-and-scheduling.md` | Mode 1/2, node-owns-timing, sticky inputs, export-requests |
+| NexClip `docs/decisions/0020-recording-and-scheduling.md` | Mode 2 continuous + export-requests (Mode 1 out of scope here) |
 | NexClip `docs/decisions/0025-nexapp-integration.md` | Catalog ceiling vs in-app roles; workers/recorders use enrollment secrets |
 | NexClip `docs/decisions/0028-nexapp-visual-identity.md` | Tokens from NexAPP, layout stays the app |
-| NexClip `docs/decisions/0029-standalone-host.md` | Standalone vhost, TCP 443 |
-| NexClip `api/app/recorders/routes.py` | Register / check-in / schedule / capture / export-requests |
-| NexAPP `files/nexapp-docs-03-auth-integration-guide.md` §11 | WAN launch ticket + redeem; NexAPP never connects in |
-| NexAPP `docs/nexapp-theme-kit.md` | `--nx-*`, `nexapp-theme`, WAN `theme` on redeem |
-| NexNOC `nexapp/README.md` | Local + LDAP + NexAPP on a WAN host |
+| NexClip `docs/decisions/0029-standalone-host.md` | Standalone vhost, TCP 443; LDAP not coming back |
+| NexClip `api/app/recorders/routes.py` | Register / check-in / export-requests (excerpts in `docs/references/`) |
+| NexAPP `examples/nexapp-launch-redeem.php` | WAN launch ticket + redeem; NexAPP never connects in |
+| NexAPP `examples/nexapp-access-client.php` | Same-host RS256 + AccessService / access.php |
+| This repo `docs/references/` | Local-tree copies (GitHub private 404 expected) |
