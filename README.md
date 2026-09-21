@@ -81,6 +81,8 @@ python3 worker/nexrec-record.py --env ./nexrec.env --input-id demo
 
 ## Production install (Ubuntu)
 
+Target OS is **Ubuntu 24.04 LTS** on the host class in **Hardware recommendations**.
+
 ```bash
 sudo ./setup.sh
 # edits /etc/nexrec/nexrec.env
@@ -90,7 +92,58 @@ sudo systemctl enable --now nexrec-record@demo nexrec-preview@demo
 sudo systemctl enable --now nexrec-cleanup.timer nexrec-export.service
 ```
 
-See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and NexClip hooks.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for pipelines, disk layout, auth, and NexClip hooks. Host sizing is **Hardware recommendations** (this README).
+
+## Hardware recommendations
+
+Owner-decided production guidance. Not a quote, not SKUs.
+
+### Target host
+
+| | Recommendation |
+| --- | --- |
+| **OS** | Ubuntu **24.04 LTS** (DeckLink Linux driver/SDK support — confirm against the current Blackmagic Linux matrix) |
+| **Class** | **HP Z4/Z6 workstation** (or equivalent) with full PCIe for DeckLink + GPU. Not a thin desktop when using SDI capture or heavy transcode. |
+| **CPU** | **12–16+ cores** (always-on record + concurrent export/transcode/viewers) |
+| **RAM** | **128 GB**. Cap **ZFS ARC ~32–48 GB** so FFmpeg / NVENC / UI keep headroom. |
+| **GPU** | **NVIDIA with NVENC** when IP ingest needs live transcode, WebRTC/proxy encodes for ~10 multiviewer clients, and occasional export transcode — while ~8 recorders keep writing. |
+| **NIC** | **10GbE always** (even with local DAS — future NAS, bulk copy, other Nex* hosts). |
+| **Boot / app / export scratch** | **NVMe** (ext4 or XFS). Keep export concat/trim scratch off the HDD pool when possible. |
+
+### Workload (for sizing)
+
+- Up to **~8 always-on 1080-ish** streams (not 10).
+- Concurrent: live transcode path, **1–2 exports**, ~**10** WebRTC multiviewer viewers.
+- Aggregate record write is only ~**15–25 MB/s** — bandwidth is easy. **Scrub/editor IOPS** and rebuild risk drive disk count.
+
+### Storage capacity
+
+- Rough raw rate: ~**35 TB/month** for 8× continuous 1080 @ ~12 Mbps.
+- Product defaults (raw ~**4 weeks**, exports **15 days**) are smaller; operators may keep **2–3 months** online.
+- Target usable media pool: about **100–135 TB** (plus the free-space floor the app enforces).
+
+### Local storage (preferred) — ZFS
+
+**Filesystem:** OpenZFS on the media pool. Do **not** use RAIDZ1 at this capacity. Avoid **USB** for the media pool. Workstation chassis rarely holds 8–12 large drives — attach via **SAS HBA + DAS/disk shelf**. Use **CMR enterprise** drives, **not SMR**.
+
+| | Layout | Notes |
+| --- | --- | --- |
+| **Default (owner preference)** | **8–12× 16–22 TB** CMR in **RAIDZ2** | More spindles for **export-editor scrub IOPS**. |
+| Fewer bays | **6× ~30 TB** CMR **RAIDZ2** | **Fine for record write bandwidth**; slower scrubs and longer resilvers. Not the default. |
+
+Suggested split:
+
+- Boot / app: NVMe
+- Recordings: RAIDZ2 HDD pool (`ashift=12`, large `recordsize` e.g. **1M** on recording datasets)
+- Export concat/trim scratch: NVMe
+
+### NAS option
+
+If media lives on a NAS: still keep **10GbE on the recorder box**. Size the NAS similarly (CMR, RAID6 or RAIDZ2, enough spindles for scrub).
+
+### DeckLink
+
+Need PCIe slots for **Duo / Quad 2**. Install Blackmagic drivers on 24.04; **verify against the current Blackmagic Linux support matrix** before buying a card/box pair.
 
 ## License
 

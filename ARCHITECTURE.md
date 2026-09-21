@@ -4,6 +4,10 @@ Product name **NexCLIP Recorder**; repo `NexClip-Recorder`. This document is the
 contract for deployment modes, the FFmpeg pipeline, on-disk chunks, WebRTC
 preview, auth, retention, and NexClip hooks.
 
+**Host hardware** (Z4/Z6-class, 128 GB RAM, NVENC, 10GbE, ZFS RAIDZ2 media
+pool) is owner-decided — see README **Hardware recommendations**. Do not treat
+this file as a BOM.
+
 ## 1. Deployment modes
 
 ```
@@ -116,6 +120,10 @@ and the bitstream is already H.264 4:2:0 + AAC. Otherwise encode at
 
 Native recordings retain **4 weeks** by default, **per input**
 (`RETENTION_DAYS`). Exports retain **15 days** unless `protected=1`.
+
+On a production box, put `NEXREC_STORAGE_DIR` on the ZFS RAIDZ2 HDD pool and
+export concat/trim scratch on NVMe (README hardware section). The app’s
+free-space floor still applies on that media filesystem.
 
 ## 4. FFmpeg record command (IP)
 
