@@ -7,16 +7,18 @@
  * WAN (primary): launch.php ticket → POST /api/launch/redeem.php
  *   (NexAPP/examples/nexapp-launch-redeem.php). NexAPP never connects in.
  *
- * Prefer one unique NEXAPP_SERVICE_ID per host (NexAPP convention for
- * Recorder and standalone NexClip). Do not invent an instance_id grant gate.
+ * One unique NEXAPP_SERVICE_ID per host (NexAPP convention for Recorder
+ * and standalone NexClip). Do not share an id across machines. Do not
+ * invent an instance_id grant gate.
  */
 declare(strict_types=1);
 
 const NEXREC_NEXAPP_COOKIE = 'NexAPP_AUTH';
 
+/** Example first-host id. Each machine must set NEXAPP_SERVICE_ID uniquely. */
 function nexrec_nexapp_service_id(): string {
     $o = getenv('NEXAPP_SERVICE_ID');
-    return (is_string($o) && $o !== '') ? $o : 'nexclip-recorder';
+    return (is_string($o) && $o !== '') ? $o : 'nexclip-recorder-ctl1';
 }
 
 function nexrec_nexapp_issuer(): string {

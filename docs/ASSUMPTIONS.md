@@ -80,9 +80,10 @@ NexAPP (SAML at the hub)** — not hub directory sync.
 This product **is** Mode 2 `continuous_24x7` (ADR 0020). Calendar does
 **not** start/stop FFmpeg. See `docs/NEXCLIP-HOOKS.md`.
 
-**Mode 1 `scheduled_with_safety_net` is out of scope.** Do not poll
+**Mode 1 `scheduled_with_safety_net` is out of scope** (older simpler
+system). Not a runtime mode and not a later switch. Do not poll
 `GET .../schedule`, do not start/stop capture from the calendar, do not
-implement hourly safety_net. That is a different, older node.
+implement hourly safety_net. Export-request poll only.
 
 Node auth is **enrollment secret + per-node bearer**, not NexAPP SSO.
 Humans use NexAPP/local on the recorder UI.

@@ -24,6 +24,17 @@ if (nexrec_nexapp_map_role('user') !== 'operator') {
 }
 
 putenv('NEXAPP_ISSUER=https://nexapp.nexstar.tv');
+putenv('NEXAPP_SERVICE_ID');
+$defaultId = nexrec_nexapp_service_id();
+if ($defaultId !== 'nexclip-recorder-ctl1') {
+    fwrite(STDERR, "unset NEXAPP_SERVICE_ID must default to host-specific example, got {$defaultId}\n");
+    exit(1);
+}
+putenv('NEXAPP_SERVICE_ID=nexclip-recorder-ctl2');
+if (nexrec_nexapp_service_id() !== 'nexclip-recorder-ctl2') {
+    fwrite(STDERR, "NEXAPP_SERVICE_ID override ignored\n");
+    exit(1);
+}
 putenv('NEXAPP_SERVICE_ID=nexclip-recorder-ctl1');
 $url = nexrec_nexapp_sso_url('/export');
 if (!str_contains($url, '/launch.php?service_id=nexclip-recorder-ctl1')) {

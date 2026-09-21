@@ -9,9 +9,11 @@ NexClip **never** starts or stops capture. This box records 24/7 in
 5-minute MP4 chunks. Calendar and operators create **export requests**;
 the node stitches the buffer and reports `delivered_path`.
 
-**Mode 1 `scheduled_with_safety_net` is out of scope.** Do not call
+**Mode 1 `scheduled_with_safety_net` is out of scope** (older simpler
+system). Not a runtime mode and not a later switch. Do not call
 `GET .../schedule`. Mode 1 looks ahead to *start capture*; Mode 2 looks at
-*completed* windows to *export from the already-running buffer*.
+*completed* windows to *export from the already-running buffer*. Export-request
+poll only.
 
 Node auth is **not** NexAPP SSO. Enrollment secret + per-node bearer.
 NexClip does not open inbound holes to the recorder (node polls out).

@@ -79,8 +79,9 @@ The recorder redeems the ticket at `/api/launch/redeem.php`.
 ## NexClip: Mode 2 only
 
 This box is `continuous_24x7`. See [`docs/NEXCLIP-HOOKS.md`](docs/NEXCLIP-HOOKS.md).
-Mode 1 `scheduled_with_safety_net` (calendar starts/stops capture) is **not**
-implemented.
+Mode 1 `scheduled_with_safety_net` (calendar starts/stops capture, schedule-poll)
+is **out of scope** — older simpler system, not a runtime option and not a
+later switch. Export-request poll only.
 
 ## Demo path (no root, no DeckLink)
 
