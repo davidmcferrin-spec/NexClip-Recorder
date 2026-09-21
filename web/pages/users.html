@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Users</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a class="active" href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="panel form-grid">
+    <div>
+      <label>Username</label><input id="username">
+      <label>Password</label><input id="password" type="password">
+    </div>
+    <div>
+      <label>Role</label>
+      <select id="role"><option>admin</option><option>operator</option><option>viewer</option></select>
+      <label>Email</label><input id="email">
+      <button type="button" class="primary" id="create">Create local user</button>
+      <p class="sub">LDAP / NexAPP users appear after first successful sign-in.</p>
+    </div>
+  </div>
+  <div class="panel">
+    <table><thead><tr><th>User</th><th>Role</th><th>Source</th></tr></thead><tbody id="rows"></tbody></table>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+function refresh() {
+  return NexRecAuth.api("users_list").then(function (d) {
+    var tb = document.getElementById("rows");
+    tb.innerHTML = "";
+    (d.users || []).forEach(function (u) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + u.username + "</td><td>" + u.role + "</td><td>" + u.source + "</td>";
+      tb.appendChild(tr);
+    });
+  });
+}
+NexRecAuth.requirePage({ roles: ["admin"] }).then(refresh);
+document.getElementById("create").onclick = function () {
+  NexRecAuth.api("user_create", {
+    username: document.getElementById("username").value,
+    password: document.getElementById("password").value,
+    role: document.getElementById("role").value,
+    email: document.getElementById("email").value,
+    must_change_password: true,
+  }).then(refresh);
+};
+</script>
+</body>
+</html>

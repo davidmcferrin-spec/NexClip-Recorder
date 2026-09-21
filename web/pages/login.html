@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Login</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+<style>
+  body { align-items: center; justify-content: center; }
+  .card { width: 100%; max-width: 400px; }
+  #change-box { display: none; }
+  #change-box.show { display: block; }
+  #login-box.hide { display: none; }
+  .portal-nudge {
+    display: none; background: var(--bg); border: 1px solid var(--acc);
+    border-radius: 6px; padding: 10px 12px; margin: 0 0 16px; font-size: 12px;
+  }
+  .portal-nudge.show { display: block; }
+  .portal-nudge a { color: var(--acc); font-weight: 600; }
+  .theme-toggle { position: fixed; top: 12px; right: 12px; }
+</style>
+</head>
+<body>
+<button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+<div class="panel card">
+  <h1>NexCLIP Recorder</h1>
+  <p class="sub" id="subtitle">Sign in to continue</p>
+  <div class="portal-nudge" id="nexapp-nudge">
+    This recorder accepts NexAPP SSO —
+    <a href="#" id="nexapp-link">sign in via NexAPP</a>.
+    Local sign-in below still works as a backup.
+  </div>
+  <div id="login-box">
+    <form id="login-form" autocomplete="on">
+      <label for="username">Username</label>
+      <input id="username" name="username" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input id="password" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit" class="primary">Sign in</button>
+      <div class="err" id="login-err"></div>
+    </form>
+  </div>
+  <div id="change-box">
+    <form id="change-form">
+      <label for="cur">Current password</label>
+      <input id="cur" type="password" autocomplete="current-password" required>
+      <label for="nw">New password (min 8)</label>
+      <input id="nw" type="password" autocomplete="new-password" required minlength="8">
+      <label for="nw2">Confirm new password</label>
+      <input id="nw2" type="password" autocomplete="new-password" required minlength="8">
+      <button type="submit" class="primary">Update password</button>
+      <div class="err" id="change-err"></div>
+    </form>
+  </div>
+</div>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+(function () {
+  var params = new URLSearchParams(location.search);
+  var next = params.get("next") || "/live";
+  var forceChange = params.get("change") === "1";
+  function showChange(msg) {
+    document.getElementById("login-box").classList.add("hide");
+    document.getElementById("change-box").classList.add("show");
+    document.getElementById("subtitle").textContent = msg || "Choose a new password before continuing";
+  }
+  if (forceChange) showChange();
+
+  var hash = (location.hash || "").replace(/^#/, "");
+  var ticket = params.get("nexapp_ticket") || params.get("ticket");
+  if (hash.indexOf("nexapp_sso=") === 0 || hash.indexOf("portal_sso=") === 0) {
+    ticket = decodeURIComponent(hash.split("=").slice(1).join("="));
+    history.replaceState(null, "", location.pathname + location.search);
+  }
+  if (ticket) {
+    NexRecAuth.api("nexapp_sso", { jwt: ticket }).then(function (data) {
+      var u = data.user;
+      if (u && u.must_change_password) showChange("Default password must be changed");
+      else location.href = next;
+    }).catch(function (e) {
+      document.getElementById("login-err").textContent = e.message || "NexAPP SSO failed";
+    });
+    return;
+  }
+
+  NexRecAuth.me().then(function (u) {
+    if (u && u.must_change_password) showChange("Default password must be changed");
+    else if (u && !forceChange) location.href = next;
+  }).catch(function () {});
+
+  NexRecAuth.api("nexapp_status").then(function (data) {
+    if (!data.enabled || !data.login_url) return;
+    document.getElementById("nexapp-link").href = data.login_url;
+    document.getElementById("nexapp-nudge").classList.add("show");
+  }).catch(function () {});
+
+  document.getElementById("login-form").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var err = document.getElementById("login-err");
+    err.textContent = "";
+    try {
+      var data = await NexRecAuth.api("login", {
+        username: document.getElementById("username").value,
+        password: document.getElementById("password").value,
+      });
+      if (data.user && data.user.must_change_password) { showChange("Default password must be changed"); return; }
+      location.href = next;
+    } catch (e) {
+      err.textContent = e.message || "login failed";
+    }
+  });
+  document.getElementById("change-form").addEventListener("submit", async function (ev) {
+    ev.preventDefault();
+    var err = document.getElementById("change-err");
+    err.textContent = "";
+    var a = document.getElementById("nw").value;
+    var b = document.getElementById("nw2").value;
+    if (a !== b) { err.textContent = "passwords do not match"; return; }
+    try {
+      await NexRecAuth.api("change_password", {
+        current_password: document.getElementById("cur").value,
+        new_password: a,
+      });
+      location.href = next;
+    } catch (e) {
+      err.textContent = e.message || "update failed";
+    }
+  });
+})();
+</script>
+</body>
+</html>

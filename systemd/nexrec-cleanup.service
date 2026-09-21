@@ -1,0 +1,9 @@
+[Unit]
+Description=NexCLIP Recorder retention cleanup
+
+[Service]
+Type=oneshot
+EnvironmentFile=-/etc/nexrec/nexrec.env
+ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-cleanup.py --env /etc/nexrec/nexrec.env
+User=www-data
+Group=www-data

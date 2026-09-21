@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Services</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a class="active" href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="panel">
+    <h1>systemd units</h1>
+    <p class="sub">Status is best-effort (inactive on hosts without systemd). Enable with setup.sh.</p>
+    <table><thead><tr><th>Unit</th><th>State</th></tr></thead><tbody id="rows"></tbody></table>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+NexRecAuth.requirePage({ roles: ["admin"] }).then(function () {
+  return fetch("/api/ops?action=units", { credentials: "same-origin", cache: "no-store" }).then(function (r) { return r.json(); });
+}).then(function (d) {
+  var tb = document.getElementById("rows");
+  (d.units || []).forEach(function (u) {
+    var tr = document.createElement("tr");
+    tr.innerHTML = "<td>" + u.unit + "</td><td>" + u.state + "</td>";
+    tb.appendChild(tr);
+  });
+});
+</script>
+</body>
+</html>

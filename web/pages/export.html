@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Export</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a class="active" href="/export">Export</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="bar">
+    <span class="meta">Layout</span>
+    <div class="seg" id="layout-seg">
+      <button type="button" data-n="1" class="active">1</button>
+      <button type="button" data-n="2">2</button>
+      <button type="button" data-n="3">3</button>
+      <button type="button" data-n="4">4</button>
+      <button type="button" data-n="6">6</button>
+    </div>
+    <button type="button" id="mark-in">Mark I</button>
+    <button type="button" id="mark-out">Mark O</button>
+    <span class="meta" id="io">I — / O —</span>
+    <label class="meta" style="margin:0">Scope
+      <select id="scope"><option value="one">This stream</option><option value="all">All visible</option></select>
+    </label>
+    <label class="meta" style="margin:0">Quality
+      <select id="quality"><option value="full">Full (native)</option><option value="proxy">Proxy</option></select>
+    </label>
+    <button type="button" class="primary" id="do-export">Export trim</button>
+    <span class="ok-msg" id="msg"></span>
+  </div>
+  <div class="grid n1" id="grid"></div>
+  <div class="timeline" id="timeline" title="Scrub wall-clock timeline">
+    <div class="playhead" id="playhead"></div>
+    <div class="mark in" id="mark-in-el" hidden></div>
+    <div class="mark out" id="mark-out-el" hidden></div>
+  </div>
+  <div class="bar">
+    <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
+    <span class="meta" id="tlabel" style="font-family:var(--nx-mono)">—</span>
+  </div>
+  <div class="panel">
+    <h1>Jobs</h1>
+    <table><thead><tr><th>ID</th><th>Window</th><th>Status</th><th></th></tr></thead>
+    <tbody id="jobs"></tbody></table>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+(function () {
+  var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, play = 0, markIn = null, markOut = null;
+
+  NexRecAuth.requirePage().then(function () {
+    return Promise.all([
+      NexRecAuth.recApi("inputs_list"),
+      NexRecAuth.recApi("chunks_list"),
+      NexRecAuth.recApi("exports_list"),
+    ]);
+  }).then(function (all) {
+    inputs = all[0].inputs || [];
+    (all[1].chunks || []).forEach(function (c) {
+      (chunksByInput[c.input_id] = chunksByInput[c.input_id] || []).push(c);
+    });
+    var allc = all[1].chunks || [];
+    if (allc.length) {
+      t0 = Date.parse(allc[allc.length - 1].start_at);
+      t1 = Date.parse(allc[0].end_at || allc[0].start_at);
+      if (!isFinite(t0) || !isFinite(t1) || t1 <= t0) { t0 = Date.now() - 3600000; t1 = Date.now(); }
+    } else {
+      t1 = Date.now(); t0 = t1 - 3600000;
+    }
+    play = t0;
+    paintJobs(all[2].exports || []);
+    render();
+    tick();
+  });
+
+  function iso(ms) { return new Date(ms).toISOString().replace(".000", ""); }
+  function tick() {
+    document.getElementById("tlabel").textContent = iso(play);
+    var pct = (play - t0) / Math.max(1, t1 - t0);
+    document.getElementById("playhead").style.left = (pct * 100) + "%";
+    document.getElementById("scrub").value = String(Math.round(pct * 1000));
+    document.getElementById("io").textContent =
+      "I " + (markIn ? iso(markIn) : "—") + " / O " + (markOut ? iso(markOut) : "—");
+    if (markIn != null) {
+      document.getElementById("mark-in-el").hidden = false;
+      document.getElementById("mark-in-el").style.left = ((markIn - t0) / Math.max(1, t1 - t0) * 100) + "%";
+    }
+    if (markOut != null) {
+      document.getElementById("mark-out-el").hidden = false;
+      document.getElementById("mark-out-el").style.left = ((markOut - t0) / Math.max(1, t1 - t0) * 100) + "%";
+    }
+    document.querySelectorAll(".pane video").forEach(function (v) {
+      var iid = v.getAttribute("data-input");
+      var list = (chunksByInput[iid] || []).slice().reverse();
+      var hit = list.filter(function (c) {
+        return Date.parse(c.start_at) <= play && Date.parse(c.end_at || c.start_at) > play;
+      })[0];
+      if (hit && hit.path && hit.path.indexOf("/tmp/nexrec-fixture") !== 0) {
+        var want = "/api/chunks/" + hit.id + "/media";
+        if (v.getAttribute("data-src") !== want) {
+          v.src = want; v.setAttribute("data-src", want);
+        }
+        var off = (play - Date.parse(hit.start_at)) / 1000;
+        if (Math.abs((v.currentTime || 0) - off) > 0.4) {
+          try { v.currentTime = Math.max(0, off); } catch (e) {}
+        }
+      }
+    });
+  }
+
+  function render() {
+    var grid = document.getElementById("grid");
+    grid.className = "grid n" + n;
+    grid.innerHTML = "";
+    var slots = inputs.slice(0, n);
+    while (slots.length < n) slots.push(null);
+    slots.forEach(function (inp, i) {
+      var pane = document.createElement("div");
+      pane.className = "pane";
+      var tag = document.createElement("div");
+      tag.className = "tag";
+      tag.textContent = inp ? inp.name : ("empty " + (i + 1));
+      var video = document.createElement("video");
+      video.setAttribute("data-input", inp ? inp.id : "");
+      video.muted = true; video.playsInline = true; video.controls = false;
+      var ph = document.createElement("div");
+      ph.className = "ph";
+      ph.textContent = inp ? "time-locked chunk preview" : "no input";
+      pane.appendChild(video); pane.appendChild(ph); pane.appendChild(tag);
+      grid.appendChild(pane);
+    });
+  }
+
+  function paintJobs(jobs) {
+    var tb = document.getElementById("jobs");
+    tb.innerHTML = "";
+    jobs.forEach(function (j) {
+      var tr = document.createElement("tr");
+      var dl = (j.status === "done" && j.path)
+        ? '<a href="/api/exports/' + j.id + '/file">download</a>' : "";
+      tr.innerHTML = "<td>" + j.id + "</td><td>" + j.t_in + " → " + j.t_out + "</td><td>" + j.status + "</td><td>" + dl + "</td>";
+      tb.appendChild(tr);
+    });
+  }
+
+  document.getElementById("layout-seg").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-n]");
+    if (!btn) return;
+    n = parseInt(btn.getAttribute("data-n"), 10);
+    document.querySelectorAll("#layout-seg button").forEach(function (b) { b.classList.toggle("active", b === btn); });
+    render(); tick();
+  });
+  document.getElementById("scrub").addEventListener("input", function (ev) {
+    play = t0 + (Number(ev.target.value) / 1000) * (t1 - t0);
+    tick();
+  });
+  document.getElementById("timeline").addEventListener("click", function (ev) {
+    var r = ev.currentTarget.getBoundingClientRect();
+    play = t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0);
+    tick();
+  });
+  document.getElementById("mark-in").onclick = function () { markIn = play; tick(); };
+  document.getElementById("mark-out").onclick = function () { markOut = play; tick(); };
+  document.getElementById("do-export").onclick = function () {
+    var msg = document.getElementById("msg");
+    msg.textContent = "";
+    if (markIn == null || markOut == null || markOut <= markIn) {
+      msg.textContent = "mark I before O"; msg.style.color = "var(--bad)"; return;
+    }
+    var visible = inputs.slice(0, n).filter(Boolean);
+    var scope = document.getElementById("scope").value;
+    var ids = scope === "all" ? visible.map(function (x) { return x.id; }) : (visible[0] ? [visible[0].id] : []);
+    if (!ids.length) { msg.textContent = "no inputs"; return; }
+    NexRecAuth.recApi("export_create", {
+      input_ids: ids,
+      t_in: iso(markIn),
+      t_out: iso(markOut),
+      quality: document.getElementById("quality").value,
+      scope: scope,
+    }).then(function (d) {
+      msg.style.color = "var(--ok)";
+      msg.textContent = "queued " + d.export_id + " — run python3 worker/nexrec-export.py --once";
+      return NexRecAuth.recApi("exports_list");
+    }).then(function (d) { paintJobs(d.exports || []); })
+      .catch(function (e) { msg.style.color = "var(--bad)"; msg.textContent = e.message; });
+  };
+})();
+</script>
+</body>
+</html>

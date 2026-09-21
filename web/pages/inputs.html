@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Inputs</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a class="active" href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="bar">
+    <h1 style="margin:0">Inputs (max 10)</h1>
+    <button type="button" id="seed">Seed demo</button>
+    <span class="ok-msg" id="msg"></span>
+  </div>
+  <div class="panel form-grid" id="form">
+    <div>
+      <label>ID (slug)</label><input id="id" placeholder="studio-a">
+      <label>Name</label><input id="name" placeholder="Studio A">
+      <label>Type</label>
+      <select id="source_type">
+        <option value="rtsp">RTSP</option>
+        <option value="srt">SRT</option>
+        <option value="udp">Multicast/unicast UDP</option>
+        <option value="tcp">TCP</option>
+        <option value="rtp">RTP</option>
+        <option value="decklink">DeckLink (designed)</option>
+        <option value="testsrc">testsrc (demo)</option>
+      </select>
+      <label>URL</label><input id="url" placeholder="rtsp://encoder:554/stream">
+    </div>
+    <div>
+      <label>DeckLink device</label><input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
+      <label>Preview path</label><input id="preview_path" placeholder="in0">
+      <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
+      <label><input type="checkbox" id="enabled" checked> Enabled</label>
+      <label><input type="checkbox" id="live_transcode"> Live transcode to MP4</label>
+      <label><input type="checkbox" id="copy_native" checked> Copy native bitstream when possible</label>
+      <label><input type="checkbox" id="upconvert_1080i"> Upconvert 1080i → 1080p only</label>
+      <button type="button" class="primary" id="save">Save input</button>
+    </div>
+  </div>
+  <div class="panel">
+    <table>
+      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Retention</th><th></th></tr></thead>
+      <tbody id="rows"></tbody>
+    </table>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(refresh);
+function val(id) { return document.getElementById(id); }
+function refresh() {
+  return NexRecAuth.recApi("inputs_list").then(function (d) {
+    var tb = document.getElementById("rows");
+    tb.innerHTML = "";
+    (d.inputs || []).forEach(function (r) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + r.id + "</td><td>" + r.name + "</td><td>" + r.source_type +
+        "</td><td>" + (r.preview_path || "") + "</td><td>" + r.retention_days + "d</td><td></td>";
+      var btn = document.createElement("button");
+      btn.textContent = "Load";
+      btn.onclick = function () {
+        val("id").value = r.id; val("name").value = r.name;
+        val("source_type").value = r.source_type; val("url").value = r.url || "";
+        val("decklink_device").value = r.decklink_device || "";
+        val("preview_path").value = r.preview_path || "";
+        val("retention_days").value = r.retention_days;
+        val("enabled").checked = !!r.enabled;
+        val("live_transcode").checked = !!r.live_transcode;
+        val("copy_native").checked = !!r.copy_native;
+        val("upconvert_1080i").checked = !!r.upconvert_1080i;
+      };
+      tr.lastChild.appendChild(btn);
+      tb.appendChild(tr);
+    });
+  });
+}
+val("save").onclick = function () {
+  NexRecAuth.recApi("input_put", {
+    id: val("id").value, name: val("name").value, source_type: val("source_type").value,
+    url: val("url").value, decklink_device: val("decklink_device").value,
+    preview_path: val("preview_path").value, retention_days: Number(val("retention_days").value),
+    enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
+    copy_native: val("copy_native").checked, upconvert_1080i: val("upconvert_1080i").checked,
+  }).then(function () { document.getElementById("msg").textContent = "saved"; return refresh(); })
+    .catch(function (e) { document.getElementById("msg").textContent = e.message; });
+};
+val("seed").onclick = function () {
+  NexRecAuth.recApi("demo_seed", {}).then(function () {
+    document.getElementById("msg").textContent = "seeded demo input + fixture chunks";
+    return refresh();
+  });
+};
+</script>
+</body>
+</html>

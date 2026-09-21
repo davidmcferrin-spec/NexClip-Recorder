@@ -1,0 +1,3 @@
+# Cron equivalent of nexrec-cleanup.timer (if a host prefers cron).
+# Twice daily: 06:00 and 18:00 (host local time; setup.sh uses America/New_York).
+0 6,18 * * * www-data /usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-cleanup.py --env /etc/nexrec/nexrec.env >/dev/null 2>&1

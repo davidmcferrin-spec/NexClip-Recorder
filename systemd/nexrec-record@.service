@@ -1,0 +1,17 @@
+[Unit]
+Description=NexCLIP Recorder ingest %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/nexrec/nexrec.env
+EnvironmentFile=-/etc/nexrec/inputs/%i.env
+ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-record.py --env /etc/nexrec/nexrec.env --input-env /etc/nexrec/inputs/%i.env --input-id %i
+Restart=always
+RestartSec=5
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target

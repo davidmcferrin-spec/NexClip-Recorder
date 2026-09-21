@@ -1,0 +1,29 @@
+# Local / runtime
+*.pyc
+__pycache__/
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
+*.db
+.env
+nexrec.env
+/var/
+/data/
+/tmp-demo/
+/demo-out/
+
+# Media
+*.mp4
+*.m4s
+*.ts
+!test/fixtures/**
+
+# Editor / OS
+.DS_Store
+*.swp
+*~
+
+# TLS / secrets (never commit)
+*.pem
+*.key
+auth-keys/
