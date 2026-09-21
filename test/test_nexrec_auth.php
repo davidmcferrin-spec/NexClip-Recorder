@@ -42,7 +42,7 @@ if ($op['role'] !== 'operator') {
     exit(1);
 }
 
-// NexAPP stub access
+// NexAPP stub access (no instance_id gate — one service_id per host)
 $stub = $tmp . '/access.json';
 file_put_contents($stub, json_encode([
     'ok' => true,
@@ -51,20 +51,12 @@ file_put_contents($stub, json_encode([
     'email' => 'user@example.internal',
     'name' => 'User One',
     'role' => 'admin',
-    'allowed_instances' => ['recorder-01'],
 ]));
 putenv('NEXREC_NEXAPP_ACCESS_STUB=' . $stub);
-putenv('NEXREC_INSTANCE_ID=recorder-01');
 require_once dirname(__DIR__) . '/web/nexrec-nexapp.php';
 $acc = nexrec_nexapp_check_access('ignored');
 if (empty($acc['ok'])) {
     fwrite(STDERR, "stub access should be ok\n");
-    exit(1);
-}
-putenv('NEXREC_INSTANCE_ID=recorder-99');
-$acc2 = nexrec_nexapp_check_access('ignored');
-if (!empty($acc2['ok']) || ($acc2['error'] ?? '') !== 'instance_not_granted') {
-    fwrite(STDERR, "wrong instance should 403\n");
     exit(1);
 }
 

@@ -20,6 +20,10 @@
 
 Login `admin` / `password`. Pages: Live, Export, Inputs, Settings, Users.
 
+Live includes WFM / vectorscope / VU / 64-ch RTA **placeholders** (preview-path
+analyzers are NEXT). Export includes a CALM/LKFS panel; measure enqueues
+`nexrec-analyze.py`. Inputs has per-input intelligence toggles, a NexClip Mode 2 slot (1–8), and FTS search.
+
 Without MediaMTX, Live panes are labeled placeholders (WHEP URL still shown).
 Export editor scrubs indexed chunks (run `make demo` first, or click
 **Seed demo chunks** on Inputs as admin).

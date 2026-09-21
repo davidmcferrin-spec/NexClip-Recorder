@@ -69,27 +69,40 @@ try {
     }
 
     if ($action === 'nexapp_sso' || $action === 'portal_sso') {
-        $jwt = trim((string) ($body['jwt'] ?? $body['ticket'] ?? $_GET['nexapp_ticket'] ?? ''));
-        if ($jwt === '') {
-            nexrec_auth_fail(400, 'jwt required');
+        $blob = trim((string) ($body['ticket'] ?? $body['jwt'] ?? nexrec_nexapp_ticket_from_request() ?? ''));
+        if ($blob === '') {
+            nexrec_auth_fail(400, 'ticket required');
         }
-        $ex = nexrec_nexapp_exchange_ticket($jwt);
-        $token = (string) ($ex['token'] ?? $jwt);
-        $access = nexrec_nexapp_check_access($token);
+        $access = null;
+        if (!nexrec_nexapp_looks_like_jwt($blob)) {
+            $access = nexrec_nexapp_redeem_launch($blob);
+        } else {
+            $access = nexrec_nexapp_check_access($blob);
+        }
         if (empty($access['ok'])) {
             nexrec_auth_fail((int) ($access['status'] ?? 401), (string) ($access['error'] ?? 'unauthorized'));
         }
         nexrec_login_nexapp($access);
-        nexrec_auth_ok(['user' => nexrec_me_payload(), 'source' => 'nexapp']);
+        $extra = ['user' => nexrec_me_payload(), 'source' => 'nexapp'];
+        if (!empty($access['theme'])) {
+            $extra['theme'] = $access['theme'];
+        }
+        if (!empty($access['next']) && is_string($access['next'])) {
+            $extra['next'] = $access['next'];
+        }
+        nexrec_auth_ok($extra);
     }
 
     if ($action === 'nexapp_status') {
         $enabled = getenv('NEXREC_NEXAPP_ENABLED');
         $on = is_string($enabled) && in_array(strtolower($enabled), ['1', 'true', 'yes'], true);
+        $next = '/login';
         nexrec_auth_ok([
             'enabled' => $on,
-            'login_url' => $on ? nexrec_nexapp_login_url('/login') : null,
-            'instance_id' => getenv('NEXREC_INSTANCE_ID') ?: null,
+            'login_url' => $on ? nexrec_nexapp_sso_url($next) : null,
+            'launch_url' => $on ? nexrec_nexapp_sso_url($next) : null,
+            'service_id' => nexrec_nexapp_service_id(),
+            'wan_redeem' => true,
         ]);
     }
 

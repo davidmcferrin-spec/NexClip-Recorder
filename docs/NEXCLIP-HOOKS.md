@@ -1,102 +1,123 @@
-# NexClip studio recorder schedule — v0 contract
+# NexClip Mode 2 — continuous_24x7 export-request contract
 
-NexClip (MAM) was not readable in this environment. This is the **hook
-surface** the recorder implements so NexClip can create exports from
-already-recorded 5-minute chunks for scheduled studio inputs.
+This **is** NexCLIP Recorder. Replaces the invented
+`/api/studio/recorder-schedule` poll + inbound webhook from the first
+scaffold. Sources: local `NexClip/api/app/recorders/{schemas,routes}.py`
+and ADR 0020 (`docs/references/`).
 
-Update field names when the real NexClip API is available; keep the
-semantics.
+NexClip **never** starts or stops capture. This box records 24/7 in
+5-minute MP4 chunks. Calendar and operators create **export requests**;
+the node stitches the buffer and reports `delivered_path`.
 
-## Mapping
+**Mode 1 `scheduled_with_safety_net` is out of scope** (older simpler
+system). Not a runtime mode and not a later switch. Do not call
+`GET .../schedule`. Mode 1 looks ahead to *start capture*; Mode 2 looks at
+*completed* windows to *export from the already-running buffer*. Export-request
+poll only.
 
-| NexClip idea | Recorder |
-| --- | --- |
-| Studio input / recorder source | `inputs.id` (slug) |
-| Scheduled show window | `[start_at, end_at]` UTC ISO-8601 |
-| “Create recording for this airing” | **Export job** over native chunks (not a new capture session) |
-| File back in the MAM | POST callback with `export_id`, HTTPS URL or local path NexClip can pull |
+Node auth is **not** NexAPP SSO. Enrollment secret + per-node bearer.
+NexClip does not open inbound holes to the recorder (node polls out).
 
-Continuous ingest stays on. Schedule does **not** start/stop FFmpeg in v0
-(that can be a later optimization for dark hours).
+## Register
 
-## Outbound poll (preferred for a WAN/DMZ recorder)
-
-`nexrec-nexclip.py` every `NEXCLIP_SCHEDULE_POLL_S` seconds (systemd timer):
-
-```http
-GET {NEXCLIP_BASE_URL}/api/studio/recorder-schedule
-    ?instance_id={NEXREC_INSTANCE_ID}
-    &from={iso}
-    &to={iso}
-Authorization: Bearer {NEXCLIP_API_KEY}
+```
+POST {NEXCLIP_BASE_URL}{NEXCLIP_API_PREFIX}/recorders/register
+X-Enrollment-Secret: {NEXCLIP_ENROLLMENT_SECRET}
+{ "hostname": "dcwasof2nexrec01", "recorder_type": "srt", "num_slots": 8 }
+→ 201 { "recorder_id", "token" }
 ```
 
-Expected JSON (illustrative):
+`recorder_type`: `decklink` | `srt` | `ndi` only. Mapping on this node:
+
+| Local `source_type` | Sent as |
+| --- | --- |
+| `decklink` | `decklink` |
+| `srt` | `srt` |
+| `ndi` (future) | `ndi` |
+| `rtsp` / `udp` / `tcp` / `rtp` / `testsrc` | `srt` (gap — document until NexClip extends the enum) |
+
+Station override: `NEXCLIP_RECORDER_TYPE`. `num_slots` is clamped to 4–8.
+
+Token is stored in SQLite `settings` (`nexclip_recorder_id`,
+`nexclip_node_token`) or `NEXCLIP_RECORDER_ID` / `NEXCLIP_NODE_TOKEN`.
+
+## Check-in
+
+```
+POST .../recorders/{id}/checkin
+Authorization: Bearer {token}
+{ "status": "online"|"error",
+  "inputs": [{ "slot": 1, "reported_label": "studio-a", "is_present": true,
+               "buffer_earliest_at": "2026-09-01T12:00:00Z" }] }
+→ 204
+```
+
+`buffer_earliest_at` is MIN(ready native chunk `start_at`) for that slot
+(how far the local buffer reaches). Mode 2 always sends it when known.
+
+Local inputs map via `inputs.nexclip_slot` (1–8). Enabled inputs **without**
+an assigned slot do not appear on the hub.
+
+## Export-request poll (Mode 2)
+
+```
+GET .../recorders/{id}/inputs/{slot}/export-requests/next
+→ 200 NextExportRequestResponse
+→ 204 idle
+→ 409 input_not_assigned_to_a_channel
+```
+
+200 body:
 
 ```json
 {
-  "ok": true,
-  "events": [
-    {
-      "id": "sched_9f2c",
-      "input_id": "studio-a",
-      "title": "Morning Show",
-      "start_at": "2026-09-21T14:00:00Z",
-      "end_at": "2026-09-21T15:00:00Z",
-      "protect_export": true,
-      "quality": "full"
-    }
-  ]
+  "export_request_id": "…",
+  "title": "Morning Show",
+  "range_start": "2026-09-21T14:00:00Z",
+  "range_end": "2026-09-21T15:00:00Z",
+  "library_id": null,
+  "relative_dir": "Show/2026/09/CLEAN",
+  "filename": "SHOW_20260921_1400_CLEAN.mp4"
 }
 ```
 
-When `end_at` is in the past and no `exports.nexclip_schedule_id` exists,
-enqueue an export (`scope=one`, `quality` from the event). After the file
-is `done`:
+## Claim + deliver
 
-```http
-POST {NEXCLIP_BASE_URL}/api/studio/recorder-exports
-Authorization: Bearer {NEXCLIP_API_KEY}
-Content-Type: application/json
-
-{
-  "schedule_id": "sched_9f2c",
-  "instance_id": "recorder-01",
-  "input_id": "studio-a",
-  "export_id": "exp_…",
-  "t_in": "2026-09-21T14:00:00Z",
-  "t_out": "2026-09-21T15:00:00Z",
-  "status": "done",
-  "path": "/var/lib/nexrec/storage/exports/exp_….mp4",
-  "url": "https://recorder.example.internal/api/exports/exp_…/file",
-  "size_bytes": 123456
-}
+```
+POST .../export-requests/{request_id}/start  → 201 { "capture_id" }
 ```
 
-## Inbound webhook (if NexClip can reach the recorder)
+Recorder enqueues a local concat/trim export for `[range_start, range_end]`
+on the input mapped to that slot (same worker as the UI export editor).
+When the MP4 is `done`:
 
-```http
-POST /api/nexclip?action=schedule_push
-Authorization: Bearer {NEXCLIP_API_KEY}  or  X-NexClip-Key
+```
+POST .../captures/{capture_id}/complete  { "delivered_path": "/var/lib/nexrec/storage/exports/….mp4" }
+→ 204
 ```
 
-Body: same `events[]` object (one event or a list). Used on trusted LAN.
+On failure:
 
-`POST /api/nexclip?action=export_status` is available for NexClip to poll a
-job without waiting for the callback.
+```
+POST .../captures/{capture_id}/fail  { "error_detail": "…" }  → 204
+```
 
-## Input id agreement
+`relative_dir` / `filename` / `library_id` are hub pathing — v0 writes
+our usual export path and reports that as `delivered_path`. Copying into
+the MAM library tree on a shared mount is NEXT if the station NAS layout
+requires it.
 
-NexClip `input_id` **is** the recorder slug. Configure the same string in
-both UIs (e.g. `studio-a`). v0 does not include a separate mapping table;
-add one if NexClip uses numeric channel ids.
+## Worker
 
-## What v0 actually runs
+`nexrec-nexclip.py` (systemd timer ~60s): register if needed → check-in →
+poll each enrolled slot → start+enqueue → complete/fail finished jobs.
 
-- JSON parse + DB cache (`nexclip_events`)
-- Auto-enqueue export when window ended
-- Callback POST (skipped if `NEXCLIP_BASE_URL` empty)
-- Fixture mode for tests (`NEXCLIP_SCHEDULE_STUB` file path)
+Fixture: `NEXCLIP_MODE2_STUB` JSON (next-export body or `null` for 204).
 
-It does **not** yet understand NexClip’s internal show-clock, rundown, or
-asset metadata. Those belong in a follow-up once the MAM schema is visible.
+## What v0 does not do
+
+- Mode 1 start/stop capture, `GET .../schedule`, or hourly safety_net
+  (**out of scope** — older simpler system)
+- Inbound NexClip webhooks (hub never dials in)
+- NexClip `recorder_type` values beyond decklink/srt/ndi
+- Placing the file at `relative_dir/filename` on the MAM volume

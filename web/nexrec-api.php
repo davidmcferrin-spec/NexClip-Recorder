@@ -47,6 +47,24 @@ function nexrec_valid_input_id(string $id): bool {
     return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,31}$/', $id);
 }
 
+function nexrec_flag(array $body, string $key, int $default = 0): int {
+    if (!array_key_exists($key, $body)) {
+        return $default;
+    }
+    $v = $body[$key];
+    if ($v === true || $v === 1 || $v === '1' || $v === 'true' || $v === 'on') {
+        return 1;
+    }
+    return 0;
+}
+
+function nexrec_float_body(array $body, string $key, float $default): float {
+    if (!array_key_exists($key, $body) || $body[$key] === '' || $body[$key] === null) {
+        return $default;
+    }
+    return (float) $body[$key];
+}
+
 if (PHP_SAPI === 'cli' && getenv('NEXREC_AUTH_HTTP') === false) {
     return;
 }
@@ -115,8 +133,15 @@ try {
         }
         $now = nexrec_now_iso();
         $st = nexrec_db()->prepare(
-            'INSERT INTO inputs (id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,created_at,updated_at)
-             VALUES (:id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:vb,:ab,:rd,:pp,:pe,:c,:u)
+            'INSERT INTO inputs (
+               id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,
+               video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,
+               feat_scte,feat_av_anomaly,feat_captions,feat_transcribe,feat_nielsen,feat_monitors,
+               thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,nexclip_slot,
+               created_at,updated_at)
+             VALUES (
+               :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:vb,:ab,:rd,:pp,:pe,
+               :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:c,:u)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, source_type=excluded.source_type, url=excluded.url,
                decklink_device=excluded.decklink_device, decklink_format=excluded.decklink_format,
@@ -124,7 +149,14 @@ try {
                copy_native=excluded.copy_native, upconvert_1080i=excluded.upconvert_1080i,
                video_bitrate=excluded.video_bitrate, audio_bitrate=excluded.audio_bitrate,
                retention_days=excluded.retention_days, preview_path=excluded.preview_path,
-               preview_enabled=excluded.preview_enabled, updated_at=excluded.updated_at'
+               preview_enabled=excluded.preview_enabled,
+               feat_scte=excluded.feat_scte, feat_av_anomaly=excluded.feat_av_anomaly,
+               feat_captions=excluded.feat_captions, feat_transcribe=excluded.feat_transcribe,
+               feat_nielsen=excluded.feat_nielsen, feat_monitors=excluded.feat_monitors,
+               thresh_freeze_s=excluded.thresh_freeze_s, thresh_black_s=excluded.thresh_black_s,
+               thresh_bars_s=excluded.thresh_bars_s, transcribe_engine=excluded.transcribe_engine,
+               nexclip_slot=excluded.nexclip_slot,
+               updated_at=excluded.updated_at'
         );
         $st->bindValue(':id', $id, SQLITE3_TEXT);
         $st->bindValue(':name', (string) ($body['name'] ?? $id), SQLITE3_TEXT);
@@ -141,6 +173,25 @@ try {
         $st->bindValue(':rd', (int) ($body['retention_days'] ?? 28), SQLITE3_INTEGER);
         $st->bindValue(':pp', $body['preview_path'] ?? ('in' . min($n, 9)), SQLITE3_TEXT);
         $st->bindValue(':pe', !isset($body['preview_enabled']) || !empty($body['preview_enabled']) ? 1 : 0, SQLITE3_INTEGER);
+        $st->bindValue(':scte', nexrec_flag($body, 'feat_scte'), SQLITE3_INTEGER);
+        $st->bindValue(':ava', nexrec_flag($body, 'feat_av_anomaly'), SQLITE3_INTEGER);
+        $st->bindValue(':cc', nexrec_flag($body, 'feat_captions'), SQLITE3_INTEGER);
+        $st->bindValue(':tr', nexrec_flag($body, 'feat_transcribe'), SQLITE3_INTEGER);
+        $st->bindValue(':ni', nexrec_flag($body, 'feat_nielsen'), SQLITE3_INTEGER);
+        $st->bindValue(':mon', nexrec_flag($body, 'feat_monitors'), SQLITE3_INTEGER);
+        $st->bindValue(':tf', nexrec_float_body($body, 'thresh_freeze_s', 2.0));
+        $st->bindValue(':tb', nexrec_float_body($body, 'thresh_black_s', 2.0));
+        $st->bindValue(':tbar', nexrec_float_body($body, 'thresh_bars_s', 5.0));
+        $st->bindValue(':teng', (string) ($body['transcribe_engine'] ?? ''), SQLITE3_TEXT);
+        $slot = (int) ($body['nexclip_slot'] ?? 0);
+        if ($slot < 1 || $slot > 8) {
+            $slot = 0;
+        }
+        if ($slot === 0) {
+            $st->bindValue(':slot', null, SQLITE3_NULL);
+        } else {
+            $st->bindValue(':slot', $slot, SQLITE3_INTEGER);
+        }
         $st->bindValue(':c', $now, SQLITE3_TEXT);
         $st->bindValue(':u', $now, SQLITE3_TEXT);
         $st->execute();
@@ -153,10 +204,14 @@ try {
         if (!nexrec_valid_input_id($id)) {
             nexrec_api_fail(400, 'invalid id');
         }
-        $st = nexrec_db()->prepare('DELETE FROM chunks WHERE input_id=:i');
-        $st->bindValue(':i', $id, SQLITE3_TEXT);
-        $st->execute();
-        $st = nexrec_db()->prepare('DELETE FROM inputs WHERE id=:i');
+        $db = nexrec_db();
+        foreach (['events', 'captions', 'loudness_samples', 'analyze_jobs', 'chunks'] as $tbl) {
+            $st = $db->prepare("DELETE FROM {$tbl} WHERE input_id=:i");
+            $st->bindValue(':i', $id, SQLITE3_TEXT);
+            $st->execute();
+        }
+        @$db->exec("DELETE FROM captions_fts WHERE input_id='" . SQLite3::escapeString($id) . "'");
+        $st = $db->prepare('DELETE FROM inputs WHERE id=:i');
         $st->bindValue(':i', $id, SQLITE3_TEXT);
         $st->execute();
         nexrec_api_ok(['deleted' => $id]);
@@ -282,7 +337,8 @@ try {
             'NEXREC_NATIVE_RETENTION_DAYS', 'NEXREC_EXPORT_RETENTION_DAYS',
             'NEXREC_BROADCAST_VIDEO_BITRATE', 'NEXREC_LDAP_ENABLED',
             'NEXREC_NEXAPP_ENABLED', 'NEXREC_NEXCLIP_ENABLED',
-            'NEXAPP_ISSUER', 'NEXCLIP_BASE_URL', 'NEXREC_PREVIEW_ENABLED',
+            'NEXAPP_ISSUER', 'NEXAPP_SERVICE_ID', 'NEXCLIP_BASE_URL', 'NEXREC_PREVIEW_ENABLED',
+            'NEXREC_TRANSCRIBE_ENGINE',
         ];
         $out = [];
         foreach ($keys as $k) {
@@ -326,6 +382,192 @@ try {
             }
         }
         nexrec_api_ok(['seeded' => true]);
+    }
+
+    if ($action === 'events_list') {
+        nexrec_require_roles([]);
+        $iid = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        $kind = (string) ($_GET['kind'] ?? $body['kind'] ?? '');
+        $sql = 'SELECT * FROM events WHERE 1=1';
+        if ($iid !== '') {
+            $sql .= ' AND input_id = :i';
+        }
+        if ($kind !== '') {
+            $sql .= ' AND kind = :k';
+        }
+        $sql .= ' ORDER BY t_start DESC LIMIT 200';
+        $st = nexrec_db()->prepare($sql);
+        if ($iid !== '') {
+            $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        }
+        if ($kind !== '') {
+            $st->bindValue(':k', $kind, SQLITE3_TEXT);
+        }
+        $res = $st->execute();
+        $out = [];
+        while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+            $out[] = $row;
+        }
+        nexrec_api_ok(['events' => $out]);
+    }
+
+    if ($action === 'search_text') {
+        nexrec_require_roles([]);
+        $q = trim((string) ($_GET['q'] ?? $body['q'] ?? ''));
+        $iid = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        if ($q === '') {
+            nexrec_api_ok(['hits' => [], 'engine' => 'none']);
+        }
+        $limit = 50;
+        $hits = [];
+        $engine = 'like';
+        $ftsQuery = '"' . str_replace(['"', "'"], '', $q) . '"';
+        $ftsOk = true;
+        try {
+            $sql = 'SELECT id, input_id, kind, t_start, speaker, text FROM captions_fts WHERE captions_fts MATCH :q';
+            if ($iid !== '') {
+                $sql .= ' AND input_id = :i';
+            }
+            $sql .= ' LIMIT :n';
+            $st = nexrec_db()->prepare($sql);
+            if ($st === false) {
+                throw new RuntimeException('no fts');
+            }
+            $st->bindValue(':q', $ftsQuery, SQLITE3_TEXT);
+            if ($iid !== '') {
+                $st->bindValue(':i', $iid, SQLITE3_TEXT);
+            }
+            $st->bindValue(':n', $limit, SQLITE3_INTEGER);
+            $res = $st->execute();
+            while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+                $hits[] = $row;
+            }
+            $engine = 'fts5';
+        } catch (Throwable $e) {
+            $ftsOk = false;
+        }
+        if (!$ftsOk || $engine !== 'fts5') {
+            $sql = 'SELECT id, input_id, kind, service, speaker, t_start, t_end, text FROM captions WHERE text LIKE :q';
+            if ($iid !== '') {
+                $sql .= ' AND input_id = :i';
+            }
+            $sql .= ' ORDER BY t_start DESC LIMIT :n';
+            $st = nexrec_db()->prepare($sql);
+            $st->bindValue(':q', '%' . $q . '%', SQLITE3_TEXT);
+            if ($iid !== '') {
+                $st->bindValue(':i', $iid, SQLITE3_TEXT);
+            }
+            $st->bindValue(':n', $limit, SQLITE3_INTEGER);
+            $res = $st->execute();
+            $hits = [];
+            while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+                $hits[] = $row;
+            }
+            $engine = 'like';
+        }
+        nexrec_api_ok(['hits' => $hits, 'engine' => $engine, 'q' => $q]);
+    }
+
+    if ($action === 'loudness_chart') {
+        nexrec_require_roles([]);
+        $iid = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        $tIn = (string) ($_GET['t_in'] ?? $body['t_in'] ?? '');
+        $tOut = (string) ($_GET['t_out'] ?? $body['t_out'] ?? '');
+        $sql = 'SELECT * FROM loudness_samples WHERE 1=1';
+        if ($iid !== '') {
+            $sql .= ' AND input_id = :i';
+        }
+        if ($tIn !== '') {
+            $sql .= ' AND t_at >= :tin';
+        }
+        if ($tOut !== '') {
+            $sql .= ' AND t_at <= :tout';
+        }
+        $sql .= ' ORDER BY t_at ASC LIMIT 2000';
+        $st = nexrec_db()->prepare($sql);
+        if ($iid !== '') {
+            $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        }
+        if ($tIn !== '') {
+            $st->bindValue(':tin', $tIn, SQLITE3_TEXT);
+        }
+        if ($tOut !== '') {
+            $st->bindValue(':tout', $tOut, SQLITE3_TEXT);
+        }
+        $res = $st->execute();
+        $out = [];
+        while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+            $out[] = $row;
+        }
+        nexrec_api_ok([
+            'samples' => $out,
+            'target_lkfs' => -24.0,
+            'standard' => 'ITU-R BS.1770 / ATSC A/85 (CALM)',
+            'note' => 'Measure enqueues an ebur128 job; PHP does not shell FFmpeg.',
+        ]);
+    }
+
+    if ($action === 'loudness_enqueue') {
+        nexrec_require_roles(['admin', 'operator']);
+        $iid = strtolower(trim((string) ($body['input_id'] ?? '')));
+        if (!nexrec_valid_input_id($iid)) {
+            nexrec_api_fail(400, 'input_id required');
+        }
+        $tIn = (string) ($body['t_in'] ?? '');
+        $tOut = (string) ($body['t_out'] ?? '');
+        if ($tIn === '' || $tOut === '') {
+            nexrec_api_fail(400, 't_in and t_out required');
+        }
+        $jid = nexrec_new_id('anl');
+        $now = nexrec_now_iso();
+        $st = nexrec_db()->prepare(
+            'INSERT INTO analyze_jobs (id,status,kind,input_id,export_id,t_in,t_out,path,error,result_json,created_at,updated_at)
+             VALUES (:id,"queued","loudness",:i,NULL,:tin,:tout,NULL,NULL,NULL,:c,:u)'
+        );
+        $st->bindValue(':id', $jid, SQLITE3_TEXT);
+        $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        $st->bindValue(':tin', $tIn, SQLITE3_TEXT);
+        $st->bindValue(':tout', $tOut, SQLITE3_TEXT);
+        $st->bindValue(':c', $now, SQLITE3_TEXT);
+        $st->bindValue(':u', $now, SQLITE3_TEXT);
+        $st->execute();
+        nexrec_api_ok(['job_id' => $jid, 'hint' => 'python3 worker/nexrec-analyze.py --once']);
+    }
+
+    if ($action === 'scte224_ingest') {
+        nexrec_require_roles(['admin', 'operator']);
+        $iid = strtolower(trim((string) ($body['input_id'] ?? '')));
+        if (!nexrec_valid_input_id($iid)) {
+            nexrec_api_fail(400, 'input_id required');
+        }
+        $payload = $body['payload'] ?? $body['xml'] ?? $body['json'] ?? null;
+        $summary = (string) ($body['summary'] ?? 'SCTE-224 ESAM message');
+        $tStart = (string) ($body['t_start'] ?? nexrec_now_iso());
+        $eid = nexrec_new_id('evt');
+        $st = nexrec_db()->prepare(
+            'INSERT INTO events (id,input_id,chunk_id,kind,subtype,t_start,t_end,pts,timecode,duration_s,payload_summary,payload_json,created_at)
+             VALUES (:id,:i,NULL,"scte224","esam_http",:ts,NULL,NULL,NULL,NULL,:sum,:pj,:c)'
+        );
+        $st->bindValue(':id', $eid, SQLITE3_TEXT);
+        $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        $st->bindValue(':ts', $tStart, SQLITE3_TEXT);
+        $st->bindValue(':sum', $summary, SQLITE3_TEXT);
+        $st->bindValue(':pj', is_string($payload) ? $payload : json_encode($payload), SQLITE3_TEXT);
+        $st->bindValue(':c', nexrec_now_iso(), SQLITE3_TEXT);
+        $st->execute();
+        nexrec_api_ok(['event_id' => $eid]);
+    }
+
+    if ($action === 'analyze_jobs_list') {
+        nexrec_require_roles(['admin', 'operator']);
+        $out = [];
+        $res = nexrec_db()->query('SELECT * FROM analyze_jobs ORDER BY created_at DESC LIMIT 50');
+        if ($res !== false) {
+            while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+                $out[] = $row;
+            }
+        }
+        nexrec_api_ok(['jobs' => $out]);
     }
 
     nexrec_api_fail(400, 'unknown action');

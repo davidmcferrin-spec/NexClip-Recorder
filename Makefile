@@ -24,6 +24,7 @@ test-php:
 	$(PHP) $(TESTDIR)/test_nexrec_auth.php
 	$(PHP) $(TESTDIR)/test_nexrec_web_router.php
 	$(PHP) $(TESTDIR)/test_nexrec_nexapp.php
+	$(PHP) $(TESTDIR)/test_nexrec_features.php
 
 demo:
 	./test/test_demo_pipeline.sh

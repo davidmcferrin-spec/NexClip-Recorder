@@ -39,6 +39,18 @@ CREATE TABLE IF NOT EXISTS inputs (
   retention_days INTEGER NOT NULL DEFAULT 28,
   preview_path TEXT,
   preview_enabled INTEGER NOT NULL DEFAULT 1,
+  -- Per-input monitoring / intelligence (all default off).
+  feat_scte INTEGER NOT NULL DEFAULT 0,
+  feat_av_anomaly INTEGER NOT NULL DEFAULT 0,
+  feat_captions INTEGER NOT NULL DEFAULT 0,
+  feat_transcribe INTEGER NOT NULL DEFAULT 0,
+  feat_nielsen INTEGER NOT NULL DEFAULT 0,
+  feat_monitors INTEGER NOT NULL DEFAULT 0,
+  thresh_freeze_s REAL NOT NULL DEFAULT 2.0,
+  thresh_black_s REAL NOT NULL DEFAULT 2.0,
+  thresh_bars_s REAL NOT NULL DEFAULT 5.0,
+  transcribe_engine TEXT,
+  nexclip_slot INTEGER,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );
@@ -82,7 +94,8 @@ CREATE TABLE IF NOT EXISTS exports (
   created_by TEXT,
   created_at TEXT NOT NULL,
   expires_at TEXT,
-  nexclip_schedule_id TEXT
+  nexclip_schedule_id TEXT,
+  nexclip_capture_id TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status);
@@ -104,3 +117,80 @@ CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
 );
+
+-- Timeline-aligned intelligence events (SCTE, freeze/black/bars, Nielsen stubs).
+-- t_start/t_end are NTP wall-clock ISO-8601 Z, aligned to the chunk timeline.
+CREATE TABLE IF NOT EXISTS events (
+  id TEXT PRIMARY KEY,
+  input_id TEXT NOT NULL,
+  chunk_id TEXT,
+  kind TEXT NOT NULL,
+  subtype TEXT,
+  t_start TEXT NOT NULL,
+  t_end TEXT,
+  pts REAL,
+  timecode TEXT,
+  duration_s REAL,
+  payload_summary TEXT,
+  payload_json TEXT,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (input_id) REFERENCES inputs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_events_input_start ON events(input_id, t_start);
+CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, input_id);
+
+-- Caption (608/708) and transcript cues. FTS5 virtual table is created in
+-- migrate() when the SQLite build includes fts5 (Ubuntu 24.04 does).
+CREATE TABLE IF NOT EXISTS captions (
+  id TEXT PRIMARY KEY,
+  input_id TEXT NOT NULL,
+  chunk_id TEXT,
+  kind TEXT NOT NULL,
+  service TEXT,
+  speaker TEXT,
+  t_start TEXT NOT NULL,
+  t_end TEXT,
+  pts REAL,
+  timecode TEXT,
+  text TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  FOREIGN KEY (input_id) REFERENCES inputs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_captions_input_start ON captions(input_id, t_start);
+
+-- CALM-oriented loudness samples (ITU-R BS.1770 / ATSC A/85). Export editor.
+CREATE TABLE IF NOT EXISTS loudness_samples (
+  id TEXT PRIMARY KEY,
+  input_id TEXT,
+  export_id TEXT,
+  t_at TEXT NOT NULL,
+  lkfs REAL NOT NULL,
+  momentary REAL,
+  short_term REAL,
+  true_peak REAL,
+  lra REAL,
+  source TEXT NOT NULL DEFAULT 'export_window',
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_loudness_input_t ON loudness_samples(input_id, t_at);
+
+-- Sidecar jobs (loudness measure, optional future analyzers). PHP never shells FFmpeg.
+CREATE TABLE IF NOT EXISTS analyze_jobs (
+  id TEXT PRIMARY KEY,
+  status TEXT NOT NULL DEFAULT 'queued',
+  kind TEXT NOT NULL,
+  input_id TEXT,
+  export_id TEXT,
+  t_in TEXT,
+  t_out TEXT,
+  path TEXT,
+  error TEXT,
+  result_json TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_analyze_status ON analyze_jobs(status, kind);

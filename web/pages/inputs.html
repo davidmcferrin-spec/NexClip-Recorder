@@ -46,6 +46,7 @@
     <div>
       <label>DeckLink device</label><input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
       <label>Preview path</label><input id="preview_path" placeholder="in0">
+      <label>NexClip slot (1–8, Mode 2)</label><input id="nexclip_slot" type="number" min="1" max="8" placeholder="none">
       <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
       <label><input type="checkbox" id="enabled" checked> Enabled</label>
       <label><input type="checkbox" id="live_transcode"> Live transcode to MP4</label>
@@ -54,9 +55,42 @@
       <button type="button" class="primary" id="save">Save input</button>
     </div>
   </div>
+  <div class="panel feat-panel" style="max-width:1100px">
+    <h1>Monitoring / intelligence (per input)</h1>
+    <p class="meta">Sidecar logs and displays. Does not change the Premiere/FCPX record path. See docs/FEATURES.md.</p>
+    <div class="feat-grid">
+      <label><input type="checkbox" id="feat_scte"> Log SCTE-35 / SCTE-104 / SCTE-224</label>
+      <label><input type="checkbox" id="feat_av_anomaly"> Log freeze / color bars / black (duration thresholds)</label>
+      <label><input type="checkbox" id="feat_captions"> Closed captions 608/708 (extract + FTS search)</label>
+      <label><input type="checkbox" id="feat_transcribe"> Audio transcription + diarization (off unless engine set)</label>
+      <label><input type="checkbox" id="feat_nielsen"> Log Nielsen watermark (SDK required; stub if missing)</label>
+      <label><input type="checkbox" id="feat_monitors"> Live WFM / vectorscope / VU / 64-ch RTA panes</label>
+    </div>
+    <div class="thresh-row">
+      <div><label>Freeze ≥ seconds</label><input id="thresh_freeze_s" type="number" value="2" min="0.1" step="0.1"></div>
+      <div><label>Black ≥ seconds</label><input id="thresh_black_s" type="number" value="2" min="0.1" step="0.1"></div>
+      <div><label>Color bars ≥ seconds</label><input id="thresh_bars_s" type="number" value="5" min="0.1" step="0.1"></div>
+      <div><label>Transcribe engine</label>
+        <select id="transcribe_engine">
+          <option value="">Station default / none</option>
+          <option value="whisper.cpp">whisper.cpp</option>
+          <option value="faster-whisper">faster-whisper</option>
+          <option value="none">none</option>
+        </select>
+      </div>
+    </div>
+  </div>
+  <div class="panel" style="max-width:1100px">
+    <h1>Caption / transcript search</h1>
+    <div class="bar">
+      <input id="q" placeholder="natural language…" style="flex:1;min-width:160px">
+      <button type="button" id="search">Search FTS</button>
+    </div>
+    <ul class="search-hits" id="hits"></ul>
+  </div>
   <div class="panel">
     <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Retention</th><th></th></tr></thead>
+      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Slot</th><th>Retention</th><th>Intel</th><th></th></tr></thead>
       <tbody id="rows"></tbody>
     </table>
   </div>
@@ -71,8 +105,12 @@ function refresh() {
     tb.innerHTML = "";
     (d.inputs || []).forEach(function (r) {
       var tr = document.createElement("tr");
+      var intel = ["scte","av","cc","asr","nielsen","mon"].filter(function (_, i) {
+        return [r.feat_scte, r.feat_av_anomaly, r.feat_captions, r.feat_transcribe, r.feat_nielsen, r.feat_monitors][i];
+      }).join(" ") || "—";
       tr.innerHTML = "<td>" + r.id + "</td><td>" + r.name + "</td><td>" + r.source_type +
-        "</td><td>" + (r.preview_path || "") + "</td><td>" + r.retention_days + "d</td><td></td>";
+        "</td><td>" + (r.preview_path || "") + "</td><td>" + (r.nexclip_slot || "—") +
+        "</td><td>" + r.retention_days + "d</td><td>" + intel + "</td><td></td>";
       var btn = document.createElement("button");
       btn.textContent = "Load";
       btn.onclick = function () {
@@ -80,11 +118,22 @@ function refresh() {
         val("source_type").value = r.source_type; val("url").value = r.url || "";
         val("decklink_device").value = r.decklink_device || "";
         val("preview_path").value = r.preview_path || "";
+        val("nexclip_slot").value = r.nexclip_slot || "";
         val("retention_days").value = r.retention_days;
         val("enabled").checked = !!r.enabled;
         val("live_transcode").checked = !!r.live_transcode;
         val("copy_native").checked = !!r.copy_native;
         val("upconvert_1080i").checked = !!r.upconvert_1080i;
+        val("feat_scte").checked = !!r.feat_scte;
+        val("feat_av_anomaly").checked = !!r.feat_av_anomaly;
+        val("feat_captions").checked = !!r.feat_captions;
+        val("feat_transcribe").checked = !!r.feat_transcribe;
+        val("feat_nielsen").checked = !!r.feat_nielsen;
+        val("feat_monitors").checked = !!r.feat_monitors;
+        val("thresh_freeze_s").value = r.thresh_freeze_s || 2;
+        val("thresh_black_s").value = r.thresh_black_s || 2;
+        val("thresh_bars_s").value = r.thresh_bars_s || 5;
+        val("transcribe_engine").value = r.transcribe_engine || "";
       };
       tr.lastChild.appendChild(btn);
       tb.appendChild(tr);
@@ -95,11 +144,35 @@ val("save").onclick = function () {
   NexRecAuth.recApi("input_put", {
     id: val("id").value, name: val("name").value, source_type: val("source_type").value,
     url: val("url").value, decklink_device: val("decklink_device").value,
-    preview_path: val("preview_path").value, retention_days: Number(val("retention_days").value),
+    preview_path: val("preview_path").value, nexclip_slot: Number(val("nexclip_slot").value) || null,
+    retention_days: Number(val("retention_days").value),
     enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
     copy_native: val("copy_native").checked, upconvert_1080i: val("upconvert_1080i").checked,
+    feat_scte: val("feat_scte").checked, feat_av_anomaly: val("feat_av_anomaly").checked,
+    feat_captions: val("feat_captions").checked, feat_transcribe: val("feat_transcribe").checked,
+    feat_nielsen: val("feat_nielsen").checked, feat_monitors: val("feat_monitors").checked,
+    thresh_freeze_s: Number(val("thresh_freeze_s").value),
+    thresh_black_s: Number(val("thresh_black_s").value),
+    thresh_bars_s: Number(val("thresh_bars_s").value),
+    transcribe_engine: val("transcribe_engine").value,
   }).then(function () { document.getElementById("msg").textContent = "saved"; return refresh(); })
     .catch(function (e) { document.getElementById("msg").textContent = e.message; });
+};
+val("search").onclick = function () {
+  var q = val("q").value;
+  NexRecAuth.recApi("search_text", { q: q, input_id: val("id").value || undefined }).then(function (d) {
+    var ul = document.getElementById("hits");
+    ul.innerHTML = "";
+    (d.hits || []).forEach(function (h) {
+      var li = document.createElement("li");
+      li.innerHTML = "<span class=\"meta\">" + (h.t_start || "") + " " + (h.kind || "") +
+        (h.speaker ? " " + h.speaker : "") + "</span> " + (h.text || "");
+      ul.appendChild(li);
+    });
+    if (!(d.hits || []).length) {
+      ul.innerHTML = "<li class=\"meta\">no hits (" + (d.engine || "") + ")</li>";
+    }
+  }).catch(function (e) { document.getElementById("msg").textContent = e.message; });
 };
 val("seed").onclick = function () {
   NexRecAuth.recApi("demo_seed", {}).then(function () {
