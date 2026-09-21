@@ -231,3 +231,82 @@ def faststart_argv(src: str, dest: str, ffmpeg: str = "ffmpeg") -> list[str]:
         ffmpeg, "-hide_banner", "-nostdin", "-y",
         "-i", src, "-c", "copy", "-movflags", "+faststart", dest,
     ]
+
+
+def detect_argv(
+    path: str,
+    freeze_s: float = 2.0,
+    black_s: float = 2.0,
+    ffmpeg: str = "ffmpeg",
+) -> list[str]:
+    """Sidecar freeze/black detect. Does not touch the record/export encode path."""
+    vf = (
+        f"scale=320:-2,"
+        f"blackdetect=d={float(black_s):g}:pix_th=0.10,"
+        f"freezedetect=n=0.003:d={float(freeze_s):g}"
+    )
+    return [
+        ffmpeg, "-hide_banner", "-nostdin",
+        "-i", path, "-an", "-vf", vf, "-f", "null", "-",
+    ]
+
+
+def ebur128_argv(
+    path: str,
+    ffmpeg: str = "ffmpeg",
+    ss: float | None = None,
+    duration: float | None = None,
+) -> list[str]:
+    """ITU-R BS.1770 loudness via FFmpeg ebur128 (ATSC A/85 / CALM review)."""
+    argv = [ffmpeg, "-hide_banner", "-nostdin"]
+    if ss is not None:
+        argv += ["-ss", f"{float(ss):.3f}"]
+    argv += ["-i", path]
+    if duration is not None:
+        argv += ["-t", f"{float(duration):.3f}"]
+    argv += ["-vn", "-af", "ebur128=peak=true:framelog=verbose", "-f", "null", "-"]
+    return argv
+
+
+def ebur128_concat_argv(
+    concat_path: str,
+    ss: float,
+    duration: float,
+    ffmpeg: str = "ffmpeg",
+) -> list[str]:
+    return [
+        ffmpeg, "-hide_banner", "-nostdin",
+        "-f", "concat", "-safe", "0",
+        "-i", concat_path,
+        "-ss", f"{float(ss):.3f}",
+        "-t", f"{float(duration):.3f}",
+        "-vn", "-af", "ebur128=peak=true:framelog=verbose",
+        "-f", "null", "-",
+    ]
+
+
+def extract_srt_argv(path: str, dest: str, ffmpeg: str = "ffmpeg") -> list[str]:
+    """Copy in-band subtitle streams to SRT (CEA-608/708 often need subcc lavfi)."""
+    return [
+        ffmpeg, "-hide_banner", "-nostdin", "-y",
+        "-i", path, "-map", "0:s:0?", "-c:s", "srt", dest,
+    ]
+
+
+def extract_subcc_argv(path: str, dest: str, ffmpeg: str = "ffmpeg") -> list[str]:
+    """Pull 608/708 from video VANC via lavfi movie=…[out0+subcc]."""
+    # Quotes: lavfi movie filter needs the path escaped for ':' in Windows; Linux paths are fine.
+    spec = f"movie={path}[out0+subcc]"
+    return [
+        ffmpeg, "-hide_banner", "-nostdin", "-y",
+        "-f", "lavfi", "-i", spec,
+        "-map", "0:s:0?", "-c:s", "srt", dest,
+    ]
+
+
+def scte_probe_argv(path: str, ffprobe: str = "ffprobe") -> list[str]:
+    return [
+        ffprobe, "-hide_banner", "-loglevel", "error",
+        "-show_packets", "-show_streams", "-print_format", "json",
+        path,
+    ]

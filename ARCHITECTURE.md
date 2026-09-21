@@ -8,6 +8,10 @@ preview, auth, retention, and NexClip hooks.
 pool) is owner-decided — see README **Hardware recommendations**. Do not treat
 this file as a BOM.
 
+**Per-input intelligence** (SCTE, A/V anomalies, captions/FTS, optional ASR,
+Nielsen stub, live analyzers, export LKFS) is owner-required scope — see
+`docs/FEATURES.md`. Sidecars only; the native record encode stays edit-friendly.
+
 ## 1. Deployment modes
 
 ```
@@ -237,7 +241,25 @@ so a DMZ recorder does not need an inbound hole (NexVUE heartbeat pattern).
 | `nexrec-export.service` | Drain `exports` queue |
 | `nexrec-cleanup.timer` | Twice-daily retention |
 | `nexrec-nexclip.timer` | Optional schedule poll |
+| `nexrec-analyze.service` | Sidecar: chunk intelligence + CALM ebur128 jobs |
 | `mediamtx.service` | WHEP |
 
 Workers are Python stdlib. PHP never shells FFmpeg with unsanitized input;
 it writes DB rows. Input ids are `[a-z0-9-]{1,32}`.
+
+## 11. Monitoring / intelligence (sidecar)
+
+See `docs/FEATURES.md`. Summary:
+
+- Per-input SQLite flags on `inputs` (`feat_scte`, `feat_av_anomaly`,
+  `feat_captions`, `feat_transcribe`, `feat_nielsen`, `feat_monitors`) plus
+  freeze/black/bars duration thresholds.
+- After a native chunk is indexed, `nexrec-record` calls `analyze_chunk()`
+  **without** modifying `record_argv`. Detect uses a second FFmpeg
+  (`blackdetect`/`freezedetect` at 320px).
+- Events land in `events` + JSONL. Caption/transcript text in `captions` and
+  FTS5 `captions_fts`.
+- Export editor LKFS: `analyze_jobs` kind `loudness` → `ebur128=peak=true`
+  on the concat/trim window (ITU-R BS.1770 / ATSC A/85 −24 LKFS).
+- Live WFM/vectorscope/VU/64-ch RTA are UI placeholders fed later from the
+  **preview/proxy** decode, not the mezzanine record.

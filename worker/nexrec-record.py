@@ -19,6 +19,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, fetchone, migrate, upsert_input  # noqa: E402
+from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import record_argv  # noqa: E402
 from nexrec_index import scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
@@ -56,8 +57,18 @@ def input_from_env(env: dict[str, str], input_id: str) -> dict:
         "video_bitrate": env.get("VIDEO_BITRATE") or None,
         "audio_bitrate": env.get("AUDIO_BITRATE") or None,
         "retention_days": int(env.get("RETENTION_DAYS") or 28),
-        "preview_path": env.get("PREVIEW_PATH") or f"in0",
+        "preview_path": env.get("PREVIEW_PATH") or "in0",
         "preview_enabled": 1,
+        "feat_scte": 1 if env.get("FEAT_SCTE", "0") in ("1", "true") else 0,
+        "feat_av_anomaly": 1 if env.get("FEAT_AV_ANOMALY", "0") in ("1", "true") else 0,
+        "feat_captions": 1 if env.get("FEAT_CAPTIONS", "0") in ("1", "true") else 0,
+        "feat_transcribe": 1 if env.get("FEAT_TRANSCRIBE", "0") in ("1", "true") else 0,
+        "feat_nielsen": 1 if env.get("FEAT_NIELSEN", "0") in ("1", "true") else 0,
+        "feat_monitors": 1 if env.get("FEAT_MONITORS", "0") in ("1", "true") else 0,
+        "thresh_freeze_s": float(env.get("THRESH_FREEZE_S") or 2),
+        "thresh_black_s": float(env.get("THRESH_BLACK_S") or 2),
+        "thresh_bars_s": float(env.get("THRESH_BARS_S") or 5),
+        "transcribe_engine": env.get("TRANSCRIBE_ENGINE") or "",
         "created_at": iso_z(),
         "updated_at": iso_z(),
     }
@@ -177,6 +188,20 @@ def main(argv: list[str] | None = None) -> int:
                 if rec["path"] not in indexed:
                     indexed.add(rec["path"])
                     print(f"indexed {rec['path']} duration={rec.get('duration_s')}", flush=True)
+                    try:
+                        st = analyze_chunk(
+                            conn,
+                            env,
+                            source,
+                            rec,
+                            ffmpeg=paths["ffmpeg"],
+                            ffprobe=paths["ffprobe"],
+                            storage=paths["storage"],
+                        )
+                        if st.get("events") or st.get("captions"):
+                            print(f"analyze {rec['path']} {st}", flush=True)
+                    except Exception as exc:  # noqa: BLE001 — never fail ingest
+                        print(f"analyze skip: {exc}", file=sys.stderr, flush=True)
             if rc is not None:
                 break
             time.sleep(1.0)

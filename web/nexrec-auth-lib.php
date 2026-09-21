@@ -48,6 +48,41 @@ function nexrec_migrate(): void {
     $schema = dirname(__DIR__) . '/schema.sql';
     $sql = (string) file_get_contents($schema);
     nexrec_db()->exec($sql);
+    nexrec_ensure_input_feature_columns();
+    nexrec_ensure_fts();
+}
+
+function nexrec_ensure_input_feature_columns(): void {
+    $want = [
+        'feat_scte' => 'INTEGER NOT NULL DEFAULT 0',
+        'feat_av_anomaly' => 'INTEGER NOT NULL DEFAULT 0',
+        'feat_captions' => 'INTEGER NOT NULL DEFAULT 0',
+        'feat_transcribe' => 'INTEGER NOT NULL DEFAULT 0',
+        'feat_nielsen' => 'INTEGER NOT NULL DEFAULT 0',
+        'feat_monitors' => 'INTEGER NOT NULL DEFAULT 0',
+        'thresh_freeze_s' => 'REAL NOT NULL DEFAULT 2.0',
+        'thresh_black_s' => 'REAL NOT NULL DEFAULT 2.0',
+        'thresh_bars_s' => 'REAL NOT NULL DEFAULT 5.0',
+        'transcribe_engine' => 'TEXT',
+    ];
+    $have = [];
+    $res = nexrec_db()->query('PRAGMA table_info(inputs)');
+    while ($res !== false && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+        $have[(string) $row['name']] = true;
+    }
+    foreach ($want as $name => $decl) {
+        if (empty($have[$name])) {
+            nexrec_db()->exec('ALTER TABLE inputs ADD COLUMN ' . $name . ' ' . $decl);
+        }
+    }
+}
+
+function nexrec_ensure_fts(): bool {
+    return (bool) nexrec_db()->exec(
+        'CREATE VIRTUAL TABLE IF NOT EXISTS captions_fts USING fts5(
+          id UNINDEXED, input_id UNINDEXED, kind UNINDEXED, t_start UNINDEXED, speaker UNINDEXED, text
+        )'
+    );
 }
 
 function nexrec_row(SQLite3Result|false $res): ?array {

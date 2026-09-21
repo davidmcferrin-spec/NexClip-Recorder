@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from nexrec_db import connect, fetchall, migrate  # noqa: E402
+from nexrec_db import connect, fetchall, migrate, delete_chunk_side_data  # noqa: E402
 from nexrec_util import (  # noqa: E402
     data_paths,
     iso_z,
@@ -75,6 +75,7 @@ def expire_chunks(conn, now) -> int:
         )
         for row in rows:
             unlink_quiet(row["path"])
+            delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
             n += 1
     conn.commit()
@@ -90,6 +91,7 @@ def orphans(conn, storage: str) -> int:
         seen.add(os.path.abspath(row["path"]))
         if not os.path.isfile(row["path"]):
             conn.execute("UPDATE chunks SET orphan=1 WHERE id=?", (row["id"],))
+            delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
             n += 1
     native_root = os.path.join(storage, "inputs")
@@ -132,6 +134,7 @@ def free_space_pass(conn, storage: str, floor: int) -> int:
         if not crow:
             break
         unlink_quiet(crow["path"])
+        delete_chunk_side_data(conn, crow["id"])
         conn.execute("DELETE FROM chunks WHERE id=?", (crow["id"],))
         conn.commit()
         n += 1
