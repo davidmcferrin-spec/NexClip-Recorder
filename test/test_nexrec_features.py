@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -19,11 +20,16 @@ from nexrec_db import (  # noqa: E402
     upsert_input,
 )
 from nexrec_features import (  # noqa: E402
+    analyze_chunk,
     parse_blackdetect,
     parse_ebur128,
     parse_freezedetect,
     parse_scte35_probe,
     parse_srt,
+)
+from nexrec_nielsen import (  # noqa: E402
+    detect_nielsen_presence,
+    normalize_presence_payload,
 )
 from nexrec_ffmpeg import detect_argv, ebur128_argv, record_argv  # noqa: E402
 from nexrec_util import iso_z  # noqa: E402
@@ -159,6 +165,136 @@ class TestFeatures(unittest.TestCase):
         cols = {r[1] for r in conn.execute("PRAGMA table_info(inputs)").fetchall()}
         self.assertIn("feat_scte", cols)
         self.assertIn("thresh_freeze_s", cols)
+
+    def test_nielsen_stub_covers_timeline_without_decode_fields(self):
+        hits = detect_nielsen_presence("/tmp/no-such.mp4", 90, window_s=30)
+        self.assertEqual(len(hits), 1)
+        self.assertEqual(hits[0]["kind"], "nielsen")
+        self.assertEqual(hits[0]["subtype"], "absent")
+        self.assertAlmostEqual(hits[0]["pts"], 0.0)
+        self.assertAlmostEqual(hits[0]["pts_end"], 90.0)
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertFalse(payload["present"])
+        self.assertFalse(payload["audit_grade"])
+        self.assertFalse(payload["decoded"])
+        self.assertEqual(payload["method"], "stub")
+        for banned in ("sid", "layer", "timestamp", "layers"):
+            self.assertNotIn(banned, payload)
+
+    def test_nielsen_detector_swap_splits_present_and_absent(self):
+        class Flip:
+            method = "test"
+
+            def sample(self, path, pts, pts_end):
+                del path, pts_end
+                return pts < 30
+
+        hits = detect_nielsen_presence("/tmp/x.mp4", 90, window_s=30, detector=Flip())
+        self.assertEqual([h["subtype"] for h in hits], ["present", "absent"])
+        self.assertAlmostEqual(hits[0]["pts_end"], 30.0)
+        self.assertAlmostEqual(hits[1]["pts"], 30.0)
+        self.assertAlmostEqual(hits[1]["pts_end"], 90.0)
+        self.assertNotIn("sid", json.loads(hits[0]["payload_json"]))
+
+    def test_nielsen_command_json_drops_decode_fields(self):
+        samples = normalize_presence_payload(
+            [
+                {
+                    "pts": 0,
+                    "pts_end": 10,
+                    "present": True,
+                    "sid": "ABC",
+                    "layer": 1,
+                    "timestamp": "12:00:00",
+                }
+            ]
+        )
+        self.assertEqual(samples, [{"pts": 0.0, "pts_end": 10.0, "present": True}])
+
+    def test_nielsen_presence_command_swap(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        script = os.path.join(tmp.name, "presence.py")
+        media = os.path.join(tmp.name, "chunk.mp4")
+        with open(media, "wb"):
+            pass
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write(
+                "import json,sys\n"
+                "json.dump(["
+                "{'pts':0,'pts_end':15,'present':True,'sid':'NOPE','layer':2},"
+                "{'pts':15,'pts_end':30,'present':False,'timestamp':'01:02:03'}"
+                "], open(sys.argv[2],'w'))\n"
+            )
+        hits = detect_nielsen_presence(
+            media,
+            30,
+            env={
+                "NEXREC_NIELSEN_PRESENCE_CMD": f"{sys.executable} {script} {{input}} {{output}}",
+            },
+        )
+        self.assertEqual([h["subtype"] for h in hits], ["present", "absent"])
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertEqual(payload["method"], "command")
+        self.assertFalse(payload["audit_grade"])
+        self.assertFalse(payload["decoded"])
+        self.assertNotIn("sid", payload)
+        self.assertNotIn("NOPE", hits[0]["payload_json"])
+        self.assertFalse(os.path.exists(media + ".nielsen-presence.json"))
+
+    def test_nielsen_presence_persists_wallclock_every_chunk(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        path = os.path.join(tmp.name, "chunk.mp4")
+        with open(path, "wb"):
+            pass
+        conn = connect(os.path.join(tmp.name, "nexrec.db"))
+        migrate(conn)
+        now = iso_z()
+        source = {
+            "id": "cam",
+            "name": "cam",
+            "source_type": "rtsp",
+            "url": "",
+            "decklink_device": "",
+            "decklink_format": "",
+            "enabled": 1,
+            "live_transcode": 0,
+            "copy_native": 1,
+            "upconvert_1080i": 0,
+            "video_bitrate": None,
+            "audio_bitrate": None,
+            "retention_days": 28,
+            "preview_path": "in0",
+            "preview_enabled": 1,
+            "feat_nielsen": 1,
+            "created_at": now,
+            "updated_at": now,
+        }
+        upsert_input(conn, source)
+        chunk = {
+            "id": "chk1",
+            "input_id": "cam",
+            "path": path,
+            "start_at": "2026-09-21T15:00:00Z",
+            "end_at": "2026-09-21T15:01:30Z",
+            "duration_s": 90,
+            "fps": 30,
+        }
+        stats = analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk, storage=tmp.name)
+        self.assertGreaterEqual(stats["events"], 1)
+        row = dict(conn.execute("SELECT * FROM events WHERE kind='nielsen'").fetchone())
+        self.assertEqual(row["subtype"], "absent")
+        self.assertEqual(row["t_start"], "2026-09-21T15:00:00Z")
+        self.assertEqual(row["t_end"], "2026-09-21T15:01:30Z")
+        self.assertEqual(row["timecode"], "15:00:00:00")
+        payload = json.loads(row["payload_json"])
+        self.assertFalse(payload["audit_grade"])
+        self.assertNotIn("sid", payload)
+        chunk2 = dict(chunk, id="chk2", start_at="2026-09-21T15:01:30Z", end_at="2026-09-21T15:03:00Z")
+        analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk2, storage=tmp.name)
+        n = conn.execute("SELECT COUNT(*) FROM events WHERE kind='nielsen'").fetchone()[0]
+        self.assertEqual(n, 2)
 
 
 if __name__ == "__main__":

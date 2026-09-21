@@ -14,7 +14,7 @@ Canonical host sizing remains README **Hardware recommendations**.
 | Freeze / bars / black | `FEAT_AV_ANOMALY` | FFmpeg `blackdetect` + `freezedetect` after chunk close; log only if duration ≥ threshold | SMPTE color-bar detector (no FFmpeg filter today); DeckLink-side analyzers |
 | Captions 608/708 | `FEAT_CAPTIONS` | Presence log + SRT extract (`0:s` then lavfi `subcc`) into `captions` + **FTS5** | Full 708 service map, burn-in optional |
 | Transcription + diarization | `FEAT_TRANSCRIBE` | Off unless `NEXREC_TRANSCRIBE_ENGINE` + `NEXREC_TRANSCRIBE_CMD`. Pluggable JSON ingest | whisper.cpp / faster-whisper + diarization on GPU |
-| Nielsen watermark | `FEAT_NIELSEN` | Honest stub event: **no FFmpeg decoder** | Licensed Nielsen Audio Decoder SDK |
+| Nielsen watermark presence | `FEAT_NIELSEN` | Best-effort **presence** log (appears present or absent) on the chunk timeline. **Not** audit-grade decode. No SID, watermark time, or layer | Swap the stub (`NEXREC_NIELSEN_PRESENCE_CMD` or `NielsenPresenceDetector`). Decoder SDK is **not** integrated |
 | Live monitors | `FEAT_MONITORS` | UI panes: WFM, vectorscope, VU, 64-ch RTA placeholders | Decode from preview/proxy; 64-ch from SDI/AES not stereo AAC |
 | CALM / LKFS | (export editor) | Line chart + ebur128 job on marked I/O. ITU-R BS.1770 / ATSC A/85 **−24 LKFS** | Faster framed logs, true-peak alerts |
 
@@ -26,7 +26,7 @@ Duration thresholds (seconds, per input):
 
 ## Storage
 
-- SQLite `events` — SCTE, freeze, black, bars stub, CC presence, Nielsen stub
+- SQLite `events` — SCTE, freeze, black, bars stub, CC presence, Nielsen presence (not a decode)
 - JSONL sidecar `storage/inputs/<id>/events/<chunk>.jsonl`
 - SQLite `captions` + virtual `captions_fts` (FTS5) for caption **and** transcript text
 - SQLite `loudness_samples` — momentary/integrated LKFS vs wall-clock
@@ -45,7 +45,8 @@ LKFS: `action=loudness_chart` / `loudness_enqueue`.
 record@input  →  native MP4 segments (unchanged, H.264+AAC faststart)
               →  index chunk
               →  analyze_chunk() if any FEAT_* on   (scale=320 blackdetect/freezedetect,
-                                                     ffprobe SCTE, optional CC/ASR)
+                                                     ffprobe SCTE, optional CC/ASR,
+                                                     Nielsen presence stub — not a decode)
 
 preview@input →  proxy 960×540 → MediaMTX WHEP
               →  Live WFM / vector / VU / RTA  (v0: graticule placeholders;
@@ -66,14 +67,33 @@ Do not bake API keys. Station env:
 with the hardware recommendation (NVIDIA + 12–16 cores). Keep ASR off unless
 the box has spare NVENC/CUDA (whisper.cpp CUDA or faster-whisper).
 
-## Nielsen (honest)
+## Nielsen presence (not a decode)
 
-FFmpeg has **no** Nielsen NAES2 / NW / CBET decoder. Nielsen’s Audio Decoder
-SDK is proprietary, license-file gated (CBET L1), and historically Linux
-CentOS — not redistributable. Open-source TS tools (`nielsen_inspector`)
-**require that SDK**. v0 stores a one-shot `nielsen/sdk_missing` event when
-the input flag is on. NEXT: optional `NEXREC_NIELSEN_CMD` wrapper if a station
-licenses the SDK.
+Owner decision: **do not** integrate the Nielsen Decoder SDK. **Do not** log
+SID, watermark timestamps, or code layers. FFmpeg has no NAES2 / NW / CBET
+decoder, and this repo does not add a licensed SDK (or a wrapper around one).
+
+When `FEAT_NIELSEN` is on, each closed chunk is passed to a presence detector.
+The builtin detector is a **stub** (`worker/nexrec_nielsen.py`,
+`NielsenPresenceDetector` / `StubNielsenPresenceDetector`) meant to be swapped
+later. It does not read a Nielsen code. It records whether a watermark
+**appears** present or absent in time windows (default **30 s**,
+`NEXREC_NIELSEN_WINDOW_S`), coalesced into spans, aligned to the chunk
+`start_at`:
+
+- `t_start` / `t_end` — NTP wall-clock ISO-8601 Z
+- `timecode` — `HH:MM:SS:FF` from that wall clock
+- `kind=nielsen`, `subtype=present|absent`
+
+Every event sets `audit_grade: false` and `decoded: false`. A stub `absent`
+means **this stub did not detect a watermark**. It is not proof of absence
+and **not** an audit-grade decode.
+
+Optional swap without editing code: `NEXREC_NIELSEN_PRESENCE_CMD` with
+`{input}` and `{output}` (and optional `{duration}`). The command writes a
+JSON array of `{pts, pts_end, present}` only. `sid`, `layer`, and watermark
+`timestamp` fields are ignored. Those logs are still best-effort presence,
+not an SDK decode. There is no `NEXREC_NIELSEN_CMD`.
 
 ## NEXT (not blocking v0 merge)
 
@@ -82,5 +102,4 @@ licenses the SDK.
 - Real SMPTE bars detector (histogram / template); duration gate already stored
 - 64-channel RTA performance on SDI embed / AES67 (proxy AAC is stereo)
 - Transcription GPU pool separate from NVENC record/preview
-- Nielsen SDK integration behind `NEXREC_NIELSEN_CMD`
 - UI filter/search for SCTE events (API + table exist; timeline overlay later)
