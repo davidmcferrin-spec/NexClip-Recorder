@@ -56,25 +56,35 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
 - DeckLink-side analyzers, Nielsen SDK, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
 
-## NexAPP: register each host
+## NexAPP: one `service_id` per host (shared convention)
 
-NexAPP never connects into the recorder. Cookie `NexAPP_AUTH` is host-only.
+NexAPP never connects into a WAN app. Cookie `NexAPP_AUTH` is hub-host-only.
 
-**Convention (all NexAPP WAN apps, including Recorder and standalone NexClip):**
-one unique `service_id` per machine.
+This is a **general NexAPP multi-host pattern**, not Recorder-only. Every
+WAN appliance that users launch from the portal gets its **own unique
+`service_id`** — a recorder host **and** a standalone NexClip host alike.
+Two NexClip boxes must not share `service_id=nexclip`. This repo does
+**not** change NexClip code; NexClip hosts register the same way in NexAPP
+Admin.
 
-In NexAPP Admin, for **this** box:
+| Host (example) | `service_id` | Portal tile |
+| --- | --- | --- |
+| Recorder ctl1 | `nexclip-recorder-ctl1` | Recorder 1 |
+| Recorder ctl2 | `nexclip-recorder-ctl2` | Recorder 2 |
+| Standalone NexClip ctl1 | `nexclip-ctl1` | NexClip 1 |
+| Standalone NexClip ctl2 | `nexclip-ctl2` | NexClip 2 |
 
-1. Catalog: `service_id` (example `nexclip-recorder-ctl1`), display name, HTTPS launch URL.
-2. `config.php` `launch.redeem_secrets.<service_id>` — same value as `NEXAPP_LAUNCH_SECRET` here.
+In NexAPP Admin, **for each machine**:
+
+1. Catalog: unique `service_id`, display name, HTTPS **launch URL** of that box.
+2. `config.php` `launch.redeem_secrets.<service_id>` — same value as that box’s launch secret (`NEXAPP_LAUNCH_SECRET` on a recorder).
 3. Access grants for that `service_id` (`user` | `admin`).
-4. Manifest: `web/nexapp-manifest.json` (`service_id`, `base_path`, icon).
+4. Manifest (`service_id`, `base_path`, icon) so the portal tile matches.
 
-A second recorder — or a second standalone NexClip host — gets a **different**
-`service_id`. Do not share ids. Do not invent `instance_id` as a grant gate.
+Do not share ids. Do not invent `instance_id` as a grant gate.
 
 Operators sign in at `{NEXAPP_ISSUER}/launch.php?service_id=<id>&next=/…`.
-The recorder redeems the ticket at `/api/launch/redeem.php`.
+The landing host redeems the ticket at `/api/launch/redeem.php`.
 
 ## NexClip: Mode 2 only
 

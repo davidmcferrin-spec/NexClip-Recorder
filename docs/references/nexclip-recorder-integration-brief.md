@@ -4,7 +4,7 @@ Source: local trees on DESKTOP-5M42MED (2026-09-21), not GitHub (private repos 4
 
 **Settled on this PR** (do not follow the open questions at the bottom as still open):
 
-- One unique NexAPP `service_id` per host — Recorder **and** standalone NexClip. Distinct portal icons, Access grants, launch URLs, redeem secrets. Not a shared id across machines.
+- One unique NexAPP `service_id` per host — general NexAPP rule, not Recorder-only. Two standalone NexClip hosts need `nexclip-ctl1` and `nexclip-ctl2` (not a shared `nexclip`). Distinct portal icons, Access grants, launch URLs, redeem secrets. This repo does not change NexClip code.
 - NexClip integration is **Mode 2 `continuous_24x7` only**. Mode 1 `scheduled_with_safety_net` / schedule-poll capture is out of scope.
 
 ## Stack facts

@@ -48,25 +48,36 @@ standalone NexClip host — gets its **own unique `service_id`**. Access
 grants, portal icons, launch URLs, and `config.php`
 `launch.redeem_secrets.<service_id>` stay 1:1 with the machine.
 
+Two standalone NexClip hosts must not share `service_id=nexclip`. Two
+recorders must not share `nexclip-recorder`. This repo does **not** change
+NexClip code; it only documents the shared Admin pattern.
+
+| Host (example) | `service_id` |
+| --- | --- |
+| Recorder ctl1 | `nexclip-recorder-ctl1` |
+| Recorder ctl2 | `nexclip-recorder-ctl2` |
+| Standalone NexClip ctl1 | `nexclip-ctl1` |
+| Standalone NexClip ctl2 | `nexclip-ctl2` |
+
 Do **not** share one `service_id` across machines. Do **not** invent an
 `instance_id` grant gate that bypasses AccessService/redeem.
 `NEXREC_INSTANCE_ID` is hostname/display (and NexClip register
 `hostname`) only.
 
-Register **each** host in NexAPP Admin:
+Register **each** host in NexAPP Admin (same four steps for Recorder and
+for standalone NexClip):
 
-1. Catalog row: unique `service_id` (example `nexclip-recorder-ctl1`),
-   display name, HTTPS **launch URL** of that box.
+1. Catalog row: unique `service_id`, display name, HTTPS **launch URL**
+   of that box.
 2. `config.php` → `launch.redeem_secrets.<service_id>` = the secret that
-   box stores as `NEXAPP_LAUNCH_SECRET`.
+   box stores as its launch secret (`NEXAPP_LAUNCH_SECRET` here).
 3. Access grants: grant users/groups that `service_id` (`user` or
    `admin`).
 4. Drop the sibling `nexapp-manifest.json` (`service_id`, `base_path`,
    icon) so the portal tile matches.
 
-A second recorder or a second standalone NexClip repeats the same four
-steps under a different `service_id`. This repo does not change NexClip
-code; it only documents the shared convention.
+A second recorder or a second standalone NexClip repeats those steps under
+a different `service_id`.
 
 ## LDAP
 

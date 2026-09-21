@@ -141,15 +141,23 @@ the hub host. Each WAN appliance redeems a ticket and mints **its own**
 session cookie.
 
 **Settled pattern (general NexAPP, not Recorder-only):** one catalog row
-per machine. A recorder host and a standalone NexClip host each get a
-unique `service_id`, launch URL, redeem secret, Access grants, and
-manifest. Portal shows one tile per machine. Do not share a `service_id`
-across hosts. Do not invent `instance_id` as a grant gate.
+per machine. If two standalone NexClip hosts are deployed, they need
+`nexclip-ctl1` and `nexclip-ctl2` (not a shared `nexclip`), just as two
+recorders need `nexclip-recorder-ctl1` and `nexclip-recorder-ctl2`. This
+repo does not change NexClip code. Each host gets a unique `service_id`,
+launch URL, redeem secret, Access grants, and manifest. Portal shows one
+tile per machine. Do not invent `instance_id` as a grant gate.
 
 Unauthenticated bookmark on a recorder:
 
 ```
 https://nexapp.nexstar.tv/launch.php?service_id=nexclip-recorder-ctl1&next=/export
+```
+
+Same pattern on a standalone NexClip host:
+
+```
+https://nexapp.nexstar.tv/launch.php?service_id=nexclip-ctl1&next=/
 ```
 
 Then `POST /api/launch/redeem.php` with `X-NexApp-Launch-Secret`. Never put

@@ -49,15 +49,24 @@ the WAN, and a NexClip worker at the same time.
 
 ### Multi-host NexAPP (one `service_id` per machine)
 
-This is the general NexAPP WAN pattern (Recorder **and** standalone NexClip
-hosts). Each machine gets its own catalog row:
+This is the **general NexAPP WAN pattern**, not Recorder-only. Recorder
+hosts **and** standalone NexClip hosts each get their own catalog row.
+Two NexClip boxes must not share `service_id=nexclip`. This repo does not
+change NexClip code.
+
+| Host (example) | `service_id` |
+| --- | --- |
+| Recorder ctl1 | `nexclip-recorder-ctl1` |
+| Recorder ctl2 | `nexclip-recorder-ctl2` |
+| Standalone NexClip ctl1 | `nexclip-ctl1` |
+| Standalone NexClip ctl2 | `nexclip-ctl2` |
 
 ```
 NEXAPP_SERVICE_ID=nexclip-recorder-ctl1
 GET {NEXAPP_ACCESS_URL}?service_id=nexclip-recorder-ctl1
 ```
 
-WAN landing:
+WAN landing (same path on a NexClip host with `service_id=nexclip-ctl1`):
 
 ```
 {NEXAPP_ISSUER}/launch.php?service_id=nexclip-recorder-ctl1&next=/live
@@ -66,11 +75,11 @@ POST {NEXAPP_ISSUER}/api/launch/redeem.php
   { "ticket": "…", "service_id": "nexclip-recorder-ctl1" }
 ```
 
-Register each host in NexAPP Admin: unique `service_id`, HTTPS launch URL,
-`launch.redeem_secrets.<id>`, Access grants, manifest. Do **not** share a
-`service_id` across machines. Do **not** invent an `instance_id` grant gate.
-`NEXREC_INSTANCE_ID` is hostname/display only. Do not share one SQLite file
-across hosts.
+Register **each** host in NexAPP Admin: unique `service_id`, HTTPS launch
+URL, `launch.redeem_secrets.<id>`, Access grants, manifest. Do **not**
+share a `service_id` across machines. Do **not** invent an `instance_id`
+grant gate. `NEXREC_INSTANCE_ID` is hostname/display only. Do not share
+one SQLite file across hosts.
 
 ## 2. Media engine: FFmpeg (not a custom muxer)
 
