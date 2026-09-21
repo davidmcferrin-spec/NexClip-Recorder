@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>NexCLIP Recorder — Settings</title>
+<title>NexCLIP Recorder — Setup</title>
 <link rel="stylesheet" href="/assets/nexrec.css">
 <script src="/assets/nexrec-ui.js"></script>
 </head>
@@ -13,7 +13,7 @@
   <a href="/live">Live</a>
   <a href="/export">Export</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
-  <a class="active" href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a class="active" href="/settings" data-auth-role="admin,operator">Setup</a>
   <a href="/users" data-auth-role="admin">Users</a>
   <a href="/services" data-auth-role="admin">Services</a>
   <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
@@ -22,30 +22,151 @@
   <button type="button" class="nav-logout" id="nav-logout">Log out</button>
 </nav>
 <main>
+  <div class="bar">
+    <h1 style="margin:0">Setup / Configuration</h1>
+    <button type="button" class="primary" id="save" hidden>Save</button>
+    <span class="ok-msg" id="msg"></span>
+  </div>
+  <p class="sub" id="policy"></p>
+  <div id="sections"></div>
   <div class="panel">
-    <h1>Station</h1>
-    <p class="sub">Values come from nexrec.env (written by setup.sh / an admin). <code>NEXAPP_SERVICE_ID</code> is unique per host — the same NexAPP rule as standalone NexClip (one catalog id per machine). This page is read-only in v0 so a web request cannot rewrite systemd env.</p>
-    <table><tbody id="rows"></tbody></table>
+    <h2>Bootstrap and secrets</h2>
+    <p class="sub">These stay in <code>nexrec.env</code>. This page never shows secret values. Change them on the host, then restart the units that read them.</p>
+    <table><tbody id="secrets"></tbody></table>
+  </div>
+  <div class="panel" id="pem-panel" hidden>
+    <h2>Paste NexAPP JWT public key</h2>
+    <p class="sub">Optional. Writes a PEM under the data auth directory and points <code>nexapp.public_key_path</code> at that file. The key is not stored in SQLite.</p>
+    <textarea id="pem" rows="6" placeholder="-----BEGIN PUBLIC KEY-----"></textarea>
   </div>
   <div class="panel">
-    <h1>Status</h1>
+    <h2>Runtime status</h2>
     <pre class="meta" id="status" style="white-space:pre-wrap"></pre>
   </div>
 </main>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
-NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(function () {
-  return Promise.all([NexRecAuth.recApi("settings_get"), NexRecAuth.recApi("status")]);
-}).then(function (all) {
-  var tb = document.getElementById("rows");
-  var s = all[0].settings || {};
-  Object.keys(s).forEach(function (k) {
-    var tr = document.createElement("tr");
-    tr.innerHTML = "<th>" + k + "</th><td>" + (s[k] || "—") + "</td>";
-    tb.appendChild(tr);
-  });
-  document.getElementById("status").textContent = JSON.stringify(all[1], null, 2);
+var CAN_EDIT = false;
+NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(function (user) {
+  CAN_EDIT = user && user.role === "admin";
+  return load();
 });
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function fieldInput(f) {
+  var id = "f-" + f.key.replace(/[^a-z0-9]+/gi, "-");
+  var dis = CAN_EDIT ? "" : " disabled";
+  if (f.type === "bool") {
+    var on = f.value === "1" || f.value === "true";
+    return '<label class="check"><input type="checkbox" id="' + id + '" data-key="' + esc(f.key) + '" data-type="bool"' +
+      (on ? " checked" : "") + dis + "> " + esc(f.label) + "</label>";
+  }
+  if (f.type === "enum") {
+    var opts = (f.options || []).map(function (o) {
+      return '<option value="' + esc(o) + '"' + (o === f.value ? " selected" : "") + ">" + esc(o) + "</option>";
+    }).join("");
+    return '<label>' + esc(f.label) + '</label><select id="' + id + '" data-key="' + esc(f.key) + '"' + dis + ">" + opts + "</select>";
+  }
+  if (f.type === "text" || f.type === "command") {
+    return '<label>' + esc(f.label) + '</label><textarea id="' + id + '" data-key="' + esc(f.key) + '" rows="3"' + dis + ">" +
+      esc(f.value || "") + "</textarea>";
+  }
+  var shown = f.value || "";
+  var extra = "";
+  if (f.ui === "minutes") {
+    var sec = Number(f.value || 0);
+    shown = String(Math.round((sec / 60) * 100) / 100);
+    extra = ' data-ui="minutes"';
+  }
+  var inputType = (f.type === "int") ? "number" : "text";
+  return '<label>' + esc(f.label) + '</label><input type="' + inputType + '" id="' + id + '" data-key="' + esc(f.key) + '"' +
+    extra + ' value="' + esc(shown) + '"' + dis + ">";
+}
+function render(data) {
+  document.getElementById("policy").textContent = data.policy || "";
+  document.getElementById("save").hidden = !data.can_edit;
+  document.getElementById("pem-panel").hidden = !data.can_edit;
+  var host = document.getElementById("sections");
+  host.innerHTML = "";
+  var groups = {};
+  var order = [];
+  (data.fields || []).forEach(function (f) {
+    if (!groups[f.section]) {
+      groups[f.section] = [];
+      order.push(f.section);
+    }
+    groups[f.section].push(f);
+  });
+  order.forEach(function (sec) {
+    var panel = document.createElement("div");
+    panel.className = "panel";
+    var title = (groups[sec][0] && groups[sec][0].section_label) || sec;
+    var html = "<h2>" + esc(title) + "</h2>";
+    groups[sec].forEach(function (f) {
+      html += '<div class="setup-field">' + fieldInput(f);
+      if (f.help && f.type !== "bool") html += '<p class="sub">' + esc(f.help) + "</p>";
+      else if (f.help && f.type === "bool") html += '<p class="sub">' + esc(f.help) + "</p>";
+      html += "</div>";
+    });
+    panel.innerHTML = html;
+    host.appendChild(panel);
+  });
+  var sb = document.getElementById("secrets");
+  sb.innerHTML = "";
+  (data.secrets || []).forEach(function (s) {
+    var tr = document.createElement("tr");
+    tr.innerHTML = "<th>" + esc(s.key) + "</th><td>" + (s.set ? "set" : "not set") +
+      "</td><td class='sub'>" + esc(s.note || "") + "</td>";
+    sb.appendChild(tr);
+  });
+}
+function collect() {
+  var settings = {};
+  document.querySelectorAll("[data-key]").forEach(function (el) {
+    var key = el.getAttribute("data-key");
+    if (el.getAttribute("data-type") === "bool" || el.type === "checkbox") {
+      settings[key] = el.checked ? "1" : "0";
+      return;
+    }
+    if (el.getAttribute("data-ui") === "minutes") {
+      var sec = Math.round(Number(el.value) * 60);
+      if (!isFinite(sec) || sec < 1) sec = 300;
+      settings[key] = String(sec);
+      return;
+    }
+    settings[key] = el.value;
+  });
+  var pem = document.getElementById("pem").value.trim();
+  if (pem) settings["nexapp.public_key_pem"] = pem;
+  return settings;
+}
+function load() {
+  return Promise.all([
+    NexRecAuth.recApi("settings_get"),
+    NexRecAuth.recApi("status")
+  ]).then(function (all) {
+    render(all[0]);
+    document.getElementById("status").textContent = JSON.stringify(all[1], null, 2);
+  });
+}
+document.getElementById("save").onclick = function () {
+  var msg = document.getElementById("msg");
+  msg.textContent = "saving…";
+  msg.className = "sub";
+  NexRecAuth.recApi("settings_patch", { settings: collect() }).then(function () {
+    msg.className = "ok-msg";
+    msg.textContent = "Saved. Restart record / cleanup / nexclip units to pick up path and encode changes.";
+    document.getElementById("pem").value = "";
+    return load();
+  }).catch(function (e) {
+    msg.className = "err";
+    msg.textContent = e.message || "save failed";
+  });
+};
 </script>
 </body>
 </html>

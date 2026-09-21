@@ -194,3 +194,25 @@ CREATE TABLE IF NOT EXISTS analyze_jobs (
 );
 
 CREATE INDEX IF NOT EXISTS idx_analyze_status ON analyze_jobs(status, kind);
+
+-- Day-to-day admin (Setup). Secrets stay in nexrec.env; this table is seeded
+-- once from the environment, then the row wins until an operator edits it.
+CREATE TABLE IF NOT EXISTS app_settings (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL DEFAULT '',
+  updated_at TEXT,
+  updated_by TEXT
+);
+
+-- Record-worker heartbeat + last DeckLink/IP signal observation.
+CREATE TABLE IF NOT EXISTS input_heartbeats (
+  input_id TEXT PRIMARY KEY,
+  source_type TEXT NOT NULL DEFAULT '',
+  transport TEXT NOT NULL DEFAULT '',
+  signal TEXT NOT NULL DEFAULT 'unknown',
+  sdi_lock INTEGER,
+  format TEXT NOT NULL DEFAULT '',
+  detail TEXT NOT NULL DEFAULT '',
+  last_chunk_at TEXT,
+  seen_at TEXT NOT NULL
+);

@@ -18,7 +18,8 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from nexrec_db import connect, fetchone, migrate, upsert_input  # noqa: E402
+from nexrec_db import connect, fetchone, migrate, overlay_app_settings, upsert_input  # noqa: E402
+from nexrec_heartbeat import write_heartbeat  # noqa: E402
 from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import record_argv  # noqa: E402
 from nexrec_index import scan_dir  # noqa: E402
@@ -126,9 +127,11 @@ def main(argv: list[str] | None = None) -> int:
         env = load_env_file(args.input_env, env)
 
     paths = data_paths(env)
-    os.makedirs(paths["storage"], exist_ok=True)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    paths = data_paths(env)
+    os.makedirs(paths["storage"], exist_ok=True)
     source = load_input(conn, env, args.input_id)
     if not int(source.get("enabled") or 0):
         print(f"input {args.input_id} disabled", file=sys.stderr)
@@ -202,6 +205,20 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"analyze {rec['path']} {st}", flush=True)
                     except Exception as exc:  # noqa: BLE001 — never fail ingest
                         print(f"analyze skip: {exc}", file=sys.stderr, flush=True)
+            try:
+                write_heartbeat(
+                    conn,
+                    input_id=args.input_id,
+                    source_type=str(source.get("source_type") or ""),
+                    proc_alive=proc.poll() is None,
+                    started_at=t0,
+                    segment_s=seg,
+                    media_root=native_root,
+                    device=str(source.get("decklink_device") or ""),
+                    env=env,
+                )
+            except Exception as exc:  # noqa: BLE001 — heartbeat must not stop ingest
+                print(f"heartbeat skip: {exc}", file=sys.stderr, flush=True)
             if rc is not None:
                 break
             time.sleep(1.0)
@@ -215,6 +232,20 @@ def main(argv: list[str] | None = None) -> int:
                 proc.wait()
         # Final index including last file.
         scan_dir(conn, native_root, args.input_id, kind="native", ffprobe=paths["ffprobe"])
+        try:
+            write_heartbeat(
+                conn,
+                input_id=args.input_id,
+                source_type=str(source.get("source_type") or ""),
+                proc_alive=False,
+                started_at=t0,
+                segment_s=seg,
+                media_root=native_root,
+                device=str(source.get("decklink_device") or ""),
+                env=env,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"heartbeat skip: {exc}", file=sys.stderr, flush=True)
     return 0 if proc.returncode in (0, None, 255, -2, -15) else (proc.returncode or 1)
 
 

@@ -23,6 +23,7 @@ from nexrec_db import (  # noqa: E402
     fetchall,
     fetchone,
     migrate,
+    overlay_app_settings,
 )
 from nexrec_features import analyze_chunk, measure_concat_loudness  # noqa: E402
 from nexrec_util import data_paths, iso_z, load_env_file  # noqa: E402
@@ -149,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = data_paths(env)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    paths = data_paths(env)
     if args.chunk_id:
         print(analyze_indexed_chunk(conn, env, args.chunk_id), flush=True)
         return 0

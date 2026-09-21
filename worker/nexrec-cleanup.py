@@ -12,7 +12,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from nexrec_db import connect, fetchall, migrate, delete_chunk_side_data  # noqa: E402
+from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
 from nexrec_util import (  # noqa: E402
     data_paths,
     iso_z,
@@ -143,9 +143,11 @@ def free_space_pass(conn, storage: str, floor: int) -> int:
 
 def run(env: dict) -> dict:
     paths = data_paths(env)
-    os.makedirs(paths["storage"], exist_ok=True)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    paths = data_paths(env)
+    os.makedirs(paths["storage"], exist_ok=True)
     now = utcnow()
     now_iso = iso_z(now)
     stats = {

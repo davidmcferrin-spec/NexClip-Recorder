@@ -11,7 +11,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from nexrec_db import connect, fetchone, migrate  # noqa: E402
+from nexrec_db import connect, fetchone, migrate, overlay_app_settings  # noqa: E402
 from nexrec_ffmpeg import preview_argv  # noqa: E402
 from nexrec_util import data_paths, load_env_file, valid_input_id  # noqa: E402
 
@@ -32,6 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = data_paths(env)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    paths = data_paths(env)
     row = fetchone(conn, "SELECT * FROM inputs WHERE id=?", (args.input_id,))
     if not row:
         row = {

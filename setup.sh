@@ -40,10 +40,10 @@ chown -R www-data:www-data "$VAR"
 chmod 750 "$VAR" "$VAR/auth"
 
 if [[ ! -f "$ETC/nexrec.env" ]]; then
-  sed "s|^NEXREC_DATA_DIR=.*|NEXREC_DATA_DIR=$VAR|;s|^NEXREC_STORAGE_DIR=.*|NEXREC_STORAGE_DIR=$VAR/storage|;s|^NEXREC_DB=.*|NEXREC_DB=$VAR/nexrec.db|" \
+  sed "s|^NEXREC_DATA_DIR=.*|NEXREC_DATA_DIR=$VAR|;s|^NEXREC_DB=.*|NEXREC_DB=$VAR/nexrec.db|" \
     "$ROOT/nexrec-example.env" > "$ETC/nexrec.env"
   chmod 640 "$ETC/nexrec.env"
-  log "wrote $ETC/nexrec.env (edit secrets locally; file is not in git)"
+  log "wrote $ETC/nexrec.env (bootstrap and secrets only — day-to-day settings are the Setup UI)"
 else
   log "keeping existing $ETC/nexrec.env"
 fi
@@ -69,6 +69,23 @@ if [[ "$ROOT" != "/opt/NexClip-Recorder" ]]; then
     [[ -f "$u" ]] || continue
     sed -i "s|/opt/NexClip-Recorder|$ROOT|g" "$u"
   done
+fi
+
+HELPER="$ROOT/bin/nexrec-systemctl.sh"
+if [[ -f "$HELPER" ]]; then
+  chown root:root "$HELPER"
+  chmod 755 "$HELPER"
+  SUDOERS=/etc/sudoers.d/nexrec-systemctl
+  cat > "$SUDOERS" <<EOF
+# NexCLIP Recorder ops console. The script rejects any unit or verb outside
+# its allowlist. Do not grant www-data a general systemctl.
+www-data ALL=(root) NOPASSWD: $HELPER
+EOF
+  chmod 440 "$SUDOERS"
+  if command -v visudo >/dev/null 2>&1; then
+    visudo -cf "$SUDOERS" || { rm -f "$SUDOERS"; warn "sudoers drop-in rejected"; }
+  fi
+  log "sudoers: www-data NOPASSWD $HELPER"
 fi
 
 systemctl daemon-reload

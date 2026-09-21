@@ -72,8 +72,9 @@ FFmpeg has **no** Nielsen NAES2 / NW / CBET decoder. Nielsen’s Audio Decoder
 SDK is proprietary, license-file gated (CBET L1), and historically Linux
 CentOS — not redistributable. Open-source TS tools (`nielsen_inspector`)
 **require that SDK**. v0 stores a one-shot `nielsen/sdk_missing` event when
-the input flag is on. NEXT: optional `NEXREC_NIELSEN_CMD` wrapper if a station
-licenses the SDK.
+the input flag is on. Optional `NEXREC_NIELSEN_CMD` (Setup field
+`intelligence.nielsen_cmd`) is the licensed wrapper if a station has the SDK.
+Blank still records `sdk_missing` only.
 
 ## NEXT (not blocking v0 merge)
 

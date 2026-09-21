@@ -28,6 +28,7 @@ from nexrec_db import (  # noqa: E402
     fetchone,
     get_setting,
     migrate,
+    overlay_app_settings,
     set_setting,
 )
 from nexrec_util import (  # noqa: E402
@@ -161,7 +162,18 @@ def node_creds(conn, env: dict) -> tuple[str, str]:
 
 def save_creds(conn, recorder_id: str, token: str) -> None:
     set_setting(conn, "nexclip_recorder_id", recorder_id)
+    # Node bearer stays in `settings` (secret). Setup only shows recorder_id.
     set_setting(conn, "nexclip_node_token", token)
+    conn.execute(
+        """
+        INSERT INTO app_settings (key, value, updated_at, updated_by)
+        VALUES ('nexclip.recorder_id', ?, datetime('now'), 'nexclip')
+        ON CONFLICT(key) DO UPDATE SET
+          value=excluded.value, updated_at=excluded.updated_at, updated_by=excluded.updated_by
+        """,
+        (recorder_id,),
+    )
+    conn.commit()
 
 
 def ensure_registered(conn, env: dict, inputs: list[dict]) -> tuple[str, str]:
@@ -391,12 +403,13 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--env", default="")
     args = p.parse_args(argv)
     env = load_env_file(args.env) if args.env else dict(os.environ)
-    if not env_bool(env, "NEXREC_NEXCLIP_ENABLED", False) and not env.get("NEXCLIP_MODE2_STUB"):
-        print("nexclip disabled")
-        return 0
     paths = data_paths(env)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    if not env_bool(env, "NEXREC_NEXCLIP_ENABLED", False) and not env.get("NEXCLIP_MODE2_STUB"):
+        print("nexclip disabled")
+        return 0
     stats = run_once(conn, env)
     print(stats)
     return 0
