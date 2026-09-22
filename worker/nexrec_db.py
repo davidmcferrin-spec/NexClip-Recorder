@@ -1,14 +1,27 @@
 #!/usr/bin/env python3
-"""SQLite helpers for NexCLIP Recorder workers. Stdlib only."""
+"""PostgreSQL helpers for NexCLIP Recorder workers.
+
+Connection settings come from the process environment (bootstrap):
+NEXREC_PGHOST, NEXREC_PGPORT, NEXREC_PGDATABASE, NEXREC_PGUSER,
+NEXREC_PGPASSWORD. A filesystem path is not the database. Tests may still
+pass a temp path or set NEXREC_DB to one; that string only selects a private
+schema inside the local Postgres database.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
-import sqlite3
+import re
 from typing import Any, Iterable
 
+import psycopg2
+import psycopg2.extras
+
 SCHEMA_REL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "schema.sql")
+_SCHEMA_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,62}$")
+_NAMED = re.compile(r"(?<!:):([A-Za-z_][A-Za-z0-9_]*)")
 
 # Additive columns for existing DBs (CREATE TABLE IF NOT EXISTS will not alter).
 INPUT_FEATURE_COLUMNS: list[tuple[str, str]] = [
@@ -41,33 +54,184 @@ INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
     "keep_interlace": None,
 }
 
-FTS_DDL = """
-CREATE VIRTUAL TABLE IF NOT EXISTS captions_fts USING fts5(
-  id UNINDEXED,
-  input_id UNINDEXED,
-  kind UNINDEXED,
-  t_start UNINDEXED,
-  speaker UNINDEXED,
-  text
-)
-"""
+def _safe_schema(name: str) -> str:
+    if not _SCHEMA_RE.match(name):
+        raise RuntimeError(f"invalid postgres schema name: {name}")
+    return name
 
 
-def connect(db_path: str) -> sqlite3.Connection:
-    os.makedirs(os.path.dirname(os.path.abspath(db_path)) or ".", exist_ok=True)
-    conn = sqlite3.connect(db_path, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    conn.execute("PRAGMA journal_mode = WAL")
-    conn.execute("PRAGMA busy_timeout = 5000")
-    return conn
+def schema_for_env(env: dict[str, str]) -> str:
+    explicit = str(env.get("NEXREC_PGSCHEMA") or "").strip()
+    if explicit:
+        return _safe_schema(explicit)
+    legacy = str(env.get("NEXREC_DB") or "").strip()
+    database = str(env.get("NEXREC_PGDATABASE") or "").strip()
+    # A filesystem path is a test isolation key. Station databases stay on public
+    # so a retired NEXREC_DB=.../nexrec.db line cannot move production data.
+    if ("/" in legacy or legacy.endswith(".db")) and database in ("", "nexrec_test"):
+        return "t_" + hashlib.sha1(legacy.encode()).hexdigest()[:16]
+    return "public"
 
 
-def table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
-    return {str(r[1]) for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+def _pg_params(env: dict[str, str]) -> dict[str, Any]:
+    host = str(env.get("NEXREC_PGHOST") or "127.0.0.1")
+    port = str(env.get("NEXREC_PGPORT") or "5432")
+    database = str(env.get("NEXREC_PGDATABASE") or "").strip()
+    user = str(env.get("NEXREC_PGUSER") or "").strip()
+    password = env.get("NEXREC_PGPASSWORD")
+    password = "" if password is None else str(password)
+    if database == "":
+        database = "nexrec_test"
+        user = user or "nexrec_test"
+        password = password or "nexrec_test"
+    elif user == "" or password == "":
+        raise RuntimeError(
+            "PostgreSQL requires NEXREC_PGDATABASE, NEXREC_PGUSER, and NEXREC_PGPASSWORD"
+        )
+    return {
+        "host": host,
+        "port": port,
+        "dbname": database,
+        "user": user,
+        "password": password,
+        "connect_timeout": 8,
+    }
 
 
-def ensure_input_feature_columns(conn: sqlite3.Connection) -> None:
+def adapt_sql(sql: str) -> str:
+    sql = re.sub(r"datetime\(\s*'now'\s*\)", "to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')", sql)
+    sql = sql.replace("IFNULL(", "COALESCE(")
+    sql = re.sub(
+        r"captions_fts\s+MATCH\s+(\?|:[A-Za-z_][A-Za-z0-9_]*)",
+        lambda m: "tsv @@ plainto_tsquery('simple', " + m.group(1) + ")",
+        sql,
+        flags=re.IGNORECASE,
+    )
+    return sql
+
+
+def _split_sql(sql: str) -> list[str]:
+    sql = re.sub(r"--.*?$", "", sql, flags=re.M)
+    parts: list[str] = []
+    buf: list[str] = []
+    in_str = False
+    i = 0
+    while i < len(sql):
+        ch = sql[i]
+        if ch == "'":
+            if in_str and i + 1 < len(sql) and sql[i + 1] == "'":
+                buf.append("''")
+                i += 2
+                continue
+            in_str = not in_str
+            buf.append(ch)
+            i += 1
+            continue
+        if ch == ";" and not in_str:
+            stmt = "".join(buf).strip()
+            if stmt:
+                parts.append(stmt)
+            buf = []
+            i += 1
+            continue
+        buf.append(ch)
+        i += 1
+    tail = "".join(buf).strip()
+    if tail:
+        parts.append(tail)
+    return parts
+
+
+class PgRow(dict):
+    """Dict row that also supports sqlite-style row[0] for a single-column read."""
+
+    def __getitem__(self, key: Any) -> Any:
+        if isinstance(key, int):
+            return list(self.values())[key]
+        return super().__getitem__(key)
+
+
+class PgCursor(psycopg2.extras.RealDictCursor):
+    def fetchone(self) -> PgRow | None:
+        row = super().fetchone()
+        if row is None:
+            return None
+        return PgRow(row)
+
+    def fetchall(self) -> list[PgRow]:
+        return [PgRow(r) for r in super().fetchall()]
+
+
+class PgConn:
+    def __init__(self, raw: Any, schema: str) -> None:
+        self.raw = raw
+        self.schema = schema
+
+    def execute(self, sql: str, params: Any = ()) -> PgCursor:
+        sql = adapt_sql(sql)
+        if isinstance(params, dict):
+            sql = _NAMED.sub(lambda m: "%(" + m.group(1) + ")s", sql)
+            bound = params
+        else:
+            sql = sql.replace("?", "%s")
+            bound = tuple(params or ())
+        cur = self.raw.cursor(cursor_factory=PgCursor)
+        try:
+            cur.execute(sql, bound)
+        except Exception:
+            self.raw.rollback()
+            raise
+        return cur
+
+    def executescript(self, sql: str) -> None:
+        for stmt in _split_sql(sql):
+            self.execute(stmt)
+        self.commit()
+
+    def commit(self) -> None:
+        self.raw.commit()
+
+    def close(self) -> None:
+        self.raw.close()
+
+
+def connect(env: dict[str, str] | str | None = None) -> PgConn:
+    """Open the local Postgres database.
+
+    A str is a test isolation key (often a temp path). It is not a database file.
+    """
+    merged = {k: str(v) for k, v in os.environ.items()}
+    if isinstance(env, str):
+        merged["NEXREC_DB"] = env
+    elif isinstance(env, dict):
+        for key, value in env.items():
+            if value is not None:
+                merged[key] = str(value)
+    schema = schema_for_env(merged)
+    raw = psycopg2.connect(**_pg_params(merged))
+    raw.autocommit = True
+    with raw.cursor() as cur:
+        if schema != "public":
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
+        cur.execute(f"SET search_path TO {schema}")
+    raw.autocommit = False
+    return PgConn(raw, schema)
+
+
+def table_columns(conn: PgConn, table: str) -> set[str]:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", table):
+        raise RuntimeError("invalid table name")
+    rows = conn.execute(
+        """
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema = current_schema() AND table_name = ?
+        """,
+        (table,),
+    ).fetchall()
+    return {str(r["column_name"]) for r in rows}
+
+
+def ensure_input_feature_columns(conn: PgConn) -> None:
     have = table_columns(conn, "inputs")
     for name, decl in INPUT_FEATURE_COLUMNS:
         if name not in have:
@@ -77,13 +241,14 @@ def ensure_input_feature_columns(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE exports ADD COLUMN nexclip_capture_id TEXT")
 
 
-def ensure_fts(conn: sqlite3.Connection) -> bool:
-    try:
-        conn.execute(FTS_DDL)
-        conn.commit()
-        return True
-    except sqlite3.OperationalError:
-        return False
+def ensure_fts(conn: PgConn) -> bool:
+    row = conn.execute(
+        """
+        SELECT 1 FROM information_schema.tables
+        WHERE table_schema = current_schema() AND table_name = 'captions_fts'
+        """
+    ).fetchone()
+    return row is not None
 
 
 def with_input_defaults(rec: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +259,7 @@ def with_input_defaults(rec: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def migrate(conn: sqlite3.Connection, schema_path: str | None = None) -> None:
+def migrate(conn: PgConn, schema_path: str | None = None) -> None:
     path = schema_path or SCHEMA_REL
     with open(path, "r", encoding="utf-8") as fh:
         sql = fh.read()
@@ -104,26 +269,26 @@ def migrate(conn: sqlite3.Connection, schema_path: str | None = None) -> None:
     row = conn.execute("SELECT id FROM schema_migrations ORDER BY id DESC LIMIT 1").fetchone()
     if row is None:
         conn.execute(
-            "INSERT INTO schema_migrations (id, applied_at) VALUES (1, datetime('now'))"
+            "INSERT INTO schema_migrations (id, applied_at) VALUES (1, to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'))"
         )
     row2 = conn.execute("SELECT id FROM schema_migrations WHERE id=2").fetchone()
     if row2 is None:
         conn.execute(
-            "INSERT INTO schema_migrations (id, applied_at) VALUES (2, datetime('now'))"
+            "INSERT INTO schema_migrations (id, applied_at) VALUES (2, to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'))"
         )
     conn.commit()
 
 
-def fetchone(conn: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> dict[str, Any] | None:
+def fetchone(conn: PgConn, sql: str, args: Iterable[Any] = ()) -> dict[str, Any] | None:
     row = conn.execute(sql, tuple(args)).fetchone()
     return dict(row) if row is not None else None
 
 
-def fetchall(conn: sqlite3.Connection, sql: str, args: Iterable[Any] = ()) -> list[dict[str, Any]]:
+def fetchall(conn: PgConn, sql: str, args: Iterable[Any] = ()) -> list[dict[str, Any]]:
     return [dict(r) for r in conn.execute(sql, tuple(args)).fetchall()]
 
 
-def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def upsert_input(conn: PgConn, rec: dict[str, Any]) -> None:
     rec = with_input_defaults(rec)
     conn.execute(
         """
@@ -180,7 +345,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
     conn.commit()
 
 
-def insert_chunk(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def insert_chunk(conn: PgConn, rec: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO chunks (
@@ -211,7 +376,7 @@ def insert_chunk(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
 
 
 def chunks_overlapping(
-    conn: sqlite3.Connection,
+    conn: PgConn,
     input_id: str,
     t_in: str,
     t_out: str,
@@ -233,7 +398,7 @@ def chunks_overlapping(
     )
 
 
-def enqueue_export(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def enqueue_export(conn: PgConn, rec: dict[str, Any]) -> None:
     rec = dict(rec)
     rec.setdefault("nexclip_schedule_id", None)
     rec.setdefault("nexclip_capture_id", None)
@@ -254,12 +419,12 @@ def enqueue_export(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
     conn.commit()
 
 
-def get_setting(conn: sqlite3.Connection, key: str, default: str = "") -> str:
+def get_setting(conn: PgConn, key: str, default: str = "") -> str:
     row = fetchone(conn, "SELECT value FROM settings WHERE key=?", (key,))
     return str(row["value"]) if row and row.get("value") is not None else default
 
 
-def set_setting(conn: sqlite3.Connection, key: str, value: str) -> None:
+def set_setting(conn: PgConn, key: str, value: str) -> None:
     conn.execute(
         "INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
         (key, value),
@@ -271,7 +436,7 @@ def dumps(obj: Any) -> str:
     return json.dumps(obj, separators=(",", ":"))
 
 
-def insert_event(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def insert_event(conn: PgConn, rec: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO events (
@@ -287,7 +452,7 @@ def insert_event(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
     conn.commit()
 
 
-def insert_caption(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def insert_caption(conn: PgConn, rec: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO captions (
@@ -308,12 +473,12 @@ def insert_caption(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
             """,
             rec,
         )
-    except sqlite3.OperationalError:
+    except psycopg2.Error:
         pass
     conn.commit()
 
 
-def insert_loudness(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
+def insert_loudness(conn: PgConn, rec: dict[str, Any]) -> None:
     conn.execute(
         """
         INSERT INTO loudness_samples (
@@ -330,7 +495,7 @@ def insert_loudness(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
 
 
 def search_captions(
-    conn: sqlite3.Connection,
+    conn: PgConn,
     query: str,
     input_id: str = "",
     limit: int = 50,
@@ -340,26 +505,26 @@ def search_captions(
         return []
     limit = max(1, min(int(limit), 200))
     try:
-        sql = "SELECT id, input_id, kind, t_start, speaker, text FROM captions_fts WHERE captions_fts MATCH ?"
+        sql = "SELECT id, input_id, kind, t_start, speaker, text FROM captions_fts WHERE tsv @@ plainto_tsquery('simple', ?)"
         args: list[Any] = [q]
         if input_id:
             sql += " AND input_id = ?"
             args.append(input_id)
-        sql += " LIMIT ?"
+        sql += " LIMIT CAST(? AS integer)"
         args.append(limit)
         return fetchall(conn, sql, args)
-    except sqlite3.OperationalError:
+    except psycopg2.Error:
         sql = "SELECT id, input_id, kind, service, speaker, t_start, t_end, text FROM captions WHERE text LIKE ?"
         args = [f"%{q}%"]
         if input_id:
             sql += " AND input_id = ?"
             args.append(input_id)
-        sql += " ORDER BY t_start DESC LIMIT ?"
+        sql += " ORDER BY t_start DESC LIMIT CAST(? AS integer)"
         args.append(limit)
         return fetchall(conn, sql, args)
 
 
-def delete_chunk_side_data(conn: sqlite3.Connection, chunk_id: str) -> None:
+def delete_chunk_side_data(conn: PgConn, chunk_id: str) -> None:
     ids = [
         r["id"]
         for r in fetchall(conn, "SELECT id FROM captions WHERE chunk_id=?", (chunk_id,))
@@ -369,12 +534,12 @@ def delete_chunk_side_data(conn: sqlite3.Connection, chunk_id: str) -> None:
     for cid in ids:
         try:
             conn.execute("DELETE FROM captions_fts WHERE id=?", (cid,))
-        except sqlite3.OperationalError:
+        except psycopg2.Error:
             break
     conn.commit()
 
 
-def delete_input_side_data(conn: sqlite3.Connection, input_id: str) -> None:
+def delete_input_side_data(conn: PgConn, input_id: str) -> None:
     conn.execute("DELETE FROM events WHERE input_id=?", (input_id,))
     conn.execute("DELETE FROM captions WHERE input_id=?", (input_id,))
     conn.execute("DELETE FROM loudness_samples WHERE input_id=?", (input_id,))
@@ -382,7 +547,7 @@ def delete_input_side_data(conn: sqlite3.Connection, input_id: str) -> None:
     conn.execute("DELETE FROM input_heartbeats WHERE input_id=?", (input_id,))
     try:
         conn.execute("DELETE FROM captions_fts WHERE input_id=?", (input_id,))
-    except sqlite3.OperationalError:
+    except psycopg2.Error:
         pass
     conn.commit()
 
@@ -443,7 +608,7 @@ APP_SETTING_ENV: dict[str, str] = {
 _MODE_TO_ENV = {"wan": "nexapp-wan", "alias": "alias", "standalone": "standalone"}
 
 
-def overlay_app_settings(conn: sqlite3.Connection, env: dict[str, str]) -> dict[str, str]:
+def overlay_app_settings(conn: PgConn, env: dict[str, str]) -> dict[str, str]:
     """Prefer app_settings over the process environment unless break-glass is set."""
     out = dict(env)
     flag = str(env.get("NEXREC_ENV_OVERRIDES") or "").strip().lower()
@@ -451,7 +616,7 @@ def overlay_app_settings(conn: sqlite3.Connection, env: dict[str, str]) -> dict[
         return out
     try:
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
-    except sqlite3.OperationalError:
+    except psycopg2.Error:
         return out
     kv = {str(r["key"]): "" if r["value"] is None else str(r["value"]) for r in rows}
     for skey, ekey in APP_SETTING_ENV.items():

@@ -13,7 +13,17 @@ warn() { printf '[nexrec-setup] WARN %s\n' "$*" >&2; }
 
 if [[ "${1:-}" == "--check" ]]; then
   [[ -f "$ETC/nexrec.env" ]] || { echo "missing $ETC/nexrec.env"; exit 1; }
-  [[ -f "$VAR/nexrec.db" ]] || echo "db not yet created"
+  set -a
+  # shellcheck disable=SC1090
+  source "$ETC/nexrec.env"
+  set +a
+  PGPASSWORD="${NEXREC_PGPASSWORD:-}" psql \
+    -h "${NEXREC_PGHOST:-127.0.0.1}" \
+    -p "${NEXREC_PGPORT:-5432}" \
+    -U "${NEXREC_PGUSER:-nexrec}" \
+    -d "${NEXREC_PGDATABASE:-nexrec}" \
+    -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null \
+    || { echo "postgres not reachable"; exit 1; }
   php "$ROOT/web/nexrec-auth-bootstrap.php"
   exit 0
 fi
@@ -26,11 +36,13 @@ fi
 export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq \
-  php-cli php-sqlite3 php-mbstring php-ldap php-curl php-xml \
-  apache2 libapache2-mod-php python3 sqlite3 \
+  php-cli php-pgsql php-mbstring php-ldap php-curl php-xml \
+  apache2 libapache2-mod-php python3 python3-psycopg2 \
+  postgresql postgresql-contrib \
   chrony 2>/dev/null || apt-get install -y \
-  php-cli php-sqlite3 php-mbstring php-ldap php-curl php-xml \
-  apache2 libapache2-mod-php python3 sqlite3
+  php-cli php-pgsql php-mbstring php-ldap php-curl php-xml \
+  apache2 libapache2-mod-php python3 python3-psycopg2 \
+  postgresql postgresql-contrib
 
 timedatectl set-timezone America/New_York 2>/dev/null || true
 systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
@@ -43,13 +55,15 @@ fi
 chmod 750 "$VAR" "$VAR/auth"
 
 if [[ ! -f "$ETC/nexrec.env" ]]; then
-  sed "s|^NEXREC_DATA_DIR=.*|NEXREC_DATA_DIR=$VAR|;s|^NEXREC_DB=.*|NEXREC_DB=$VAR/nexrec.db|" \
+  sed "s|^NEXREC_DATA_DIR=.*|NEXREC_DATA_DIR=$VAR|" \
     "$ROOT/nexrec-example.env" > "$ETC/nexrec.env"
-  chmod 640 "$ETC/nexrec.env"
   log "wrote $ETC/nexrec.env (bootstrap and secrets only — day-to-day settings are the Setup UI)"
 else
   log "keeping existing $ETC/nexrec.env"
 fi
+chgrp www-data "$ETC/nexrec.env"
+chmod 640 "$ETC/nexrec.env"
+bash "$ROOT/bin/nexrec-install-postgres.sh" "$ETC/nexrec.env"
 
 if [[ ! -f "$ETC/inputs/demo.env" ]]; then
   cp "$ROOT/inputs-example.env" "$ETC/inputs/demo.env"
@@ -104,12 +118,23 @@ bash "$ROOT/bin/nexrec-install-media.sh" all
 
 export NEXREC_ENV_FILE="$ETC/nexrec.env"
 export NEXREC_DATA_DIR="$VAR"
-export NEXREC_DB="$VAR/nexrec.db"
+unset NEXREC_DB || true
 php "$ROOT/web/nexrec-auth-bootstrap.php"
 FFPREFIX="${NEXREC_FFMPEG_PREFIX:-/usr/local}"
-if [[ "$FFPREFIX" =~ ^/[A-Za-z0-9/_.-]+$ && -x "$FFPREFIX/bin/ffmpeg" && -f "$VAR/nexrec.db" ]]; then
-  sqlite3 "$VAR/nexrec.db" "UPDATE app_settings SET value='$FFPREFIX/bin/ffmpeg' WHERE key='ffmpeg.path' AND value='/usr/bin/ffmpeg';"
-  sqlite3 "$VAR/nexrec.db" "UPDATE app_settings SET value='$FFPREFIX/bin/ffprobe' WHERE key='ffmpeg.probe' AND value='/usr/bin/ffprobe';"
+if [[ "$FFPREFIX" =~ ^/[A-Za-z0-9/_.-]+$ && -x "$FFPREFIX/bin/ffmpeg" ]]; then
+  set -a
+  # shellcheck disable=SC1090
+  source "$ETC/nexrec.env"
+  set +a
+  PGPASSWORD="${NEXREC_PGPASSWORD}" psql \
+    -h "${NEXREC_PGHOST:-127.0.0.1}" \
+    -p "${NEXREC_PGPORT:-5432}" \
+    -U "${NEXREC_PGUSER}" \
+    -d "${NEXREC_PGDATABASE}" \
+    -v ON_ERROR_STOP=1 <<SQL
+UPDATE app_settings SET value='${FFPREFIX}/bin/ffmpeg' WHERE key='ffmpeg.path' AND value='/usr/bin/ffmpeg';
+UPDATE app_settings SET value='${FFPREFIX}/bin/ffprobe' WHERE key='ffmpeg.probe' AND value='/usr/bin/ffprobe';
+SQL
 fi
 
 CONF=/etc/apache2/conf-available/nexrec-web.conf
@@ -121,6 +146,7 @@ log "enable Apache DocumentRoot $ROOT/web/public (see apache/nexrec-web-apache.c
 systemctl reload apache2 2>/dev/null || warn "apache2 reload skipped"
 
 echo "$ROOT" > "$ETC/repo.path"
+log "Local PostgreSQL role and database are configured. The password is only in $ETC/nexrec.env."
 log "FFmpeg ${NEXREC_FFMPEG_VERSION:-9.0.2} is built into ${NEXREC_FFMPEG_PREFIX:-/usr/local} (libx264, openssl, optional fdk-aac/srt/zvbi/nvenc)."
 log "DeckLink (--enable-decklink and nexrec-decklink-status) is included only when SDK headers are present. Desktop Video drivers are a separate Blackmagic package."
 log "MediaMTX v1.21.1 serves WHEP. Do not enable nexrec-preview@ for DeckLink inputs."

@@ -1,7 +1,5 @@
--- NexCLIP Recorder SQLite schema (WAL). Applied by worker/nexrec_db.py and
--- web/nexrec-auth-lib.php. Keep both in sync.
-
-PRAGMA foreign_keys = ON;
+-- NexCLIP Recorder PostgreSQL schema. Applied by worker/nexrec_db.py and
+-- web/nexrec-auth-lib.php. Local server on the recorder host. Not SQLite.
 
 CREATE TABLE IF NOT EXISTS schema_migrations (
   id INTEGER PRIMARY KEY,
@@ -41,16 +39,15 @@ CREATE TABLE IF NOT EXISTS inputs (
   retention_days INTEGER NOT NULL DEFAULT 28,
   preview_path TEXT,
   preview_enabled INTEGER NOT NULL DEFAULT 1,
-  -- Per-input monitoring / intelligence (all default off).
   feat_scte INTEGER NOT NULL DEFAULT 0,
   feat_av_anomaly INTEGER NOT NULL DEFAULT 0,
   feat_captions INTEGER NOT NULL DEFAULT 0,
   feat_transcribe INTEGER NOT NULL DEFAULT 0,
   feat_nielsen INTEGER NOT NULL DEFAULT 0,
   feat_monitors INTEGER NOT NULL DEFAULT 0,
-  thresh_freeze_s REAL NOT NULL DEFAULT 2.0,
-  thresh_black_s REAL NOT NULL DEFAULT 2.0,
-  thresh_bars_s REAL NOT NULL DEFAULT 5.0,
+  thresh_freeze_s DOUBLE PRECISION NOT NULL DEFAULT 2.0,
+  thresh_black_s DOUBLE PRECISION NOT NULL DEFAULT 2.0,
+  thresh_bars_s DOUBLE PRECISION NOT NULL DEFAULT 5.0,
   transcribe_engine TEXT,
   nexclip_slot INTEGER,
   created_at TEXT NOT NULL,
@@ -64,11 +61,11 @@ CREATE TABLE IF NOT EXISTS chunks (
   kind TEXT NOT NULL DEFAULT 'native',
   start_at TEXT NOT NULL,
   end_at TEXT,
-  duration_s REAL,
+  duration_s DOUBLE PRECISION,
   size_bytes INTEGER,
   width INTEGER,
   height INTEGER,
-  fps REAL,
+  fps DOUBLE PRECISION,
   interlaced INTEGER,
   codec TEXT,
   timecode_start TEXT,
@@ -120,8 +117,6 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
--- Timeline-aligned intelligence events (SCTE, freeze/black/bars, Nielsen presence).
--- t_start/t_end are NTP wall-clock ISO-8601 Z, aligned to the chunk timeline.
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
   input_id TEXT NOT NULL,
@@ -130,9 +125,9 @@ CREATE TABLE IF NOT EXISTS events (
   subtype TEXT,
   t_start TEXT NOT NULL,
   t_end TEXT,
-  pts REAL,
+  pts DOUBLE PRECISION,
   timecode TEXT,
-  duration_s REAL,
+  duration_s DOUBLE PRECISION,
   payload_summary TEXT,
   payload_json TEXT,
   created_at TEXT NOT NULL,
@@ -142,8 +137,6 @@ CREATE TABLE IF NOT EXISTS events (
 CREATE INDEX IF NOT EXISTS idx_events_input_start ON events(input_id, t_start);
 CREATE INDEX IF NOT EXISTS idx_events_kind ON events(kind, input_id);
 
--- Caption (608/708) and transcript cues. FTS5 virtual table is created in
--- migrate() when the SQLite build includes fts5 (Ubuntu 24.04 does).
 CREATE TABLE IF NOT EXISTS captions (
   id TEXT PRIMARY KEY,
   input_id TEXT NOT NULL,
@@ -153,7 +146,7 @@ CREATE TABLE IF NOT EXISTS captions (
   speaker TEXT,
   t_start TEXT NOT NULL,
   t_end TEXT,
-  pts REAL,
+  pts DOUBLE PRECISION,
   timecode TEXT,
   text TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -162,24 +155,35 @@ CREATE TABLE IF NOT EXISTS captions (
 
 CREATE INDEX IF NOT EXISTS idx_captions_input_start ON captions(input_id, t_start);
 
--- CALM-oriented loudness samples (ITU-R BS.1770 / ATSC A/85). Export editor.
+-- Caption search. tsv is maintained by Postgres; workers insert the text columns.
+CREATE TABLE IF NOT EXISTS captions_fts (
+  id TEXT PRIMARY KEY,
+  input_id TEXT NOT NULL,
+  kind TEXT NOT NULL,
+  t_start TEXT NOT NULL,
+  speaker TEXT,
+  text TEXT NOT NULL,
+  tsv tsvector GENERATED ALWAYS AS (to_tsvector('simple', coalesce(text, ''))) STORED
+);
+
+CREATE INDEX IF NOT EXISTS idx_captions_fts_tsv ON captions_fts USING GIN (tsv);
+
 CREATE TABLE IF NOT EXISTS loudness_samples (
   id TEXT PRIMARY KEY,
   input_id TEXT,
   export_id TEXT,
   t_at TEXT NOT NULL,
-  lkfs REAL NOT NULL,
-  momentary REAL,
-  short_term REAL,
-  true_peak REAL,
-  lra REAL,
+  lkfs DOUBLE PRECISION NOT NULL,
+  momentary DOUBLE PRECISION,
+  short_term DOUBLE PRECISION,
+  true_peak DOUBLE PRECISION,
+  lra DOUBLE PRECISION,
   source TEXT NOT NULL DEFAULT 'export_window',
   created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_loudness_input_t ON loudness_samples(input_id, t_at);
 
--- Sidecar jobs (loudness measure, optional future analyzers). PHP never shells FFmpeg.
 CREATE TABLE IF NOT EXISTS analyze_jobs (
   id TEXT PRIMARY KEY,
   status TEXT NOT NULL DEFAULT 'queued',
@@ -197,8 +201,6 @@ CREATE TABLE IF NOT EXISTS analyze_jobs (
 
 CREATE INDEX IF NOT EXISTS idx_analyze_status ON analyze_jobs(status, kind);
 
--- Day-to-day admin (Setup). Secrets stay in nexrec.env; this table is seeded
--- once from the environment, then the row wins until an operator edits it.
 CREATE TABLE IF NOT EXISTS app_settings (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL DEFAULT '',
@@ -206,7 +208,6 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_by TEXT
 );
 
--- Record-worker heartbeat + last DeckLink/IP signal observation.
 CREATE TABLE IF NOT EXISTS input_heartbeats (
   input_id TEXT PRIMARY KEY,
   source_type TEXT NOT NULL DEFAULT '',

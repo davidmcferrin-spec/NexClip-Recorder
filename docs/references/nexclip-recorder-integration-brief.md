@@ -12,7 +12,7 @@ Source: local trees on DESKTOP-5M42MED (2026-09-21), not GitHub (private repos 4
 |-----|-------|------|
 | **NexAPP** 0.10.2 | PHP 8.2+/Apache/PostgreSQL/Ubuntu 24.04+ | Local + **Entra SAML** (not LDAP). Cookie `NexAPP_AUTH` RS256 JWT |
 | **NexClip** 0.1.0 | Python FastAPI + PostgreSQL + Apache vhost | NexAPP redirect SSO + **local passwords**. **LDAP removed** (ADR 0025/0029) |
-| **NexCLIP Recorder** v0 | PHP/Apache/SQLite (NexVUE-shaped) | Must align below |
+| **NexCLIP Recorder** v0 | PHP/Apache/local PostgreSQL (NexVUE-shaped UI) | Must align below |
 
 ## NexAPP — how sibling apps authenticate
 
@@ -80,7 +80,7 @@ Standalone host ADR 0029: redirect SSO via `/api/v1/auth/sso/start` → NexAPP `
 2. Implement **WAN launch redeem** path from `nexapp-launch-redeem.php` for multi-host; keep Alias cookie path for same-VM lab.
 3. Update `docs/ASSUMPTIONS.md` and `docs/NEXCLIP-HOOKS.md` (rename to NexClip recorder Mode 2 contract).
 4. Theme: consume NexAPP theme kit tokens (already aimed); cite ADR 0028.
-5. Note Postgres vs SQLite: edge recorder SQLite OK; do not require hub Postgres on the recorder box.
+5. Runtime database is local PostgreSQL on the recorder. Do not require the hub database on this box.
 6. Clarify LDAP = optional local only.
 
 ## Open questions for owner

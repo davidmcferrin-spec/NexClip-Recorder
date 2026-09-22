@@ -35,6 +35,26 @@ function nexrec_settings_catalog(): array {
             'default' => '',
             'help' => 'Operator notes (chrony source, house timecode). Not read by FFmpeg.',
         ],
+        'database.host' => [
+            'section' => 'database', 'label' => 'Postgres host', 'type' => 'string',
+            'env' => 'NEXREC_PGHOST', 'default' => '127.0.0.1',
+            'help' => 'Local PostgreSQL on this recorder. The process connects with nexrec.env. Edit that file and restart to move the server. Password stays in nexrec.env.',
+        ],
+        'database.port' => [
+            'section' => 'database', 'label' => 'Postgres port', 'type' => 'int',
+            'min' => 1, 'max' => 65535, 'env' => 'NEXREC_PGPORT', 'default' => '5432',
+            'help' => 'Bootstrap copy of NEXREC_PGPORT.',
+        ],
+        'database.name' => [
+            'section' => 'database', 'label' => 'Database name', 'type' => 'string',
+            'env' => 'NEXREC_PGDATABASE', 'default' => 'nexrec',
+            'help' => 'Bootstrap copy of NEXREC_PGDATABASE.',
+        ],
+        'database.user' => [
+            'section' => 'database', 'label' => 'Database user', 'type' => 'string',
+            'env' => 'NEXREC_PGUSER', 'default' => 'nexrec',
+            'help' => 'Bootstrap copy of NEXREC_PGUSER. The password is NEXREC_PGPASSWORD in nexrec.env and is not stored here.',
+        ],
 
         'storage.recordings' => [
             'section' => 'storage', 'label' => 'Recordings path', 'type' => 'path',
@@ -196,7 +216,7 @@ function nexrec_settings_catalog(): array {
         'nexapp.public_key_path' => [
             'section' => 'nexapp', 'label' => 'JWT public key path', 'type' => 'path',
             'env' => 'NEXAPP_PUBLIC_KEY_PATH', 'default' => '/var/www/nexapp/keys/jwt_public.pem',
-            'help' => 'PEM file on disk. Paste a key below to write it under the data auth dir. The PEM is not stored in SQLite.',
+            'help' => 'PEM file on disk. Paste a key below to write it under the data auth dir. The PEM is not stored in Postgres.',
         ],
         'nexapp.access_url' => [
             'section' => 'nexapp', 'label' => 'Access URL', 'type' => 'url',
@@ -310,6 +330,7 @@ function nexrec_settings_catalog(): array {
 function nexrec_settings_sections(): array {
     return [
         'station' => 'Station',
+        'database' => 'Database',
         'storage' => 'Storage',
         'retention' => 'Retention',
         'ffmpeg' => 'Recording / FFmpeg',
@@ -322,10 +343,10 @@ function nexrec_settings_sections(): array {
     ];
 }
 
-/** Env vars that stay out of SQLite. Values are never returned. */
+/** Env vars that stay out of app_settings. Values are never returned. */
 function nexrec_settings_secret_env_keys(): array {
     return [
-        'NEXREC_DB' => 'SQLite path (bootstrap)',
+        'NEXREC_PGPASSWORD' => 'PostgreSQL password (bootstrap secret)',
         'NEXREC_DATA_DIR' => 'Data directory (bootstrap)',
         'NEXREC_ADMIN_USER' => 'Initial local admin (first boot only)',
         'NEXREC_ADMIN_PASSWORD' => 'Initial local admin password (first boot only)',
@@ -645,6 +666,6 @@ function nexrec_settings_public(): array {
         'settings' => $flat,
         'fields' => $fields,
         'secrets' => $secrets,
-        'policy' => 'Day-to-day settings live in SQLite app_settings (this page). nexrec.env is bootstrap and secrets only. Set NEXREC_ENV_OVERRIDES=1 to let the env file win for one boot.',
+        'policy' => 'Day-to-day settings live in Postgres app_settings (this page). nexrec.env is bootstrap and secrets only, including the database password. Set NEXREC_ENV_OVERRIDES=1 to let the env file win for one boot.',
     ];
 }

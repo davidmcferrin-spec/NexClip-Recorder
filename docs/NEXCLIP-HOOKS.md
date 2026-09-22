@@ -38,7 +38,7 @@ X-Enrollment-Secret: {NEXCLIP_ENROLLMENT_SECRET}
 
 Station override: `NEXCLIP_RECORDER_TYPE`. `num_slots` is clamped to 4–8.
 
-Token is stored in SQLite `settings` (`nexclip_recorder_id`,
+Token is stored in PostgreSQL `settings` (`nexclip_recorder_id`,
 `nexclip_node_token`) or `NEXCLIP_RECORDER_ID` / `NEXCLIP_NODE_TOKEN`.
 
 ## Check-in

@@ -148,7 +148,7 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
     env = load_env_file(args.env) if args.env else dict(os.environ)
     paths = data_paths(env)
-    conn = connect(paths["db"])
+    conn = connect(env)
     migrate(conn)
     env = overlay_app_settings(conn, env)
     paths = data_paths(env)

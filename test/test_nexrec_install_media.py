@@ -182,6 +182,9 @@ class InstallMediaTests(unittest.TestCase):
     def test_setup_calls_real_installer(self):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
         self.assertIn('bash "$ROOT/bin/nexrec-install-media.sh" all', setup)
+        self.assertIn('bash "$ROOT/bin/nexrec-install-postgres.sh"', setup)
+        self.assertNotIn("php-sqlite3", setup)
+        self.assertNotIn("sqlite3", setup)
         apt = setup.split("apt-get install", 2)[1]
         self.assertNotIn(" ffmpeg ", " " + apt.split("chrony", 1)[0] + " ")
         unit = (ROOT / "systemd" / "mediamtx.service").read_text(encoding="utf-8")
