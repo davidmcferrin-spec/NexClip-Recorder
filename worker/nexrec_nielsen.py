@@ -283,6 +283,8 @@ def detect_nielsen_presence(
         ]
         return _hits(coalesce_presence(fallback), "stub", {"command_error": err})
     if configured:
+        if not samples:
+            samples = [{"pts": 0.0, "pts_end": float(duration_s), "present": False}]
         return _hits(coalesce_presence(samples), "command")
 
     stub = StubNielsenPresenceDetector()

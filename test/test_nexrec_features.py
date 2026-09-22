@@ -258,7 +258,9 @@ class TestFeatures(unittest.TestCase):
                 "NEXREC_NIELSEN_PRESENCE_CMD": f"{sys.executable} {script} {{input}} {{output}}",
             },
         )
-        self.assertEqual(hits, [])
+        self.assertEqual([h["subtype"] for h in hits], ["absent"])
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertEqual(payload["method"], "command")
 
     def test_nielsen_presence_command_error_uses_stub_with_error(self):
         hits = detect_nielsen_presence(
