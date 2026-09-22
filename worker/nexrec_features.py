@@ -306,6 +306,17 @@ def _once_kind(conn, input_id: str, kind: str, subtype: str) -> bool:
     return row is None
 
 
+def _chunk_has_kind(conn, chunk_id: str | None, kind: str) -> bool:
+    if not chunk_id:
+        return False
+    row = fetchone(
+        conn,
+        "SELECT id FROM events WHERE chunk_id=? AND kind=? LIMIT 1",
+        (chunk_id, kind),
+    )
+    return row is not None
+
+
 def analyze_chunk(
     conn,
     env: dict[str, str],
@@ -416,13 +427,14 @@ def analyze_chunk(
 
         if flag_on(source, "feat_nielsen"):
             # Presence only. No Nielsen Decoder SDK, SID, code time, or layer.
-            hits = detect_nielsen_presence(
-                path,
-                _media_duration_s(chunk, env),
-                env=env,
-            )
-            persist_events(conn, source, chunk, hits, jsonl, fps=fps)
-            stats["events"] += len(hits)
+            if not _chunk_has_kind(conn, chunk.get("id"), "nielsen"):
+                hits = detect_nielsen_presence(
+                    path,
+                    _media_duration_s(chunk, env),
+                    env=env,
+                )
+                persist_events(conn, source, chunk, hits, jsonl, fps=fps)
+                stats["events"] += len(hits)
 
         if flag_on(source, "feat_captions"):
             n = _extract_captions(conn, env, source, chunk, ffmpeg, jsonl, fps)

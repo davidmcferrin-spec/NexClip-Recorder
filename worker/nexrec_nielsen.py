@@ -19,6 +19,7 @@ import json
 import os
 import shlex
 import subprocess
+import tempfile
 from typing import Any, Protocol
 
 PRESENCE_NOTE = (
@@ -206,7 +207,9 @@ def _run_presence_command(
     tmpl = (env.get("NEXREC_NIELSEN_PRESENCE_CMD") or "").strip()
     if not tmpl:
         return False, None, None
-    out_path = path + ".nielsen-presence.json"
+    tmp = tempfile.NamedTemporaryFile(prefix="nexrec-nielsen-", suffix=".json", delete=False)
+    out_path = tmp.name
+    tmp.close()
     cmd = (
         tmpl.replace("{input}", path)
         .replace("{output}", out_path)

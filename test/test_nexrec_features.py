@@ -320,6 +320,9 @@ class TestFeatures(unittest.TestCase):
         payload = json.loads(row["payload_json"])
         self.assertFalse(payload["audit_grade"])
         self.assertNotIn("sid", payload)
+        analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk, storage=tmp.name)
+        n = conn.execute("SELECT COUNT(*) FROM events WHERE chunk_id='chk1' AND kind='nielsen'").fetchone()[0]
+        self.assertEqual(n, 1)
         chunk2 = dict(chunk, id="chk2", start_at="2026-09-21T15:01:30Z", end_at="2026-09-21T15:03:00Z")
         analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk2, storage=tmp.name)
         n = conn.execute("SELECT COUNT(*) FROM events WHERE kind='nielsen'").fetchone()[0]
