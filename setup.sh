@@ -27,10 +27,10 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update -qq
 apt-get install -y -qq \
   php-cli php-sqlite3 php-mbstring php-ldap php-curl php-xml \
-  apache2 libapache2-mod-php ffmpeg python3 sqlite3 \
+  apache2 libapache2-mod-php python3 sqlite3 \
   chrony 2>/dev/null || apt-get install -y \
   php-cli php-sqlite3 php-mbstring php-ldap php-curl php-xml \
-  apache2 libapache2-mod-php ffmpeg python3 sqlite3
+  apache2 libapache2-mod-php python3 sqlite3
 
 timedatectl set-timezone America/New_York 2>/dev/null || true
 systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
@@ -61,10 +61,14 @@ if [[ "$ROOT" != "$APP_ROOT" ]]; then
   rsync -a --exclude '.git' --exclude 'data' --exclude 'demo-out' "$ROOT/" "$APP_ROOT/"
 fi
 
-install -m 644 "$ROOT/systemd/"*.service "$ROOT/systemd/"*.timer /etc/systemd/system/ 2>/dev/null || {
-  cp "$ROOT/systemd/"*.service /etc/systemd/system/
-  cp "$ROOT/systemd/"*.timer /etc/systemd/system/
-}
+# mediamtx.service is installed by bin/nexrec-install-media.sh so a foreign
+# unit is not overwritten on every run.
+for unit in "$ROOT"/systemd/*.service "$ROOT"/systemd/*.timer; do
+  [[ -f "$unit" ]] || continue
+  base="$(basename "$unit")"
+  [[ "$base" == "mediamtx.service" ]] && continue
+  install -m 644 "$unit" /etc/systemd/system/"$base"
+done
 
 # Point units at this clone if not using /opt.
 if [[ "$ROOT" != "/opt/NexClip-Recorder" ]]; then
@@ -94,10 +98,19 @@ fi
 systemctl daemon-reload
 systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer || warn "enable units failed"
 
+# Pinned FFmpeg (source build) + MediaMTX release + optional decklink-status.
+# Distro ffmpeg is not the DeckLink capture binary.
+bash "$ROOT/bin/nexrec-install-media.sh" all
+
 export NEXREC_ENV_FILE="$ETC/nexrec.env"
 export NEXREC_DATA_DIR="$VAR"
 export NEXREC_DB="$VAR/nexrec.db"
 php "$ROOT/web/nexrec-auth-bootstrap.php"
+FFPREFIX="${NEXREC_FFMPEG_PREFIX:-/usr/local}"
+if [[ "$FFPREFIX" =~ ^/[A-Za-z0-9/_.-]+$ && -x "$FFPREFIX/bin/ffmpeg" && -f "$VAR/nexrec.db" ]]; then
+  sqlite3 "$VAR/nexrec.db" "UPDATE app_settings SET value='$FFPREFIX/bin/ffmpeg' WHERE key='ffmpeg.path' AND value='/usr/bin/ffmpeg';"
+  sqlite3 "$VAR/nexrec.db" "UPDATE app_settings SET value='$FFPREFIX/bin/ffprobe' WHERE key='ffmpeg.probe' AND value='/usr/bin/ffprobe';"
+fi
 
 CONF=/etc/apache2/conf-available/nexrec-web.conf
 sed "s|@@APP_ROOT@@|$ROOT/web|g" "$ROOT/apache/nexrec-web-apache.conf" > "$CONF"
@@ -108,5 +121,8 @@ log "enable Apache DocumentRoot $ROOT/web/public (see apache/nexrec-web-apache.c
 systemctl reload apache2 2>/dev/null || warn "apache2 reload skipped"
 
 echo "$ROOT" > "$ETC/repo.path"
-log "DeckLink capture is ffmpeg -f decklink (needs --enable-decklink). Status helper: tools/decklink-status (Blackmagic SDK). Do not enable nexrec-preview@ for DeckLink inputs."
+log "FFmpeg ${NEXREC_FFMPEG_VERSION:-9.0.2} is built into ${NEXREC_FFMPEG_PREFIX:-/usr/local} (libx264, openssl, optional fdk-aac/srt/zvbi/nvenc)."
+log "DeckLink (--enable-decklink and nexrec-decklink-status) is included only when SDK headers are present. Desktop Video drivers are a separate Blackmagic package."
+log "MediaMTX v1.21.1 serves WHEP. Do not enable nexrec-preview@ for DeckLink inputs."
+log "Rebuild: NEXREC_FORCE_FFMPEG_BUILD=1. Replace MediaMTX: NEXREC_FORCE_MEDIAMTX=1."
 log "done. login admin / password (must change). VERSION=$(cat "$ROOT/VERSION")"

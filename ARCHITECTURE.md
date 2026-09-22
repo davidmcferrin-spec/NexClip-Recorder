@@ -93,8 +93,8 @@ preview encode are all FFmpeg.** We do not invent a muxer.
 | --- | --- | --- |
 | IP ingest + MP4 segments | FFmpeg `segment` muxer, `segment_atclocktime=1` | Wall-clock 5-minute files, NTP-aligned names/timecode |
 | Concat + trim export | FFmpeg concat demuxer + `-ss`/`-t`, then `+faststart` | Premiere / FCPX |
-| DeckLink | FFmpeg `-f decklink` when FFmpeg is built `--enable-decklink` | One process per sub-device. Preview is a tee in that process. The SDK binary is status-only (`tools/decklink-status`), not a capture path. |
-| WebRTC preview | FFmpeg publishes **proxy** H.264+AAC to MediaMTX RTSP; browsers use **WHEP** | Same egress idea as NexVUE. MediaMTX does **not** transcode. |
+| DeckLink | FFmpeg `-f decklink` when FFmpeg is built `--enable-decklink` | `setup.sh` compiles FFmpeg 9.0.2 into `/usr/local` and passes `--enable-decklink` when SDK headers are present. One process per sub-device. Preview is a tee in that process. The SDK binary is status-only (`tools/decklink-status`), not a capture path. |
+| WebRTC preview | FFmpeg publishes **proxy** H.264+AAC to MediaMTX RTSP; browsers use **WHEP** | Same egress idea as NexVUE. MediaMTX does **not** transcode. `setup.sh` installs pinned MediaMTX v1.21.1. |
 
 NexVUE uses GStreamer + Quick Sync because it is a live return-feed with a
 sub-250 ms budget and exclusive DeckLink opens. Recorder priorities are

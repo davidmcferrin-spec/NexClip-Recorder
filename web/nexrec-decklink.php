@@ -287,7 +287,7 @@ function nexrec_decklink_ffmpeg_bin(): string {
         }
     }
     if ($ffmpeg === '' || !is_executable($ffmpeg)) {
-        foreach (['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg'] as $p) {
+        foreach (['/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'] as $p) {
             if (is_executable($p)) {
                 return $p;
             }
