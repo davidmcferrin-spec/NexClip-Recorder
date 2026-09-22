@@ -228,6 +228,7 @@ def _run_presence_command(
             timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        _remove_file(out_path)
         return True, None, str(exc)[:240]
     if proc.returncode != 0 or not os.path.isfile(out_path):
         err = (proc.stderr or proc.stdout or "presence command failed").strip()
