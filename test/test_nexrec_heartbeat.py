@@ -52,12 +52,12 @@ class TestHeartbeat(unittest.TestCase):
             ("intelligence.nielsen_cmd", "", "t", "test"),
         )
         conn.commit()
-        env = {"NEXREC_FREE_SPACE_FLOOR": "50G", "NEXREC_NIELSEN_CMD": "/opt/nielsen/wrap"}
+        env = {"NEXREC_FREE_SPACE_FLOOR": "50G", "NEXREC_NIELSEN_PRESENCE_CMD": "/opt/nielsen/wrap"}
         out = overlay_app_settings(conn, env)
         self.assertEqual(out["NEXREC_FREE_SPACE_FLOOR"], "4G")
         self.assertEqual(out["NEXREC_DEPLOY_MODE"], "nexapp-wan")
         # A stored empty Nielsen command clears the process env (presence-only stub).
-        self.assertEqual(out["NEXREC_NIELSEN_CMD"], "")
+        self.assertEqual(out["NEXREC_NIELSEN_PRESENCE_CMD"], "")
         forced = overlay_app_settings(conn, {**env, "NEXREC_ENV_OVERRIDES": "1"})
         self.assertEqual(forced["NEXREC_FREE_SPACE_FLOOR"], "50G")
         conn.close()

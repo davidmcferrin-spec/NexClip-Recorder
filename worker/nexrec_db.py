@@ -433,7 +433,7 @@ APP_SETTING_ENV: dict[str, str] = {
     "intelligence.transcribe_cmd": "NEXREC_TRANSCRIBE_CMD",
     "intelligence.transcribe_timeout_s": "NEXREC_TRANSCRIBE_TIMEOUT_S",
     "intelligence.loudness_timeout_s": "NEXREC_LOUDNESS_TIMEOUT_S",
-    "intelligence.nielsen_cmd": "NEXREC_NIELSEN_CMD",
+    "intelligence.nielsen_cmd": "NEXREC_NIELSEN_PRESENCE_CMD",
 }
 
 _MODE_TO_ENV = {"wan": "nexapp-wan", "alias": "alias", "standalone": "standalone"}

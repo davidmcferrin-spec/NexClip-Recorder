@@ -43,7 +43,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
 - `setup.sh`, Apache conf, systemd units, MediaMTX example config
-- Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen stub, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
+- Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen presence log, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
 - `make test` and `make demo`
 
 ### Next (called out, not blocking)
@@ -54,7 +54,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - WAN redeem round-trip verified on a live hub box
 - Proxy rendition written alongside native (export “proxy” currently transcodes on demand)
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
-- DeckLink-side analyzers, Nielsen SDK, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
+- DeckLink-side analyzers, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
 
 ## NexAPP: one `service_id` per host (shared convention)
 
@@ -111,7 +111,7 @@ until you set break-glass `NEXREC_ENV_OVERRIDES=1`. Restart record, cleanup,
 and nexclip units after path or encode changes. The Mode 2 node bearer is
 written to the SQLite `settings` table at register time and is not shown
 on Setup. Nielsen stays presence-only unless `intelligence.nielsen_cmd` points
-at a licensed wrapper.
+at a best-effort presence command; leaving it blank keeps the builtin stub.
 
 **Services** (`/services`, admin) is the ops console: active/enabled/uptime,
 last 80 journal lines, and start/stop/restart/enable/disable. Controls call
@@ -224,7 +224,7 @@ Need PCIe slots for **Duo / Quad 2**. Install Blackmagic drivers on 24.04; **ver
 
 ## Per-input intelligence
 
-Selectable sidecar features (SCTE, freeze/black/bars, captions, optional ASR, Nielsen stub, live WFM/vector/VU/RTA, export LKFS) are documented in **[docs/FEATURES.md](docs/FEATURES.md)**. They do not change the recorded MP4.
+Selectable sidecar features (SCTE, freeze/black/bars, captions, optional ASR, Nielsen presence — not a decode, live WFM/vector/VU/RTA, export LKFS) are documented in **[docs/FEATURES.md](docs/FEATURES.md)**. They do not change the recorded MP4.
 
 ## License
 

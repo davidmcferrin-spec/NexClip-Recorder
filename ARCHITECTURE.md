@@ -12,8 +12,10 @@ pool) is owner-decided — see README **Hardware recommendations**. Do not treat
 this file as a BOM.
 
 **Per-input intelligence** (SCTE, A/V anomalies, captions/FTS, optional ASR,
-Nielsen stub, live analyzers, export LKFS) is owner-required scope — see
+Nielsen presence log, live analyzers, export LKFS) is owner-required scope — see
 `docs/FEATURES.md`. Sidecars only; the native record encode stays edit-friendly.
+Nielsen logging is best-effort presence on the recording timeline, not an
+audit-grade watermark decode.
 
 ## 1. Deployment modes
 
@@ -290,8 +292,9 @@ See `docs/FEATURES.md`. Summary:
 - After a native chunk is indexed, `nexrec-record` calls `analyze_chunk()`
   **without** modifying `record_argv`. Detect uses a second FFmpeg
   (`blackdetect`/`freezedetect` at 320px).
-- Events land in `events` + JSONL. Caption/transcript text in `captions` and
-  FTS5 `captions_fts`.
+- Events land in `events` + JSONL (Nielsen rows are presence spans with NTP
+  wall-clock `t_start`/`timecode`, not SID/layer decode). Caption/transcript
+  text in `captions` and FTS5 `captions_fts`.
 - Export editor LKFS: `analyze_jobs` kind `loudness` → `ebur128=peak=true`
   on the concat/trim window (ITU-R BS.1770 / ATSC A/85 −24 LKFS).
 - Live WFM/vectorscope/VU/64-ch RTA are UI placeholders fed later from the
@@ -310,4 +313,4 @@ and are edited on **Setup** (`/settings`).
 First boot seeds missing keys from the environment, then the database wins.
 `NEXREC_ENV_OVERRIDES=1` is the break-glass switch. Workers call
 `overlay_app_settings()` at start. The Nielsen path stays presence-only:
-an empty `intelligence.nielsen_cmd` still records `sdk_missing`.
+an empty `intelligence.nielsen_cmd` keeps the builtin stub.

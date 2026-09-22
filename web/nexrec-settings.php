@@ -294,9 +294,9 @@ function nexrec_settings_catalog(): array {
             'min' => 5, 'max' => 7200, 'env' => 'NEXREC_LOUDNESS_TIMEOUT_S', 'default' => '180',
         ],
         'intelligence.nielsen_cmd' => [
-            'section' => 'intelligence', 'label' => 'Nielsen SDK command', 'type' => 'command',
-            'env' => 'NEXREC_NIELSEN_CMD', 'default' => '',
-            'help' => 'Optional licensed wrapper. Blank keeps the presence-only sdk_missing event. The SDK is not in this repo.',
+            'section' => 'intelligence', 'label' => 'Nielsen presence command', 'type' => 'command',
+            'env' => 'NEXREC_NIELSEN_PRESENCE_CMD', 'default' => '',
+            'help' => 'Optional best-effort presence command with {input}, {output}, and optional {duration}. Blank keeps the builtin stub.',
         ],
     ];
 }

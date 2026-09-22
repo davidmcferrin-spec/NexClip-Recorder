@@ -118,7 +118,7 @@ CREATE TABLE IF NOT EXISTS settings (
   value TEXT NOT NULL
 );
 
--- Timeline-aligned intelligence events (SCTE, freeze/black/bars, Nielsen stubs).
+-- Timeline-aligned intelligence events (SCTE, freeze/black/bars, Nielsen presence).
 -- t_start/t_end are NTP wall-clock ISO-8601 Z, aligned to the chunk timeline.
 CREATE TABLE IF NOT EXISTS events (
   id TEXT PRIMARY KEY,
