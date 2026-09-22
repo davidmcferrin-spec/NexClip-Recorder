@@ -260,6 +260,17 @@ class TestFeatures(unittest.TestCase):
         )
         self.assertEqual(hits, [])
 
+    def test_nielsen_presence_command_error_uses_stub_with_error(self):
+        hits = detect_nielsen_presence(
+            "/tmp/no-such.mp4",
+            30,
+            env={"NEXREC_NIELSEN_PRESENCE_CMD": "/definitely/missing/bin {input} {output}"},
+        )
+        self.assertEqual([h["subtype"] for h in hits], ["absent"])
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertEqual(payload["method"], "stub")
+        self.assertIn("command_error", payload)
+
     def test_nielsen_presence_persists_wallclock_every_chunk(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
