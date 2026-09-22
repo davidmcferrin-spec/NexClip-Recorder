@@ -27,6 +27,7 @@ from nexrec_ffmpeg import (
     extract_subcc_argv,
     scte_probe_argv,
 )
+from nexrec_nielsen import detect_nielsen_presence
 from nexrec_util import iso_z, new_id, parse_iso, wallclock_timecode
 
 BLACK_RE = re.compile(
@@ -273,6 +274,29 @@ def jsonl_for_chunk(storage: str, input_id: str, chunk_path: str) -> str:
     return os.path.join(storage, "inputs", input_id, "events", f"{base}.jsonl")
 
 
+def _media_duration_s(chunk: dict[str, Any], env: dict[str, str] | None) -> float:
+    """Seconds of this chunk on the recording timeline. Falls back to segment length."""
+    raw = chunk.get("duration_s")
+    try:
+        if raw is not None and float(raw) > 0:
+            return float(raw)
+    except (TypeError, ValueError):
+        pass
+    start, end = chunk.get("start_at"), chunk.get("end_at")
+    if start and end:
+        try:
+            delta = (parse_iso(str(end)) - parse_iso(str(start))).total_seconds()
+            if delta > 0:
+                return float(delta)
+        except (TypeError, ValueError, OSError):
+            pass
+    try:
+        seg = float((env or {}).get("NEXREC_SEGMENT_SECONDS") or 300)
+    except (TypeError, ValueError):
+        seg = 300.0
+    return seg if seg > 0 else 300.0
+
+
 def _once_kind(conn, input_id: str, kind: str, subtype: str) -> bool:
     row = fetchone(
         conn,
@@ -390,28 +414,15 @@ def analyze_chunk(
             persist_events(conn, source, chunk, scte_hits, jsonl, fps=fps)
             stats["events"] += len(scte_hits)
 
-        if flag_on(source, "feat_nielsen") and _once_kind(conn, iid, "nielsen", "sdk_missing"):
-            hits = [
-                {
-                    "kind": "nielsen",
-                    "subtype": "sdk_missing",
-                    "pts": 0.0,
-                    "payload_summary": (
-                        "Nielsen NAES2/NW/CBET decode is not in FFmpeg. Requires a licensed "
-                        "Nielsen Audio Decoder SDK (Linux historically CentOS; CBET L1 needs a "
-                        "license file). Open-source TS tools only wrap that SDK."
-                    ),
-                    "payload_json": json.dumps(
-                        {
-                            "ffmpeg": False,
-                            "engine": env.get("NEXREC_NIELSEN_CMD") or None,
-                        },
-                        separators=(",", ":"),
-                    ),
-                }
-            ]
+        if flag_on(source, "feat_nielsen"):
+            # Presence only. No Nielsen Decoder SDK, SID, code time, or layer.
+            hits = detect_nielsen_presence(
+                path,
+                _media_duration_s(chunk, env),
+                env=env,
+            )
             persist_events(conn, source, chunk, hits, jsonl, fps=fps)
-            stats["events"] += 1
+            stats["events"] += len(hits)
 
         if flag_on(source, "feat_captions"):
             n = _extract_captions(conn, env, source, chunk, ffmpeg, jsonl, fps)
