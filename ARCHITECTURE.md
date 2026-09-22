@@ -312,8 +312,10 @@ See `docs/FEATURES.md`. Summary:
   text in `captions` and `captions_fts` (`tsvector` + GIN).
 - Export editor LKFS: `analyze_jobs` kind `loudness` → `ebur128=peak=true`
   on the concat/trim window (ITU-R BS.1770 / ATSC A/85 −24 LKFS).
-- Live WFM/vectorscope/VU/64-ch RTA are UI placeholders fed later from the
-  **preview/proxy** decode, not the mezzanine record.
+- Live WFM, vectorscope, VU, and 64-band RTA are confidence overlays on the
+  **selected** pane. They sample the decoded WHEP `<video>` (canvas + one
+  Web Audio graph). They do not modify `record_argv`. The proxy is stereo
+  AAC, so this is not 64-channel SDI/AES embed metering.
 
 ## 12. Configuration surface
 
