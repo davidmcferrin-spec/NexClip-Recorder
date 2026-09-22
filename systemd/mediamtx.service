@@ -1,0 +1,17 @@
+# nexrec-managed
+# MediaMTX preview for NexCLIP Recorder. Config is the repo mediamtx.yml
+# copied to /etc/nexrec/mediamtx.yml (RTSP 127.0.0.1:8554, WHEP :8889).
+[Unit]
+Description=MediaMTX (NexCLIP Recorder preview)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/mediamtx /etc/nexrec/mediamtx.yml
+Restart=always
+RestartSec=2
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target

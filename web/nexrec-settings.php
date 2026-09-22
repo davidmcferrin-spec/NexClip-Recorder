@@ -70,11 +70,12 @@ function nexrec_settings_catalog(): array {
 
         'ffmpeg.path' => [
             'section' => 'ffmpeg', 'label' => 'ffmpeg path', 'type' => 'path',
-            'env' => 'NEXREC_FFMPEG', 'default' => '/usr/bin/ffmpeg',
+            'env' => 'NEXREC_FFMPEG', 'default' => '/usr/local/bin/ffmpeg',
+            'help' => 'setup.sh builds FFmpeg 9.0.2 here. Distro /usr/bin/ffmpeg is not the DeckLink build.',
         ],
         'ffmpeg.probe' => [
             'section' => 'ffmpeg', 'label' => 'ffprobe path', 'type' => 'path',
-            'env' => 'NEXREC_FFPROBE', 'default' => '/usr/bin/ffprobe',
+            'env' => 'NEXREC_FFPROBE', 'default' => '/usr/local/bin/ffprobe',
         ],
         'ffmpeg.video_bitrate' => [
             'section' => 'ffmpeg', 'label' => 'Broadcast video bitrate', 'type' => 'bitrate',

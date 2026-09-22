@@ -42,13 +42,13 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Export editor: shared timeline, mark in/out, one-stream vs all-visible, full vs proxy
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
-- `setup.sh`, Apache conf, systemd units, MediaMTX example config
+- `setup.sh` builds pinned **FFmpeg 9.0.2** into `/usr/local` and installs pinned **MediaMTX v1.21.1** plus `mediamtx.service` (not distro `ffmpeg` for DeckLink)
+- DeckLink SDI capture with an in-process preview tee, when `setup.sh` finds SDK headers (`--enable-decklink` + `nexrec-decklink-status`)
 - Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen presence log, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
 - `make test` and `make demo`
 
 ### Next (called out, not blocking)
 
-- Live **DeckLink Duo / Quad 2** ingest (FFmpeg `-f decklink`, preview teed in the same process; needs drivers + `--enable-decklink`)
 - Production MediaMTX TLS / JWT / ICE the way NexVUE does on-station
 - Copy Mode 2 `delivered_path` into NexClip `relative_dir`/`filename` on a shared MAM volume
 - WAN redeem round-trip verified on a live hub box
@@ -165,11 +165,26 @@ Target OS is **Ubuntu 24.04 LTS** on the host class in **Hardware recommendation
 
 ```bash
 sudo ./setup.sh
+```
+
+`setup.sh` is the turnkey path. On a fresh host it:
+
+1. Installs PHP, Apache, and Python.
+2. Downloads **FFmpeg 9.0.2** source, installs codec/protocol build dependencies, compiles, and installs `ffmpeg` and `ffprobe` to `/usr/local` (`--enable-gpl --enable-nonfree --enable-libx264 --enable-openssl`, plus fdk-aac, libsrt, and libzvbi when those packages exist).
+3. Adds `--enable-decklink` when Blackmagic SDK headers are found (`DECKLINK_SDK` or `NEXREC_DECKLINK_SDK`, or a conventional path such as `/opt/decklink-sdk`). If the headers are missing, it still installs an IP-capable FFmpeg and prints that DeckLink was skipped. **Desktop Video drivers are not the SDK headers** — install the driver package separately so `/dev/blackmagic` exists.
+4. Enables NVENC only when an NVIDIA toolkit is detected (`nvidia-smi`, `/usr/local/cuda`, or `NEXREC_ENABLE_NVENC=1`). No GPU is required to compile, and a missing GPU does not fail setup.
+5. Downloads **MediaMTX v1.21.1** (official Linux binary), installs `/usr/local/bin/mediamtx`, writes `/etc/nexrec/mediamtx.yml` (RTSP `127.0.0.1:8554`, WHEP `:8889`, paths `in0`–`in9`), and enables `mediamtx.service`.
+6. Builds `nexrec-decklink-status` into `/usr/local/bin` when the same SDK headers are present.
+
+A second run skips the FFmpeg compile when the installed binary matches that version and feature set. `NEXREC_FORCE_FFMPEG_BUILD=1` rebuilds. `NEXREC_FORCE_MEDIAMTX=1` replaces an existing MediaMTX binary. `NEXREC_FORCE_MEDIAMTX_CONFIG=1` overwrites `mediamtx.yml`.
+
+```bash
 # writes /etc/nexrec/nexrec.env only if missing (bootstrap + secrets)
 # day-to-day settings: Setup page after login
-# enable an input:
+# enable an input (DeckLink: record unit only — do not enable preview@):
 sudo cp inputs-example.env /etc/nexrec/inputs/demo.env
-sudo systemctl enable --now nexrec-record@demo nexrec-preview@demo
+sudo systemctl enable --now nexrec-record@demo
+sudo systemctl enable --now nexrec-preview@demo   # IP sources only
 sudo systemctl enable --now nexrec-cleanup.timer nexrec-export.service
 ```
 
@@ -228,9 +243,9 @@ Need PCIe slots for **Duo / Quad 2**. Install Blackmagic drivers on 24.04; **ver
 
 Software on that host:
 
-1. Desktop Video so `/dev/blackmagic` exists. `setup.sh` adds `www-data` to the `video` group when it exists.
-2. FFmpeg built `--enable-decklink` against the DeckLink SDK headers. Check: `ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`. `Unknown input format: 'decklink'` means this ffmpeg cannot capture SDI.
-3. Optional status binary: `make -C tools/decklink-status SDK=/path/to/sdk/include && sudo make -C tools/decklink-status install`. See `tools/decklink-status/README.md`.
+1. Desktop Video so `/dev/blackmagic` exists. `setup.sh` adds `www-data` to the `video` group when it exists. That driver package does **not** include the SDK headers used to compile FFmpeg.
+2. DeckLink SDK headers on disk before `setup.sh` (or export `DECKLINK_SDK` / `NEXREC_DECKLINK_SDK`). `setup.sh` then passes `--enable-decklink` and installs `nexrec-decklink-status`. Check: `/usr/local/bin/ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`. `Unknown input format: 'decklink'` means this ffmpeg was built without the headers — install them and re-run with `NEXREC_FORCE_FFMPEG_BUILD=1`.
+3. Manual helper rebuild, if you are not re-running setup: `make -C tools/decklink-status SDK=/path/to/sdk/include && sudo make -C tools/decklink-status install`. See `tools/decklink-status/README.md`.
 
 Sub-device names follow FFmpeg, for example `DeckLink Quad 2 (1)` and `DeckLink Duo (1)`. An index (`0`, `1`, …) is resolved from that list at record start.
 
