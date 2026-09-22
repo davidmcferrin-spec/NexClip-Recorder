@@ -5,6 +5,7 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/nexrec-auth-lib.php';
+require_once __DIR__ . '/nexrec-decklink.php';
 
 function nexrec_api_fail(int $status, string $message): never {
     if (!headers_sent()) {
@@ -120,6 +121,20 @@ try {
         nexrec_api_ok(['inputs' => $out]);
     }
 
+    if ($action === 'decklink_devices') {
+        nexrec_require_roles(['admin', 'operator']);
+        nexrec_api_ok(nexrec_decklink_query_devices());
+    }
+
+    if ($action === 'decklink_formats') {
+        nexrec_require_roles(['admin', 'operator']);
+        $dev = trim((string) ($_GET['device'] ?? $body['device'] ?? ''));
+        if (!nexrec_decklink_device_ok($dev)) {
+            nexrec_api_fail(400, 'invalid decklink device');
+        }
+        nexrec_api_ok(nexrec_decklink_query_formats($dev));
+    }
+
     if ($action === 'input_put') {
         nexrec_require_roles(['admin', 'operator']);
         $id = strtolower(trim((string) ($body['id'] ?? '')));
@@ -138,22 +153,29 @@ try {
         if (!in_array($type, $allowed, true)) {
             nexrec_api_fail(400, 'invalid source_type');
         }
+        $deviceName = trim((string) ($body['decklink_device'] ?? ''));
+        $formatCode = trim((string) ($body['decklink_format'] ?? ''));
+        $deckErr = nexrec_decklink_input_error($type, $deviceName, $formatCode);
+        if ($deckErr !== '') {
+            nexrec_api_fail(400, $deckErr);
+        }
         $now = nexrec_now_iso();
         $st = nexrec_db()->prepare(
             'INSERT INTO inputs (
-               id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,
+               id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,keep_interlace,
                video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,
                feat_scte,feat_av_anomaly,feat_captions,feat_transcribe,feat_nielsen,feat_monitors,
                thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,nexclip_slot,
                created_at,updated_at)
              VALUES (
-               :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:vb,:ab,:rd,:pp,:pe,
+               :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:ki,:vb,:ab,:rd,:pp,:pe,
                :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:c,:u)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, source_type=excluded.source_type, url=excluded.url,
                decklink_device=excluded.decklink_device, decklink_format=excluded.decklink_format,
                enabled=excluded.enabled, live_transcode=excluded.live_transcode,
                copy_native=excluded.copy_native, upconvert_1080i=excluded.upconvert_1080i,
+               keep_interlace=excluded.keep_interlace,
                video_bitrate=excluded.video_bitrate, audio_bitrate=excluded.audio_bitrate,
                retention_days=excluded.retention_days, preview_path=excluded.preview_path,
                preview_enabled=excluded.preview_enabled,
@@ -169,8 +191,8 @@ try {
         $st->bindValue(':name', (string) ($body['name'] ?? $id), SQLITE3_TEXT);
         $st->bindValue(':t', $type, SQLITE3_TEXT);
         $st->bindValue(':url', $body['url'] ?? '', SQLITE3_TEXT);
-        $st->bindValue(':dd', $body['decklink_device'] ?? '', SQLITE3_TEXT);
-        $st->bindValue(':df', $body['decklink_format'] ?? '', SQLITE3_TEXT);
+        $st->bindValue(':dd', $deviceName, SQLITE3_TEXT);
+        $st->bindValue(':df', $formatCode, SQLITE3_TEXT);
         $pick = static function (string $key, string $setting, int $omit) use ($body, $isNew): int {
             if (array_key_exists($key, $body)) {
                 return !empty($body[$key]) ? 1 : 0;
@@ -181,9 +203,24 @@ try {
             return $omit;
         };
         $st->bindValue(':en', !empty($body['enabled']) ? 1 : 0, SQLITE3_INTEGER);
-        $st->bindValue(':lt', $pick('live_transcode', 'defaults.live_transcode', 0), SQLITE3_INTEGER);
-        $st->bindValue(':cn', $pick('copy_native', 'defaults.copy_native', 1), SQLITE3_INTEGER);
+        $lt = $pick('live_transcode', 'defaults.live_transcode', 0);
+        $cn = $pick('copy_native', 'defaults.copy_native', 1);
+        if ($type === 'decklink') {
+            // Uncompressed SDI. The record argv always encodes; store that fact.
+            $lt = 1;
+            $cn = 0;
+        }
+        $st->bindValue(':lt', $lt, SQLITE3_INTEGER);
+        $st->bindValue(':cn', $cn, SQLITE3_INTEGER);
         $st->bindValue(':up', $pick('upconvert_1080i', 'defaults.upconvert_1080i', 0), SQLITE3_INTEGER);
+        if (array_key_exists('keep_interlace', $body)) {
+            $ki = nexrec_flag($body, 'keep_interlace');
+        } elseif ($type === 'decklink') {
+            $ki = empty($body['upconvert_1080i']) ? 1 : 0;
+        } else {
+            $ki = 0;
+        }
+        $st->bindValue(':ki', $ki, SQLITE3_INTEGER);
         $st->bindValue(':vb', $body['video_bitrate'] ?? null, SQLITE3_TEXT);
         $st->bindValue(':ab', $body['audio_bitrate'] ?? null, SQLITE3_TEXT);
         if (array_key_exists('retention_days', $body) && $body['retention_days'] !== '' && $body['retention_days'] !== null) {

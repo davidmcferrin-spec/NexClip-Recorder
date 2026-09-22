@@ -12,8 +12,11 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, fetchone, migrate, overlay_app_settings  # noqa: E402
-from nexrec_ffmpeg import preview_argv  # noqa: E402
+from nexrec_ffmpeg import preview_argv, preview_publish_url, preview_unit_allowed  # noqa: E402
 from nexrec_util import data_paths, load_env_file, valid_input_id  # noqa: E402
+
+# systemd RestartPreventExitStatus — do not spin if a DeckLink unit is started anyway.
+EX_DECKLINK = 78
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -22,6 +25,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--input-env", default="")
     p.add_argument("--input-id", required=True)
     p.add_argument("--print-cmd", action="store_true")
+    p.add_argument(
+        "--check-eligible",
+        action="store_true",
+        help="exit 0 if this input may run nexrec-preview; exit 1 for DeckLink (systemd ExecCondition)",
+    )
     args = p.parse_args(argv)
     if not valid_input_id(args.input_id):
         print("invalid --input-id", file=sys.stderr)
@@ -42,12 +50,16 @@ def main(argv: list[str] | None = None) -> int:
             "decklink_device": env.get("DECKLINK_DEVICE") or "",
             "preview_path": env.get("PREVIEW_PATH") or "in0",
         }
+    if not preview_unit_allowed(row):
+        print(
+            "decklink preview is teed inside nexrec-record; not opening a second capture",
+            file=sys.stderr,
+        )
+        return 1 if args.check_eligible else EX_DECKLINK
+    if args.check_eligible:
+        return 0
     path = row.get("preview_path") or env.get("PREVIEW_PATH") or "in0"
-    jwt = env.get("NEXREC_PUBLISH_JWT") or ""
-    base = (env.get("NEXREC_MEDIAMTX_RTSP") or "rtsp://127.0.0.1:8554").rstrip("/")
-    rtsp = f"{base}/{path}"
-    if jwt:
-        rtsp += ("&" if "?" in rtsp else "?") + "jwt=" + jwt
+    rtsp = preview_publish_url(str(path), env)
     cmd = preview_argv(row, rtsp, env=env, ffmpeg=paths["ffmpeg"])
     if args.print_cmd:
         print(" ".join(cmd))

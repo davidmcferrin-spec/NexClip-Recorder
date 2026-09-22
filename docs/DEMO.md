@@ -28,6 +28,29 @@ Without MediaMTX, Live panes are labeled placeholders (WHEP URL still shown).
 Export editor scrubs indexed chunks (run `make demo` first, or click
 **Seed demo chunks** on Inputs as admin).
 
+## Real DeckLink (Duo / Quad 2)
+
+Needs Ubuntu 24.04, Blackmagic Desktop Video, and an `ffmpeg` built with
+`--enable-decklink`. Stock Ubuntu ffmpeg usually does not include it.
+Confirm with `ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`.
+Build the status helper from `tools/decklink-status` (SDK headers required)
+and install it to `/usr/local/bin/nexrec-decklink-status`, or set
+`NEXREC_DECKLINK_STATUS_BIN` / Setup.
+
+1. Inputs → type DeckLink SDI. Refresh devices. Pick a name such as
+   `DeckLink Quad 2 (1)` (or type the index). Optional format code `Hi59`.
+   Leave **Keep 1080i interlaced** on unless you want the only upconvert
+   (1080i → 1080p).
+2. Enable `nexrec-record@<id>` only. Do **not** enable `nexrec-preview@<id>`.
+   Services shows that preview unit as skipped. The record log should contain
+   one `-f decklink`, `split=2`, and an RTSP URL on the same command.
+3. Services → Signal should show locked and a mode (for example `1080i59.94`)
+   while the input is recording (`busy` / “in use” is normal). With the helper
+   missing, the row says it needs DeckLink tools and keeps the last stored format.
+4. Live uses the same preview path (WHEP). Chunks under
+   `storage/inputs/<id>/native/` are 5-minute (or your segment length) MP4,
+   H.264 + AAC, clock-aligned names.
+
 ## Real IP source
 
 Set on Inputs (or `/etc/nexrec/inputs/cam1.env`):

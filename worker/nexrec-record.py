@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""FFmpeg segment recorder: IP (and designed DeckLink) → 5-minute MP4 chunks.
+"""FFmpeg segment recorder: IP and DeckLink → 5-minute MP4 chunks.
 
 Watches the output directory and indexes closed files. The in-progress
 segment is skipped (newest mtime while ffmpeg is alive).
@@ -19,9 +19,10 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, fetchone, migrate, overlay_app_settings, upsert_input  # noqa: E402
-from nexrec_heartbeat import write_heartbeat  # noqa: E402
+from nexrec_decklink import list_ffmpeg_devices, resolve_decklink_spec  # noqa: E402
 from nexrec_features import analyze_chunk  # noqa: E402
-from nexrec_ffmpeg import record_argv  # noqa: E402
+from nexrec_ffmpeg import preview_publish_url, record_argv  # noqa: E402
+from nexrec_heartbeat import write_heartbeat  # noqa: E402
 from nexrec_index import scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
     chunk_dir,
@@ -54,12 +55,14 @@ def input_from_env(env: dict[str, str], input_id: str) -> dict:
         "live_transcode": 1 if env.get("LIVE_TRANSCODE", "0") in ("1", "true") else 0,
         "copy_native": 1 if env.get("COPY_NATIVE", "1") not in ("0", "false") else 0,
         "upconvert_1080i": 1 if env.get("UPCONVERT_1080I", "0") in ("1", "true") else 0,
-        "keep_interlace": 1 if env.get("KEEP_INTERLACE", "0") in ("1", "true") else 0,
         "video_bitrate": env.get("VIDEO_BITRATE") or None,
         "audio_bitrate": env.get("AUDIO_BITRATE") or None,
         "retention_days": int(env.get("RETENTION_DAYS") or 28),
         "preview_path": env.get("PREVIEW_PATH") or "in0",
-        "preview_enabled": 1,
+        "preview_enabled": 0 if env.get("PREVIEW_ENABLED", "1") in ("0", "false", "no") else 1,
+        "keep_interlace": None if "KEEP_INTERLACE" not in env else (
+            1 if env.get("KEEP_INTERLACE", "0") in ("1", "true", "yes") else 0
+        ),
         "feat_scte": 1 if env.get("FEAT_SCTE", "0") in ("1", "true") else 0,
         "feat_av_anomaly": 1 if env.get("FEAT_AV_ANOMALY", "0") in ("1", "true") else 0,
         "feat_captions": 1 if env.get("FEAT_CAPTIONS", "0") in ("1", "true") else 0,
@@ -155,12 +158,39 @@ def main(argv: list[str] | None = None) -> int:
     # pre-create today; a long-running process crossing midnight needs the watcher.
     os.makedirs(out_dir, exist_ok=True)
 
+    if (source.get("source_type") or "").lower() == "decklink":
+        spec = str(source.get("decklink_device") or "").strip()
+        if not spec:
+            print("decklink input has no device name or index", file=sys.stderr)
+            return 1
+        if spec.isdigit():
+            devices, log = list_ffmpeg_devices(paths["ffmpeg"])
+            name = resolve_decklink_spec(spec, devices)
+            if not name:
+                print(f"decklink index {spec} was not in ffmpeg -list_devices", file=sys.stderr)
+                if log.strip():
+                    print(log.strip().splitlines()[-1], file=sys.stderr)
+                return 1
+            source = dict(source)
+            source["decklink_device"] = name
+            print(f"decklink index {spec} → {name}", flush=True)
+
+    preview_rtsp = None
+    if (source.get("source_type") or "").lower() == "decklink":
+        station_on = str(env.get("NEXREC_PREVIEW_ENABLED", "1")).strip().lower() not in ("0", "false", "no")
+        per = source.get("preview_enabled")
+        per_on = True if per is None or per == "" else str(per).strip().lower() not in ("0", "false", "no")
+        if station_on and per_on:
+            preview_rtsp = preview_publish_url(str(source.get("preview_path") or "in0"), env)
+            print(f"decklink preview tee {preview_rtsp}", flush=True)
+
     cmd = record_argv(
         source,
         out_pattern,
         env=env,
         ffmpeg=paths["ffmpeg"],
         segment_seconds=seg,
+        preview_rtsp=preview_rtsp,
     )
     print("exec:", " ".join(cmd), flush=True)
 

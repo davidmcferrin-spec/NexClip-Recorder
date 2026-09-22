@@ -12,10 +12,10 @@ import subprocess
 from datetime import datetime, timezone
 from typing import Any
 
+from nexrec_decklink import DECKLINK_UNKNOWN, parse_status_json, resolve_status_bin  # noqa: E402
 from nexrec_util import iso_z
 
 IP_TYPES = {"rtsp", "srt", "udp", "tcp", "rtp"}
-DECKLINK_UNKNOWN = "unknown — needs DeckLink tools"
 _PROBE_AT: dict[str, float] = {}
 _PROBE_CACHE: dict[str, dict[str, Any]] = {}
 
@@ -50,14 +50,15 @@ def classify_ip(
     return "stalled"
 
 
-def _safe_status_bin(path: str) -> str | None:
-    if not path or not path.startswith("/") or not os.path.isfile(path):
-        return None
-    if any(c in path for c in " \t;|&$`\n\r"):
-        return None
-    if not os.access(path, os.X_OK):
-        return None
-    return path
+def should_probe_decklink(proc_alive: bool, proc_age_s: float) -> bool:
+    """Give FFmpeg a moment to open the sub-device before the status helper runs.
+
+    An early probe format-detects by opening the input. If that wins the race,
+    the record process cannot open the same exclusive device.
+    """
+    if proc_alive and proc_age_s < 3.0:
+        return False
+    return True
 
 
 def parse_status_text(text: str) -> dict[str, Any]:
@@ -97,7 +98,7 @@ def probe_decklink(device: str, env: dict[str, str] | None = None, now: float | 
         "detail": DECKLINK_UNKNOWN,
         "probe": "unavailable",
     }
-    bin_path = _safe_status_bin(env.get("NEXREC_DECKLINK_STATUS_BIN") or "")
+    bin_path = resolve_status_bin(env)
     if bin_path is None or not device:
         return unknown
     import time
@@ -117,13 +118,18 @@ def probe_decklink(device: str, env: dict[str, str] | None = None, now: float | 
         )
     except (OSError, subprocess.TimeoutExpired):
         return unknown
-    parsed = parse_status_text((proc.stdout or "") + "\n" + (proc.stderr or ""))
-    if parsed["signal"] == "unknown" and not parsed["format"] and proc.returncode != 0:
-        parsed["detail"] = DECKLINK_UNKNOWN
-        parsed["probe"] = "unavailable"
+    stdout = proc.stdout or ""
+    stripped = stdout.lstrip()
+    if stripped.startswith("{") or stripped.startswith("["):
+        parsed = parse_status_json(stdout, device)
     else:
-        parsed["detail"] = ""
-        parsed["probe"] = "tool"
+        parsed = parse_status_text(stdout + "\n" + (proc.stderr or ""))
+        if parsed["signal"] == "unknown" and not parsed["format"] and proc.returncode != 0:
+            parsed["detail"] = DECKLINK_UNKNOWN
+            parsed["probe"] = "unavailable"
+        else:
+            parsed["detail"] = ""
+            parsed["probe"] = "tool"
     _PROBE_AT[cache_key] = stamp
     _PROBE_CACHE[cache_key] = parsed
     return dict(parsed)
@@ -176,14 +182,15 @@ def write_heartbeat(
     fmt = ""
     detail = ""
     if transport == "sdi":
-        probed = probe_decklink(device, env, now=stamp)
-        signal = str(probed.get("signal") or "unknown")
-        sdi_lock = probed.get("sdi_lock")
-        fmt = str(probed.get("format") or "")
-        detail = str(probed.get("detail") or "")
-        if not proc_alive and signal == "present":
-            signal = "no_signal"
-            detail = (detail + " " if detail else "") + "record worker stopped"
+        if not should_probe_decklink(proc_alive, proc_age):
+            signal = "unknown"
+            detail = "waiting for the record process to open DeckLink before probing lock"
+        else:
+            probed = probe_decklink(device, env, now=stamp)
+            signal = str(probed.get("signal") or "unknown")
+            sdi_lock = probed.get("sdi_lock")
+            fmt = str(probed.get("format") or "")
+            detail = str(probed.get("detail") or "")
     elif transport in ("ip", "demo"):
         signal = classify_ip(proc_alive, proc_age, chunk_age, segment_s)
         detail = ""

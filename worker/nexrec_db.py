@@ -23,6 +23,7 @@ INPUT_FEATURE_COLUMNS: list[tuple[str, str]] = [
     ("thresh_bars_s", "REAL NOT NULL DEFAULT 5.0"),
     ("transcribe_engine", "TEXT"),
     ("nexclip_slot", "INTEGER"),
+    ("keep_interlace", "INTEGER"),
 ]
 
 INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
@@ -37,6 +38,7 @@ INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
     "thresh_bars_s": 5.0,
     "transcribe_engine": "",
     "nexclip_slot": None,
+    "keep_interlace": None,
 }
 
 FTS_DDL = """
@@ -127,7 +129,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
         """
         INSERT INTO inputs (
           id, name, source_type, url, decklink_device, decklink_format,
-          enabled, live_transcode, copy_native, upconvert_1080i,
+          enabled, live_transcode, copy_native, upconvert_1080i, keep_interlace,
           video_bitrate, audio_bitrate, retention_days, preview_path,
           preview_enabled,
           feat_scte, feat_av_anomaly, feat_captions, feat_transcribe,
@@ -136,7 +138,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
           created_at, updated_at
         ) VALUES (
           :id, :name, :source_type, :url, :decklink_device, :decklink_format,
-          :enabled, :live_transcode, :copy_native, :upconvert_1080i,
+          :enabled, :live_transcode, :copy_native, :upconvert_1080i, :keep_interlace,
           :video_bitrate, :audio_bitrate, :retention_days, :preview_path,
           :preview_enabled,
           :feat_scte, :feat_av_anomaly, :feat_captions, :feat_transcribe,
@@ -154,6 +156,7 @@ def upsert_input(conn: sqlite3.Connection, rec: dict[str, Any]) -> None:
           live_transcode=excluded.live_transcode,
           copy_native=excluded.copy_native,
           upconvert_1080i=excluded.upconvert_1080i,
+          keep_interlace=excluded.keep_interlace,
           video_bitrate=excluded.video_bitrate,
           audio_bitrate=excluded.audio_bitrate,
           retention_days=excluded.retention_days,
@@ -404,6 +407,7 @@ APP_SETTING_ENV: dict[str, str] = {
     "ffmpeg.preset": "NEXREC_X264_PRESET",
     "ffmpeg.segment_seconds": "NEXREC_SEGMENT_SECONDS",
     "ffmpeg.gop_frames": "NEXREC_GOP_FRAMES",
+    "ffmpeg.decklink_status_bin": "NEXREC_DECKLINK_STATUS_BIN",
     "preview.enabled": "NEXREC_PREVIEW_ENABLED",
     "preview.mediamtx_rtsp": "NEXREC_MEDIAMTX_RTSP",
     "preview.whep_port": "NEXREC_WHEP_PORT",

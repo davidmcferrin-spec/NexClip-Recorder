@@ -109,7 +109,9 @@ the NexClip box.
 ## NexVUE leftovers (preview only)
 
 WHEP 8889 / RTSP 8554 / MediaMTX still match NexVUE’s live-preview path.
-Recording is FFmpeg, not GStreamer.
+Recording is FFmpeg, not GStreamer. DeckLink capture is `ffmpeg -f decklink`
+with the proxy teed in that process. `tools/decklink-status` is signal JSON
+only (Blackmagic SDK), not a second capture and not GStreamer.
 
 ## Intelligence / analyzers
 

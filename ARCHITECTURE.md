@@ -28,7 +28,8 @@ audit-grade watermark decode.
                              ▼
                     ┌──────────────────┐     FFmpeg segment
                     │  record@input    │◄──── RTSP/SRT/UDP/RTP/TCP
-                    │  preview@input   │◄──── DeckLink (next; exclusive-open)
+                    │                  │◄──── DeckLink via ffmpeg -f decklink
+                    │  preview@input   │      (IP only; DeckLink tees inside record)
                     │  export worker   │
                     │  cleanup.timer   │
                     └────────┬─────────┘
@@ -92,7 +93,7 @@ preview encode are all FFmpeg.** We do not invent a muxer.
 | --- | --- | --- |
 | IP ingest + MP4 segments | FFmpeg `segment` muxer, `segment_atclocktime=1` | Wall-clock 5-minute files, NTP-aligned names/timecode |
 | Concat + trim export | FFmpeg concat demuxer + `-ss`/`-t`, then `+faststart` | Premiere / FCPX |
-| DeckLink | FFmpeg `-f decklink` **when** FFmpeg is built `--enable-decklink` | Matches “don’t invent a muxer”. If a box only has the Blackmagic SDK (NexVUE’s `decklinksrc`), a thin helper may feed FFmpeg via rawvideo pipe — documented below, not required for v0 IP demo. |
+| DeckLink | FFmpeg `-f decklink` when FFmpeg is built `--enable-decklink` | One process per sub-device. Preview is a tee in that process. The SDK binary is status-only (`tools/decklink-status`), not a capture path. |
 | WebRTC preview | FFmpeg publishes **proxy** H.264+AAC to MediaMTX RTSP; browsers use **WHEP** | Same egress idea as NexVUE. MediaMTX does **not** transcode. |
 
 NexVUE uses GStreamer + Quick Sync because it is a live return-feed with a
@@ -178,21 +179,35 @@ ffmpeg -hide_banner -nostdin \
 Copy mode replaces the encode pair with `-c copy` (still MP4 segment +
 faststart on close). Some IP flavors need `LIVE_TRANSCODE=1`.
 
-DeckLink (designed):
+DeckLink (Duo / Quad 2). One FFmpeg process, clocked segments, proxy tee:
 
 ```text
-ffmpeg -f decklink -i "DeckLink Quad 2 (1)" ...same encode/segment...
+ffmpeg -hide_banner -nostdin -use_wallclock_as_timestamps 1 \
+  -f decklink -format_code Hi59 -i "DeckLink Quad 2 (1)" \
+  -filter_complex "[0:v]split=2[vrec][vp0];[vp0]yadif=...,scale=960x540,fps=30[vprev];[0:a]asplit=2[arec][aprev]" \
+  -map "[vrec]" -map "[arec]" ...H.264 High + AAC, +ildct+ilme unless upconvert... \
+  -f segment -segment_time 300 -segment_atclocktime 1 ...mp4 \
+  -map "[vprev]" -map "[aprev]" ...proxy... -f rtsp rtsp://127.0.0.1:8554/in0
 ```
 
-DeckLink sub-devices are **exclusive-open** (NexVUE). Preview must **tee**
-inside the same FFmpeg process, not a second capture. IP sources may run a
-second FFmpeg for preview.
+`-format_code` is optional. 1080i stays 1080i unless that input has
+`upconvert_1080i`. SDI is never `-c copy`.
+
+DeckLink sub-devices are **exclusive-open**. Do not start `nexrec-preview@id`
+for a DeckLink input — that unit’s `ExecCondition` skips it, and Services
+refuses start/enable. IP sources still use a second FFmpeg for preview.
+
+Signal lock is not read from the recording. `nexrec-decklink-status` (Blackmagic
+SDK) prints JSON per sub-device. Idle inputs are opened briefly for format
+detection; a busy input (this FFmpeg holds it) falls back to `IDeckLinkStatus`
+so lock and mode still show. Point Setup or `NEXREC_DECKLINK_STATUS_BIN` at
+the binary. Names match FFmpeg: `DeckLink Quad 2 (1)`, `DeckLink Duo (1)`.
 
 ## 5. WebRTC preview
 
 Every recordable input has a MediaMTX path `in0`…`in9`:
 
-1. `nexrec-preview@id` (or the DeckLink tee) publishes
+1. `nexrec-preview@id` (IP) or the DeckLink tee inside `nexrec-record@id` publishes
    `rtsp://127.0.0.1:8554/{preview_path}` at **proxy** size (default 960×540,
    ~1.5 Mbps H.264 + AAC).
 2. MediaMTX restamps to WHEP at `https://{host}:8889/{preview_path}/whep`.
@@ -265,7 +280,7 @@ NexClip never dials into this host; `nexrec-nexclip.timer` polls out.
 | --- | --- |
 | `apache2` + `web/` | UI + JSON API |
 | `nexrec-record@id` | FFmpeg segment recorder |
-| `nexrec-preview@id` | FFmpeg proxy → MediaMTX (IP only) |
+| `nexrec-preview@id` | FFmpeg proxy → MediaMTX (IP only; not started for DeckLink) |
 | `nexrec-export.service` | Drain `exports` queue |
 | `nexrec-cleanup.timer` | Twice-daily retention |
 | `nexrec-nexclip.timer` | Mode 2 register / check-in / export-request poll |

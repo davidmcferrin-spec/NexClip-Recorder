@@ -55,21 +55,86 @@ def input_args(source: dict[str, Any]) -> list[str]:
     return args
 
 
+def _explicit_flag(source: dict[str, Any], key: str) -> bool | None:
+    """None when the key was omitted. False for 0/false. True otherwise."""
+    if key not in source:
+        return None
+    v = source.get(key)
+    if v is None or v == "":
+        return None
+    if isinstance(v, str):
+        return v.strip().lower() not in ("0", "false", "no", "off")
+    if isinstance(v, (int, float)):
+        return bool(int(v))
+    return bool(v)
+
+
 def _keep_interlace(source: dict[str, Any]) -> bool:
-    """1080i stays 1080i only when the operator (or DeckLink) says so."""
-    if int(source.get("upconvert_1080i") or 0):
+    """1080i stays 1080i unless upconvert is on, or the operator cleared the flag.
+
+    DeckLink defaults to interlaced when keep_interlace was never stored (NULL).
+    An explicit 0 is honored so the Inputs checkbox can turn field flags off.
+    """
+    if _explicit_flag(source, "upconvert_1080i"):
         return False
-    if int(source.get("keep_interlace") or 0):
-        return True
+    explicit = _explicit_flag(source, "keep_interlace")
+    if explicit is not None:
+        return explicit
     t = (source.get("source_type") or "").lower()
     return t == "decklink"
 
 
-def encode_args(source: dict[str, Any], env: dict[str, str] | None = None) -> list[str]:
+def preview_unit_allowed(source: dict[str, Any]) -> bool:
+    """DeckLink sub-devices are exclusive-open. Preview is teed in the record process."""
+    t = (source.get("source_type") or source.get("type") or "").lower()
+    return t != "decklink"
+
+
+def preview_publish_url(preview_path: str, env: dict[str, str] | None = None) -> str:
+    env = env or {}
+    path = (preview_path or "in0").strip() or "in0"
+    jwt = env.get("NEXREC_PUBLISH_JWT") or ""
+    base = (env.get("NEXREC_MEDIAMTX_RTSP") or "rtsp://127.0.0.1:8554").rstrip("/")
+    rtsp = f"{base}/{path}"
+    if jwt:
+        rtsp += ("&" if "?" in rtsp else "?") + "jwt=" + jwt
+    return rtsp
+
+
+def decklink_filter_complex(source: dict[str, Any]) -> str:
+    """One DeckLink input, two outputs: record raster + proxy preview."""
+    prev = (
+        f"yadif=mode=0:parity=-1:deint=interlaced,"
+        f"scale={PREVIEW_SIZE}:force_original_aspect_ratio=decrease,"
+        f"fps=30,format=yuv420p"
+    )
+    if _explicit_flag(source, "upconvert_1080i"):
+        return (
+            "[0:v]split=2[vr0][vp0];"
+            "[vr0]yadif=mode=1:parity=-1:deint=interlaced[vrec];"
+            f"[vp0]{prev}[vprev];"
+            "[0:a]asplit=2[arec][aprev]"
+        )
+    return (
+        "[0:v]split=2[vrec][vp0];"
+        f"[vp0]{prev}[vprev];"
+        "[0:a]asplit=2[arec][aprev]"
+    )
+
+
+def encode_args(
+    source: dict[str, Any],
+    env: dict[str, str] | None = None,
+    include_vf: bool = True,
+) -> list[str]:
     env = env or {}
     live_tx = bool(int(source.get("live_transcode") or 0))
     copy_native = bool(int(source.get("copy_native") or 0))
     up = bool(int(source.get("upconvert_1080i") or 0))
+    # SDI is uncompressed. Bitstream copy is not a recording.
+    if (source.get("source_type") or "").lower() == "decklink":
+        live_tx = True
+        copy_native = False
     vbr = source.get("video_bitrate") or env.get("NEXREC_BROADCAST_VIDEO_BITRATE") or "12M"
     abr = source.get("audio_bitrate") or env.get("NEXREC_BROADCAST_AUDIO_BITRATE") or "192k"
     gop = str(env.get("NEXREC_GOP_FRAMES") or "60")
@@ -86,7 +151,7 @@ def encode_args(source: dict[str, Any], env: dict[str, str] | None = None) -> li
         vf.append("yadif=mode=1:parity=-1:deint=interlaced")
 
     args: list[str] = []
-    if vf:
+    if vf and include_vf:
         args += ["-vf", ",".join(vf)]
     args += [
         "-c:v", "libx264",
@@ -138,6 +203,50 @@ def segment_args(
     return args
 
 
+def _preview_output_args(rtsp_url: str) -> list[str]:
+    return [
+        "-map", "[vprev]",
+        "-map", "[aprev]",
+        "-c:v", "libx264",
+        "-preset", "ultrafast",
+        "-tune", "zerolatency",
+        "-profile:v", "baseline",
+        "-pix_fmt", "yuv420p",
+        "-b:v", PREVIEW_VBITRATE,
+        "-g", "30",
+        "-c:a", "aac",
+        "-b:a", PREVIEW_ABITRATE,
+        "-ar", "48000",
+        "-ac", "2",
+        "-f", "rtsp",
+        "-rtsp_transport", "tcp",
+        rtsp_url,
+    ]
+
+
+def _decklink_tee_argv(
+    source: dict[str, Any],
+    out_pattern: str,
+    preview_rtsp: str,
+    env: dict[str, str],
+    ffmpeg: str,
+    segment_seconds: int,
+    when: datetime | None,
+) -> list[str]:
+    """Single process: native clocked segments + proxy RTSP. One DeckLink open."""
+    at_clock = str(env.get("NEXREC_SEGMENT_AT_CLOCK", "1")).strip() not in ("0", "false", "no")
+    argv = [ffmpeg]
+    argv += input_args(source)
+    argv += ["-filter_complex", decklink_filter_complex(source)]
+    argv += ["-map", "[vrec]", "-map", "[arec]"]
+    argv += metadata_args(when=when)
+    # yadif for upconvert lives in the filter graph, not a second -vf.
+    argv += encode_args(source, env, include_vf=False)
+    argv += segment_args(out_pattern, segment_seconds=segment_seconds, at_clock=at_clock)
+    argv += _preview_output_args(preview_rtsp)
+    return argv
+
+
 def record_argv(
     source: dict[str, Any],
     out_pattern: str,
@@ -145,8 +254,13 @@ def record_argv(
     ffmpeg: str = "ffmpeg",
     segment_seconds: int = 300,
     when: datetime | None = None,
+    preview_rtsp: str | None = None,
 ) -> list[str]:
     env = env or {}
+    if preview_rtsp and (source.get("source_type") or "").lower() == "decklink":
+        return _decklink_tee_argv(
+            source, out_pattern, preview_rtsp, env, ffmpeg, segment_seconds, when,
+        )
     argv = [ffmpeg]
     argv += input_args(source)
     argv += ["-map", "0:v:0?", "-map", "0:a:0?"]
@@ -166,7 +280,7 @@ def preview_argv(
     env: dict[str, str] | None = None,
     ffmpeg: str = "ffmpeg",
 ) -> list[str]:
-    """Proxy encode to MediaMTX. Separate process for IP; DeckLink should tee (next)."""
+    """Proxy encode to MediaMTX. IP sources only — DeckLink must not open a second capture."""
     env = env or {}
     argv = [ffmpeg]
     argv += input_args(source)

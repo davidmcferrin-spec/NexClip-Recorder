@@ -48,7 +48,8 @@ record@input  →  native MP4 segments (unchanged, H.264+AAC faststart)
                                                      ffprobe SCTE, optional CC/ASR,
                                                      Nielsen presence stub — not a decode)
 
-preview@input →  proxy 960×540 → MediaMTX WHEP
+preview@input →  proxy 960×540 → MediaMTX WHEP   (IP sources)
+record@input  →  DeckLink tee of the same proxy   (exclusive-open; no preview@ unit)
               →  Live WFM / vector / VU / RTA  (v0: graticule placeholders;
                                                 NEXT: WebAudio / canvas from this decode)
 
@@ -97,6 +98,9 @@ JSON array of `{pts, pts_end, present}` only. `sid`, `layer`, and watermark
 not an SDK decode. Leave the command blank to keep the builtin stub.
 
 ## NEXT (not blocking v0 merge)
+
+DeckLink **capture**, the in-process preview tee, and SDI lock/format via
+`tools/decklink-status` are in the product. Still later:
 
 - DeckLink-side waveform/vector/audio meters and SCTE-104 VANC (Blackmagic SDK)
 - Live MPEG-TS SCTE-35 tap (MP4 remux drops data PIDs)

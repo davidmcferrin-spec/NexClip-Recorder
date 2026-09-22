@@ -44,7 +44,7 @@
   </div>
   <div class="panel">
     <h2>Signal</h2>
-    <p class="sub">SDI lock needs a DeckLink status tool (<code>NEXREC_DECKLINK_STATUS_BIN</code>). Without it the row stays unknown and still shows the last format the record worker stored. IP rows use the worker heartbeat and last chunk time.</p>
+    <p class="sub">SDI lock comes from <code>nexrec-decklink-status</code> (<code>NEXREC_DECKLINK_STATUS_BIN</code> or Setup). The helper prints JSON per sub-device (<code>input_locked</code>, <code>input_mode</code>, <code>busy</code>). A busy connector — the recorder already has it open — still reports lock and format. Without the helper the row stays unknown and keeps the last format the record worker stored. DeckLink preview units are skipped; the proxy is teed inside <code>nexrec-record</code>. IP rows use the worker heartbeat and last chunk time.</p>
     <table>
       <thead>
         <tr><th>Input</th><th>Type</th><th>Signal</th><th>SDI lock</th><th>Format</th><th>Last chunk</th><th>Last seen</th><th>Detail</th></tr>
@@ -66,7 +66,7 @@ function badge(state) {
   var cls = "off";
   if (state === "active" || state === "enabled" || state === "present" || state === "receiving") cls = "on";
   else if (state === "failed" || state === "down" || state === "no_signal") cls = "bad";
-  else if (state === "stalled" || state === "activating" || state === "deactivating") cls = "warn";
+  else if (state === "stalled" || state === "activating" || state === "deactivating" || state === "skipped") cls = "warn";
   return '<span class="badge ' + cls + '">' + esc(state || "unknown") + "</span>";
 }
 function uptime(sec) {
@@ -120,12 +120,14 @@ function refresh() {
     units.forEach(function (u) {
       var tr = document.createElement("tr");
       var actions = '<button type="button" data-act="log">Log</button>';
+      var verbs = u.skipped ? ["stop", "disable"] : ["start", "stop", "restart", "enable", "disable"];
       if (can) {
-        ["start", "stop", "restart", "enable", "disable"].forEach(function (v) {
+        verbs.forEach(function (v) {
           actions += ' <button type="button" data-act="' + v + '">' + v + "</button>";
         });
       }
-      tr.innerHTML = "<td><code>" + esc(u.unit) + "</code></td><td>" + badge(u.active) +
+      var note = u.note ? '<div class="sub">' + esc(u.note) + "</div>" : "";
+      tr.innerHTML = "<td><code>" + esc(u.unit) + "</code>" + note + "</td><td>" + badge(u.active) +
         "</td><td>" + badge(u.enabled) + "</td><td>" + esc(u.active_enter || "—") +
         "</td><td>" + esc(uptime(u.uptime_s)) + '</td><td class="unit-actions">' + actions + "</td>";
       tr.querySelectorAll("button").forEach(function (btn) {
@@ -151,6 +153,7 @@ function refresh() {
     sb.innerHTML = "";
     (all[1].signals || []).forEach(function (s) {
       var lock = s.sdi_lock == null ? "—" : (Number(s.sdi_lock) ? "locked" : "unlocked");
+      if (s.busy) lock += " (in use)";
       var tr = document.createElement("tr");
       tr.innerHTML = "<td>" + esc(s.name || s.input_id) + "</td><td>" + esc(s.source_type) +
         "</td><td>" + badge(s.signal) + "</td><td>" + esc(lock) + "</td><td>" + esc(s.format || "—") +
