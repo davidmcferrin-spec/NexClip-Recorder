@@ -143,7 +143,10 @@ try {
         }
         $max = nexrec_setting_int('defaults.max_inputs', 10);
         $n = (int) nexrec_db()->querySingle('SELECT COUNT(*) FROM inputs');
-        $exists = nexrec_db()->querySingle('SELECT COUNT(*) FROM inputs WHERE id=' . "'" . SQLite3::escapeString($id) . "'");
+        $stExists = nexrec_db()->prepare('SELECT COUNT(*) FROM inputs WHERE id=:id');
+        $stExists->bindValue(':id', $id, SQLITE3_TEXT);
+        $exists = $stExists->execute()->fetchArray();
+        $exists = $exists === false ? 0 : (int) array_values($exists)[0];
         $isNew = !(int) $exists;
         if (!$exists && $n >= $max) {
             nexrec_api_fail(400, "max {$max} inputs");
@@ -286,7 +289,9 @@ try {
             $st->bindValue(':i', $id, SQLITE3_TEXT);
             $st->execute();
         }
-        @$db->exec("DELETE FROM captions_fts WHERE input_id='" . SQLite3::escapeString($id) . "'");
+        $stFts = $db->prepare('DELETE FROM captions_fts WHERE input_id=:i');
+        $stFts->bindValue(':i', $id, SQLITE3_TEXT);
+        $stFts->execute();
         $st = $db->prepare('DELETE FROM inputs WHERE id=:i');
         $st->bindValue(':i', $id, SQLITE3_TEXT);
         $st->execute();
@@ -502,19 +507,15 @@ try {
         $limit = 50;
         $hits = [];
         $engine = 'like';
-        $ftsQuery = '"' . str_replace(['"', "'"], '', $q) . '"';
         $ftsOk = true;
         try {
-            $sql = 'SELECT id, input_id, kind, t_start, speaker, text FROM captions_fts WHERE captions_fts MATCH :q';
+            $sql = "SELECT id, input_id, kind, t_start, speaker, text FROM captions_fts WHERE tsv @@ plainto_tsquery('simple', :q)";
             if ($iid !== '') {
                 $sql .= ' AND input_id = :i';
             }
-            $sql .= ' LIMIT :n';
+            $sql .= ' LIMIT CAST(:n AS integer)';
             $st = nexrec_db()->prepare($sql);
-            if ($st === false) {
-                throw new RuntimeException('no fts');
-            }
-            $st->bindValue(':q', $ftsQuery, SQLITE3_TEXT);
+            $st->bindValue(':q', $q, SQLITE3_TEXT);
             if ($iid !== '') {
                 $st->bindValue(':i', $iid, SQLITE3_TEXT);
             }
@@ -523,16 +524,16 @@ try {
             while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
                 $hits[] = $row;
             }
-            $engine = 'fts5';
+            $engine = 'tsvector';
         } catch (Throwable $e) {
             $ftsOk = false;
         }
-        if (!$ftsOk || $engine !== 'fts5') {
+        if (!$ftsOk) {
             $sql = 'SELECT id, input_id, kind, service, speaker, t_start, t_end, text FROM captions WHERE text LIKE :q';
             if ($iid !== '') {
                 $sql .= ' AND input_id = :i';
             }
-            $sql .= ' ORDER BY t_start DESC LIMIT :n';
+            $sql .= ' ORDER BY t_start DESC LIMIT CAST(:n AS integer)';
             $st = nexrec_db()->prepare($sql);
             $st->bindValue(':q', '%' . $q . '%', SQLITE3_TEXT);
             if ($iid !== '') {

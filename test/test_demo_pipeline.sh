@@ -9,7 +9,14 @@ trap cleanup EXIT
 export PYTHONPATH="$ROOT/worker"
 export NEXREC_DATA_DIR="$WORKDIR"
 export NEXREC_STORAGE_DIR="$WORKDIR/storage"
+# Path is a schema isolation key inside local Postgres, not a database file.
 export NEXREC_DB="$WORKDIR/nexrec.db"
+export NEXREC_PGHOST="${NEXREC_PGHOST:-127.0.0.1}"
+export NEXREC_PGPORT="${NEXREC_PGPORT:-5432}"
+export NEXREC_PGUSER="${NEXREC_PGUSER:-nexrec_test}"
+export NEXREC_PGPASSWORD="${NEXREC_PGPASSWORD:-nexrec_test}"
+export NEXREC_PGDATABASE="${NEXREC_PGDATABASE:-nexrec_test}"
+"$ROOT/bin/nexrec-test-db.sh"
 export NEXREC_SEGMENT_SECONDS=5
 export NEXREC_SEGMENT_AT_CLOCK=0
 export NEXREC_BROADCAST_VIDEO_BITRATE=1M

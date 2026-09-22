@@ -130,7 +130,7 @@ def main(argv: list[str] | None = None) -> int:
         env = load_env_file(args.input_env, env)
 
     paths = data_paths(env)
-    conn = connect(paths["db"])
+    conn = connect(env)
     migrate(conn)
     env = overlay_app_settings(conn, env)
     paths = data_paths(env)

@@ -24,7 +24,7 @@ audit-grade watermark decode.
    operators ──────►│  Recorder UI     │  PHP/Apache on the recorder host
                     │  (this box)      │
                     └────────┬─────────┘
-                             │ SQLite WAL
+                             │ local PostgreSQL
                              ▼
                     ┌──────────────────┐     FFmpeg segment
                     │  record@input    │◄──── RTSP/SRT/UDP/RTP/TCP
@@ -82,7 +82,7 @@ Register **each** host in NexAPP Admin: unique `service_id`, HTTPS launch
 URL, `launch.redeem_secrets.<id>`, Access grants, manifest. Do **not**
 share a `service_id` across machines. Do **not** invent an `instance_id`
 grant gate. `NEXREC_INSTANCE_ID` is hostname/display only. Do not share
-one SQLite file across hosts.
+one recorder database across hosts.
 
 ## 2. Media engine: FFmpeg (not a custom muxer)
 
@@ -142,7 +142,7 @@ and the bitstream is already H.264 4:2:0 + AAC. Otherwise encode at
 - Split on the **NTP wall clock**, not on “300 s after process start”:
   FFmpeg `-segment_atclocktime 1 -segment_time 300 -strftime 1`.
 - Filename timestamp is the **chunk start** in UTC.
-- SQLite `chunks` row: `start_at`, `end_at`, `duration_s`, `timecode_start`,
+- PostgreSQL `chunks` row: `start_at`, `end_at`, `duration_s`, `timecode_start`,
   probe fields, `ready=1` once FFmpeg closes the file (the in-progress file
   is not indexed).
 - Orphans: files on disk with no row, or rows whose file is missing.
@@ -287,7 +287,7 @@ NexClip never dials into this host; `nexrec-nexclip.timer` polls out.
 | `nexrec-analyze.service` | Sidecar: chunk intelligence + CALM ebur128 jobs |
 | `mediamtx.service` | WHEP |
 
-Workers are Python stdlib. PHP never shells FFmpeg with unsanitized input;
+Workers are Python (stdlib plus apt `python3-psycopg2`; no pip). PHP never shells FFmpeg with unsanitized input;
 it writes DB rows. Input ids are `[a-z0-9-]{1,32}`.
 
 Unit start/stop/restart/enable/disable from the Services page goes through
@@ -301,7 +301,7 @@ unit names (`mediamtx`, `nexrec-export`, `nexrec-cleanup` service/timer,
 
 See `docs/FEATURES.md`. Summary:
 
-- Per-input SQLite flags on `inputs` (`feat_scte`, `feat_av_anomaly`,
+- Per-input flags on `inputs` (`feat_scte`, `feat_av_anomaly`,
   `feat_captions`, `feat_transcribe`, `feat_nielsen`, `feat_monitors`) plus
   freeze/black/bars duration thresholds.
 - After a native chunk is indexed, `nexrec-record` calls `analyze_chunk()`
@@ -309,7 +309,7 @@ See `docs/FEATURES.md`. Summary:
   (`blackdetect`/`freezedetect` at 320px).
 - Events land in `events` + JSONL (Nielsen rows are presence spans with NTP
   wall-clock `t_start`/`timecode`, not SID/layer decode). Caption/transcript
-  text in `captions` and FTS5 `captions_fts`.
+  text in `captions` and `captions_fts` (`tsvector` + GIN).
 - Export editor LKFS: `analyze_jobs` kind `loudness` → `ebur128=peak=true`
   on the concat/trim window (ITU-R BS.1770 / ATSC A/85 −24 LKFS).
 - Live WFM/vectorscope/VU/64-ch RTA are UI placeholders fed later from the
@@ -317,13 +317,17 @@ See `docs/FEATURES.md`. Summary:
 
 ## 12. Configuration surface
 
-`nexrec.env` is **bootstrap and secrets**: data dir, DB path, HTTP port,
-the initial admin password, API keys, the NexAPP launch secret, the NexClip
-enrollment secret, and the node bearer. Day-to-day values (storage paths,
-free-space floor, retention, FFmpeg profile, segment length, MediaMTX/WHEP,
-NexAPP mode/issuer/service_id, Mode 2 API base and recorder id, feature
-defaults, the optional Nielsen command path) live in SQLite `app_settings`
-and are edited on **Setup** (`/settings`).
+`nexrec.env` is **bootstrap and secrets**: data dir, local Postgres
+host/port/database/user, `NEXREC_PGPASSWORD`, HTTP port, the initial admin
+password, API keys, the NexAPP launch secret, the NexClip enrollment secret,
+and the node bearer. Day-to-day values (storage paths, free-space floor,
+retention, FFmpeg profile, segment length, MediaMTX/WHEP, NexAPP
+mode/issuer/service_id, Mode 2 API base and recorder id, feature defaults,
+the optional Nielsen command path) live in PostgreSQL `app_settings` and are
+edited on **Setup** (`/settings`). Setup also shows the database host, port,
+name, and user; changing those fields does not retarget a running process.
+Edit `nexrec.env` and restart units to move the server. The password is not
+stored in `app_settings`.
 
 First boot seeds missing keys from the environment, then the database wins.
 `NEXREC_ENV_OVERRIDES=1` is the break-glass switch. Workers call

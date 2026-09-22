@@ -143,7 +143,7 @@ def free_space_pass(conn, storage: str, floor: int) -> int:
 
 def run(env: dict) -> dict:
     paths = data_paths(env)
-    conn = connect(paths["db"])
+    conn = connect(env)
     migrate(conn)
     env = overlay_app_settings(conn, env)
     paths = data_paths(env)

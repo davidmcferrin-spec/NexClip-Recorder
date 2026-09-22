@@ -17,6 +17,7 @@ from nexrec_db import (  # noqa: E402
     insert_caption,
     migrate,
     search_captions,
+    table_columns,
     upsert_input,
 )
 from nexrec_features import (  # noqa: E402
@@ -162,7 +163,7 @@ class TestFeatures(unittest.TestCase):
         hits = search_captions(conn, "weather")
         self.assertTrue(hits)
         self.assertIn("weather", hits[0]["text"])
-        cols = {r[1] for r in conn.execute("PRAGMA table_info(inputs)").fetchall()}
+        cols = table_columns(conn, "inputs")
         self.assertIn("feat_scte", cols)
         self.assertIn("thresh_freeze_s", cols)
 

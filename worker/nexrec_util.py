@@ -95,11 +95,10 @@ def env_int(env: dict[str, str], key: str, default: int) -> int:
 def data_paths(env: dict[str, str]) -> dict[str, str]:
     data = env.get("NEXREC_DATA_DIR") or os.path.abspath("./data")
     storage = env.get("NEXREC_STORAGE_DIR") or os.path.join(data, "storage")
-    db = env.get("NEXREC_DB") or os.path.join(data, "nexrec.db")
     return {
         "data": data,
         "storage": storage,
-        "db": db,
+        "database": env.get("NEXREC_PGDATABASE") or "nexrec",
         "ffmpeg": env.get("NEXREC_FFMPEG") or "ffmpeg",
         "ffprobe": env.get("NEXREC_FFPROBE") or "ffprobe",
     }

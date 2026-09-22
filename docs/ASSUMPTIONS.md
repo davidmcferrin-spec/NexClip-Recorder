@@ -10,10 +10,11 @@ owner brief and attached helpers from local trees (2026-09-21). Sources:
 | --- | --- | --- |
 | **NexAPP** 0.10.2 | PHP 8.2+ / Apache / **PostgreSQL** / Ubuntu 24.04+ | Local + **Entra SAML** (not LDAP). Cookie `NexAPP_AUTH` RS256 JWT |
 | **NexClip** 0.1.0 | Python FastAPI + PostgreSQL + Apache vhost | NexAPP redirect SSO + **local passwords**. **LDAP removed** (ADR 0025/0029) |
-| **NexCLIP Recorder** v0 | PHP / Apache / **SQLite WAL** / Python stdlib workers | Local bcrypt + optional local LDAP + NexAPP |
+| **NexCLIP Recorder** v0 | PHP / Apache / **local PostgreSQL** / Python workers | Local bcrypt + optional local LDAP + NexAPP |
 
-**SQLite on the recorder is intentional.** NexClip/NexAPP use Postgres on
-the hub. Do not require hub Postgres on this box. Theme tokens follow
+**Local PostgreSQL on the recorder is the runtime database.** NexClip/NexAPP
+use their own Postgres on the hub. Do not point this box at the hub database.
+Theme tokens follow
 NexAPP (`--nx-*`, ADR 0028) with layout remaining ours.
 
 Timezone remains `America/New_York` + NTP (NexVUE / NexClip pathing).

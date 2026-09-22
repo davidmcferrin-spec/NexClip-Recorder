@@ -2,7 +2,7 @@
 /**
  * Local bcrypt + optional recorder-local LDAP + NexAPP session auth.
  * Production Nex* path is local users + NexAPP (SAML at the hub), not LDAP.
- * SQLite WAL. CLI-safe (no session start unless HTTP).
+ * Local PostgreSQL. CLI-safe (no session start unless HTTP).
  */
 declare(strict_types=1);
 
@@ -19,29 +19,222 @@ function nexrec_new_id(string $prefix): string {
     return $prefix . '_' . bin2hex(random_bytes(6));
 }
 
-function nexrec_db_path(): string {
-    nexrec_load_station_env();
-    $p = getenv('NEXREC_DB');
-    if (is_string($p) && $p !== '') {
-        return $p;
-    }
-    return nexrec_data_dir() . '/nexrec.db';
+if (!defined('SQLITE3_ASSOC')) {
+    define('SQLITE3_ASSOC', 1);
+    define('SQLITE3_TEXT', 3);
+    define('SQLITE3_INTEGER', 1);
+    define('SQLITE3_NULL', 5);
 }
 
-function nexrec_db(): SQLite3 {
+function nexrec_adapt_sql(string $sql): string {
+    $sql = preg_replace("/datetime\\(\\s*'now'\\s*\\)/i", "to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')", $sql) ?? $sql;
+    $sql = str_replace('IFNULL(', 'COALESCE(', $sql);
+    $sql = preg_replace('/\\s+COLLATE\\s+NOCASE/i', '', $sql) ?? $sql;
+    $sql = preg_replace(
+        '/captions_fts\\s+MATCH\\s+(:[A-Za-z_][A-Za-z0-9_]*|\\?)/i',
+        "tsv @@ plainto_tsquery('simple', $1)",
+        $sql
+    ) ?? $sql;
+    if (preg_match("/sqlite_master\\s+WHERE\\s+type\\s*=\\s*'table'\\s+AND\\s+name\\s*=\\s*'([A-Za-z0-9_]+)'/i", $sql, $m)) {
+        return "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "'";
+    }
+    if (preg_match('/PRAGMA\\s+table_info\\(([A-Za-z0-9_]+)\\)/i', $sql, $m)) {
+        return "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "' ORDER BY ordinal_position";
+    }
+    return $sql;
+}
+
+function nexrec_split_sql(string $sql): array {
+    $sql = preg_replace('/--.*$/m', '', $sql) ?? $sql;
+    $parts = [];
+    $buf = '';
+    $in = false;
+    $len = strlen($sql);
+    for ($i = 0; $i < $len; $i++) {
+        $c = $sql[$i];
+        if ($c === "'") {
+            if ($in && $i + 1 < $len && $sql[$i + 1] === "'") {
+                $buf .= "''";
+                $i++;
+                continue;
+            }
+            $in = !$in;
+        }
+        if ($c === ';' && !$in) {
+            $t = trim($buf);
+            if ($t !== '') {
+                $parts[] = $t;
+            }
+            $buf = '';
+            continue;
+        }
+        $buf .= $c;
+    }
+    $t = trim($buf);
+    if ($t !== '') {
+        $parts[] = $t;
+    }
+    return $parts;
+}
+
+final class NexrecResult {
+    /** @param list<array<string,mixed>> $rows */
+    public function __construct(private array $rows, private int $i = 0) {
+    }
+
+    public function fetchArray(int $mode = SQLITE3_ASSOC): array|false {
+        if ($this->i >= count($this->rows)) {
+            return false;
+        }
+        return $this->rows[$this->i++];
+    }
+}
+
+final class NexrecStmt {
+    /** @var array<string,mixed> */
+    private array $vals = [];
+
+    public function __construct(private PDOStatement $st) {
+    }
+
+    public function bindValue(string $name, mixed $value, int $type = SQLITE3_TEXT): void {
+        $this->vals[$name] = $value;
+    }
+
+    public function execute(): NexrecResult {
+        $this->st->execute($this->vals);
+        $rows = $this->st->fetchAll(PDO::FETCH_ASSOC);
+        return new NexrecResult(is_array($rows) ? $rows : []);
+    }
+}
+
+final class NexrecDb {
+    public function __construct(private PDO $pdo) {
+    }
+
+    public function exec(string $sql): bool {
+        foreach (nexrec_split_sql($sql) as $stmt) {
+            $this->pdo->exec(nexrec_adapt_sql($stmt));
+        }
+        return true;
+    }
+
+    public function query(string $sql): NexrecResult {
+        $st = $this->pdo->query(nexrec_adapt_sql($sql));
+        if ($st === false) {
+            return new NexrecResult([]);
+        }
+        $rows = $st->fetchAll(PDO::FETCH_ASSOC);
+        return new NexrecResult(is_array($rows) ? $rows : []);
+    }
+
+    public function prepare(string $sql): NexrecStmt {
+        $st = $this->pdo->prepare(nexrec_adapt_sql($sql));
+        if ($st === false) {
+            throw new RuntimeException('prepare failed');
+        }
+        return new NexrecStmt($st);
+    }
+
+    public function querySingle(string $sql): mixed {
+        $row = $this->query($sql)->fetchArray();
+        if ($row === false) {
+            return null;
+        }
+        return array_values($row)[0] ?? null;
+    }
+}
+
+function nexrec_pg_schema(): string {
+    $explicit = getenv('NEXREC_PGSCHEMA');
+    if (is_string($explicit) && $explicit !== '') {
+        if (!preg_match('/^[A-Za-z_][A-Za-z0-9_]{0,62}$/', $explicit)) {
+            throw new RuntimeException('invalid NEXREC_PGSCHEMA');
+        }
+        return $explicit;
+    }
+    $legacy = getenv('NEXREC_DB');
+    $db = getenv('NEXREC_PGDATABASE');
+    $db = is_string($db) ? $db : '';
+    // A filesystem path is a test isolation key, not a database file.
+    // A configured station database (anything other than the test DB) stays on public.
+    if (
+        is_string($legacy)
+        && (str_contains($legacy, '/') || str_ends_with($legacy, '.db'))
+        && ($db === '' || $db === 'nexrec_test')
+    ) {
+        return 't_' . substr(sha1($legacy), 0, 16);
+    }
+    return 'public';
+}
+
+function nexrec_db_path(): string {
+    $cfg = nexrec_pg_config();
+    return 'pgsql://' . $cfg['user'] . '@' . $cfg['host'] . ':' . $cfg['port'] . '/' . $cfg['db'] . ' schema=' . $cfg['schema'];
+}
+
+/** @return array{host:string,port:string,db:string,user:string,password:string,schema:string} */
+function nexrec_pg_config(): array {
+    $legacy = getenv('NEXREC_DB');
+    $testKey = is_string($legacy) && (str_contains($legacy, '/') || str_ends_with($legacy, '.db'));
+    if ($testKey && getenv('NEXREC_PGDATABASE') === false) {
+        putenv('NEXREC_PGHOST=127.0.0.1');
+        putenv('NEXREC_PGPORT=5432');
+        putenv('NEXREC_PGDATABASE=nexrec_test');
+        putenv('NEXREC_PGUSER=nexrec_test');
+        putenv('NEXREC_PGPASSWORD=nexrec_test');
+    }
+    nexrec_load_station_env();
+    $host = getenv('NEXREC_PGHOST');
+    $port = getenv('NEXREC_PGPORT');
+    $db = getenv('NEXREC_PGDATABASE');
+    $user = getenv('NEXREC_PGUSER');
+    $pass = getenv('NEXREC_PGPASSWORD');
+    $host = is_string($host) && $host !== '' ? $host : '127.0.0.1';
+    $port = is_string($port) && $port !== '' ? $port : '5432';
+    $db = is_string($db) ? $db : '';
+    $user = is_string($user) ? $user : '';
+    $pass = is_string($pass) ? $pass : '';
+    if ($db === '') {
+        $db = 'nexrec_test';
+        $user = $user !== '' ? $user : 'nexrec_test';
+        $pass = $pass !== '' ? $pass : 'nexrec_test';
+    } elseif ($user === '' || $pass === '') {
+        throw new RuntimeException('PostgreSQL requires NEXREC_PGDATABASE, NEXREC_PGUSER, and NEXREC_PGPASSWORD');
+    }
+    return [
+        'host' => $host,
+        'port' => $port,
+        'db' => $db,
+        'user' => $user,
+        'password' => $pass,
+        'schema' => nexrec_pg_schema(),
+    ];
+}
+
+function nexrec_db(): NexrecDb {
     static $db = null;
-    if ($db instanceof SQLite3) {
+    if ($db instanceof NexrecDb) {
         return $db;
     }
-    $path = nexrec_db_path();
-    $dir = dirname($path);
-    if (!is_dir($dir)) {
-        mkdir($dir, 0770, true);
+    $cfg = nexrec_pg_config();
+    $pdo = new PDO(
+        'pgsql:host=' . $cfg['host'] . ';port=' . $cfg['port'] . ';dbname=' . $cfg['db'],
+        $cfg['user'],
+        $cfg['password'],
+        [
+            PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION,
+            PDO::ATTR_DEFAULT_FETCH_MODE => PDO::FETCH_ASSOC,
+            PDO::ATTR_EMULATE_PREPARES => false,
+            PDO::ATTR_STRINGIFY_FETCHES => false,
+        ]
+    );
+    $schema = $cfg['schema'];
+    if ($schema !== 'public') {
+        $pdo->exec('CREATE SCHEMA IF NOT EXISTS ' . $schema);
     }
-    $db = new SQLite3($path);
-    $db->busyTimeout(5000);
-    $db->exec('PRAGMA foreign_keys = ON');
-    $db->exec('PRAGMA journal_mode = WAL');
+    $pdo->exec('SET search_path TO ' . $schema);
+    $db = new NexrecDb($pdo);
     return $db;
 }
 
@@ -89,14 +282,13 @@ function nexrec_ensure_input_feature_columns(): void {
 }
 
 function nexrec_ensure_fts(): bool {
-    return (bool) nexrec_db()->exec(
-        'CREATE VIRTUAL TABLE IF NOT EXISTS captions_fts USING fts5(
-          id UNINDEXED, input_id UNINDEXED, kind UNINDEXED, t_start UNINDEXED, speaker UNINDEXED, text
-        )'
+    $n = nexrec_db()->querySingle(
+        "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = 'captions_fts'"
     );
+    return (int) $n === 1;
 }
 
-function nexrec_row(SQLite3Result|false $res): ?array {
+function nexrec_row(NexrecResult|false $res): ?array {
     if ($res === false) {
         return null;
     }
@@ -149,7 +341,7 @@ function nexrec_user_public(array $row): array {
 }
 
 function nexrec_user_find(string $username): ?array {
-    $st = nexrec_db()->prepare('SELECT * FROM users WHERE username = :u COLLATE NOCASE');
+    $st = nexrec_db()->prepare('SELECT * FROM users WHERE lower(username) = lower(:u)');
     $st->bindValue(':u', $username, SQLITE3_TEXT);
     return nexrec_row($st->execute());
 }

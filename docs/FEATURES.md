@@ -12,7 +12,7 @@ Canonical host sizing remains README **Hardware recommendations**.
 | --- | --- | --- | --- |
 | SCTE-35 / 104 / 224 | `FEAT_SCTE` | Persist structured `events` (type, summary, pts/timecode). SCTE-35 from `ffprobe` packets when present. SCTE-224 HTTP ingest stub. | Live MPEG-TS tap so SCTE-35 is not lost on MP4 remux; DeckLink VANC for SCTE-104 |
 | Freeze / bars / black | `FEAT_AV_ANOMALY` | FFmpeg `blackdetect` + `freezedetect` after chunk close; log only if duration ≥ threshold | SMPTE color-bar detector (no FFmpeg filter today); DeckLink-side analyzers |
-| Captions 608/708 | `FEAT_CAPTIONS` | Presence log + SRT extract (`0:s` then lavfi `subcc`) into `captions` + **FTS5** | Full 708 service map, burn-in optional |
+| Captions 608/708 | `FEAT_CAPTIONS` | Presence log + SRT extract (`0:s` then lavfi `subcc`) into `captions` + **Postgres full-text** (`tsvector`) | Full 708 service map, burn-in optional |
 | Transcription + diarization | `FEAT_TRANSCRIBE` | Off unless `NEXREC_TRANSCRIBE_ENGINE` + `NEXREC_TRANSCRIBE_CMD`. Pluggable JSON ingest | whisper.cpp / faster-whisper + diarization on GPU |
 | Nielsen watermark presence | `FEAT_NIELSEN` | Best-effort **presence** log (appears present or absent) on the chunk timeline. **Not** audit-grade decode. No SID, watermark time, or layer | Swap the stub (`NEXREC_NIELSEN_PRESENCE_CMD` or `NielsenPresenceDetector`). Decoder SDK is **not** integrated |
 | Live monitors | `FEAT_MONITORS` | UI panes: WFM, vectorscope, VU, 64-ch RTA placeholders | Decode from preview/proxy; 64-ch from SDI/AES not stereo AAC |
@@ -26,10 +26,10 @@ Duration thresholds (seconds, per input):
 
 ## Storage
 
-- SQLite `events` — SCTE, freeze, black, bars stub, CC presence, Nielsen presence (not a decode)
+- PostgreSQL `events` — SCTE, freeze, black, bars stub, CC presence, Nielsen presence (not a decode)
 - JSONL sidecar `storage/inputs/<id>/events/<chunk>.jsonl`
-- SQLite `captions` + virtual `captions_fts` (FTS5) for caption **and** transcript text
-- SQLite `loudness_samples` — momentary/integrated LKFS vs wall-clock
+- PostgreSQL `captions` + `captions_fts` (`tsvector` + GIN) for caption **and** transcript text
+- PostgreSQL `loudness_samples` — momentary/integrated LKFS vs wall-clock
 - `analyze_jobs` — PHP enqueues; `nexrec-analyze.py` drains (PHP never shells FFmpeg)
 
 Timecodes are NTP wall-clock ISO-8601 Z plus `HH:MM:SS:FF`, offset from the

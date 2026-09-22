@@ -1,14 +1,13 @@
 #!/usr/bin/env php
 <?php
 /**
- * Create SQLite DB + seed admin. Safe to re-run.
+ * Apply the local PostgreSQL schema and seed admin. Safe to re-run.
  */
 declare(strict_types=1);
 
 require_once __DIR__ . '/nexrec-auth-lib.php';
 
 try {
-    nexrec_load_station_env();
     nexrec_migrate();
     nexrec_seed_admin();
     $seeded = nexrec_settings_seed();

@@ -4,7 +4,7 @@
 
 `test/test_demo_pipeline.sh`:
 
-1. Creates a temp data dir and SQLite DB
+1. Creates a temp data dir and a private schema in local PostgreSQL (`nexrec_test`)
 2. Inserts input `demo` (`SOURCE_TYPE=testsrc`, transcode on)
 3. Runs `nexrec-record.py` with `NEXREC_SEGMENT_SECONDS=5` for ~12 s
 4. Indexes closed MP4 chunks under `storage/inputs/demo/native/…`

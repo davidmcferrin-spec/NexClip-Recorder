@@ -19,8 +19,8 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 | Choice | Why |
 | --- | --- |
 | PHP 8 + Apache + vanilla JS | NexAPP / NexVUE edge. No Node, no frontend framework, no Composer. |
-| **SQLite WAL** (not Postgres) | Edge recorder. Hub NexClip/NexAPP keep Postgres. Do not require hub Postgres on this box. |
-| Python 3 **stdlib only** + FFmpeg | Workers. No pip. GNU C++ only if/when DeckLink SDK helpers are required (NexVUE pattern). |
+| **Local PostgreSQL** | Recorder database on this host (PDO and psycopg2). Hub NexClip/NexAPP keep their own Postgres. This box does not use the hub database. |
+| Python 3 + **psycopg2** (apt) + FFmpeg | Workers. No pip. GNU C++ only if/when DeckLink SDK helpers are required (NexVUE pattern). |
 | systemd units + timers | NexVUE `nexvue-encode@N`, heartbeat timers. Twice-daily cleanup is a systemd timer (cron-equivalent). |
 | Dark UI, NexAPP `--nx-*` tokens | Theme kit from NexAPP (ADR 0028); layout stays ours. |
 | MediaMTX WHEP for preview | Same WebRTC path as NexVUE. Recording itself is **FFmpeg**, not GStreamer. |
@@ -36,7 +36,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Input CRUD in the UI (up to 10; NexClip slots 1–8)
 - FFmpeg segment recorder for **RTSP / SRT / UDP / TCP / RTP / testsrc**
 - 5-minute (configurable) MP4 chunks, **wall-clock aligned**, NTP/system timecode metadata
-- Chunk index in SQLite
+- Chunk index in local PostgreSQL
 - Export job: concat overlapping chunks + trim in/out → one Premiere/FCPX-friendly MP4
 - Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player wired, placeholder if MediaMTX is down)
 - Export editor: shared timeline, mark in/out, one-stream vs all-visible, full vs proxy
@@ -96,20 +96,21 @@ later switch. Export-request poll only.
 ## Configuration
 
 Operators change the station in **Setup** (`/settings`), not by editing
-`.env` for day-to-day work. Values live in SQLite `app_settings`. The file
+`.env` for day-to-day work. Values live in PostgreSQL `app_settings`. The file
 `nexrec.env` (see `nexrec-example.env`) is **bootstrap and secrets only**:
 
 | Stays in `nexrec.env` | Examples |
 | --- | --- |
-| Where the process finds its data | `NEXREC_DATA_DIR`, `NEXREC_DB` |
+| Where the process finds its data | `NEXREC_DATA_DIR` |
+| Local PostgreSQL | `NEXREC_PGHOST`, `NEXREC_PGPORT`, `NEXREC_PGDATABASE`, `NEXREC_PGUSER`, `NEXREC_PGPASSWORD` |
 | How HTTP starts | `NEXREC_HTTP_PORT`, `NEXREC_ALLOW_HTTP` |
 | First local admin (only if no users exist) | `NEXREC_ADMIN_USER`, `NEXREC_ADMIN_PASSWORD` |
-| Secrets | `NEXREC_API_KEY`, `NEXREC_LDAP_BIND_PASSWORD`, `NEXAPP_LAUNCH_SECRET`, `NEXCLIP_ENROLLMENT_SECRET`, `NEXCLIP_NODE_TOKEN`, `NEXREC_PUBLISH_JWT` |
+| Secrets | `NEXREC_API_KEY`, `NEXREC_LDAP_BIND_PASSWORD`, `NEXAPP_LAUNCH_SECRET`, `NEXCLIP_ENROLLMENT_SECRET`, `NEXCLIP_NODE_TOKEN`, `NEXREC_PUBLISH_JWT`, `NEXREC_PGPASSWORD` |
 
 First boot copies defaults into `app_settings`. After that the database wins
 until you set break-glass `NEXREC_ENV_OVERRIDES=1`. Restart record, cleanup,
 and nexclip units after path or encode changes. The Mode 2 node bearer is
-written to the SQLite `settings` table at register time and is not shown
+written to the PostgreSQL `settings` table at register time and is not shown
 on Setup. Nielsen stays presence-only unless `intelligence.nielsen_cmd` points
 at a best-effort presence command; leaving it blank keeps the builtin stub.
 
@@ -135,7 +136,7 @@ last chunk time.
 
 ## Demo path (no root, no DeckLink)
 
-Requires `python3`, `ffmpeg`, `ffprobe`, `php`.
+Requires `python3`, `ffmpeg`, `ffprobe`, `php`, and local PostgreSQL. `make test` and `make demo` create the `nexrec_test` role and database.
 
 ```bash
 # Unit tests
@@ -169,7 +170,7 @@ sudo ./setup.sh
 
 `setup.sh` is the turnkey path. On a fresh host it:
 
-1. Installs PHP, Apache, and Python.
+1. Installs PHP, Apache, Python, and local PostgreSQL. It creates a dedicated role and database. The password is written only into `/etc/nexrec/nexrec.env`.
 2. Downloads **FFmpeg 9.0.2** source, installs codec/protocol build dependencies, compiles, and installs `ffmpeg` and `ffprobe` to `/usr/local` (`--enable-gpl --enable-nonfree --enable-libx264 --enable-openssl`, plus fdk-aac, libsrt, and libzvbi when those packages exist).
 3. Adds `--enable-decklink` when Blackmagic SDK headers are found (`DECKLINK_SDK` or `NEXREC_DECKLINK_SDK`, or a conventional path such as `/opt/decklink-sdk`). If the headers are missing, it still installs an IP-capable FFmpeg and prints that DeckLink was skipped. **Desktop Video drivers are not the SDK headers** — install the driver package separately so `/dev/blackmagic` exists.
 4. Enables NVENC only when an NVIDIA toolkit is detected (`nvidia-smi`, `/usr/local/cuda`, or `NEXREC_ENABLE_NVENC=1`). No GPU is required to compile, and a missing GPU does not fail setup.
