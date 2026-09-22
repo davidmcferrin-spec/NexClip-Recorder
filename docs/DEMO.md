@@ -30,12 +30,14 @@ Export editor scrubs indexed chunks (run `make demo` first, or click
 
 ## Real DeckLink (Duo / Quad 2)
 
-Needs Ubuntu 24.04, Blackmagic Desktop Video, and an `ffmpeg` built with
-`--enable-decklink`. Stock Ubuntu ffmpeg usually does not include it.
-Confirm with `ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`.
-Build the status helper from `tools/decklink-status` (SDK headers required)
-and install it to `/usr/local/bin/nexrec-decklink-status`, or set
-`NEXREC_DECKLINK_STATUS_BIN` / Setup.
+Needs Ubuntu 24.04 and Blackmagic Desktop Video. Put the DeckLink SDK
+headers on the host (`DECKLINK_SDK` or `NEXREC_DECKLINK_SDK`), then
+`sudo ./setup.sh`. That builds FFmpeg 9.0.2 with `--enable-decklink` into
+`/usr/local` and installs `nexrec-decklink-status`. Drivers and SDK headers
+are different packages: Desktop Video creates `/dev/blackmagic`; the headers
+are only needed at compile time. Without headers, setup still installs an
+IP FFmpeg and says DeckLink was skipped. Confirm with
+`/usr/local/bin/ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`.
 
 1. Inputs → type DeckLink SDI. Refresh devices. Pick a name such as
    `DeckLink Quad 2 (1)` (or type the index). Optional format code `Hi59`.

@@ -32,9 +32,15 @@ Install the current Blackmagic Desktop Video driver for 24.04 (check Blackmagic�
 
 ```bash
 # Directory that contains DeckLinkAPI.h and DeckLinkAPIDispatch.cpp
+`sudo ./setup.sh` builds and installs this when `DECKLINK_SDK` or
+`NEXREC_DECKLINK_SDK` (or a conventional SDK path) contains `DeckLinkAPI.h`.
+Desktop Video drivers are separate and are not downloaded by setup.
+
+```bash
 cd tools/decklink-status
 make SDK=/path/to/decklink-sdk/include
 sudo make install          # /usr/local/bin/nexrec-decklink-status
+```
 ```
 
 Then either leave Setup’s “DeckLink status helper” blank (Recorder also looks in `/usr/local/bin`) or set:

@@ -383,7 +383,7 @@ function nexrec_ops_decklink_probe(string $device): array {
     }
     $ffmpeg = getenv('NEXREC_FFMPEG');
     if (!is_string($ffmpeg) || $ffmpeg === '' || !is_executable($ffmpeg)) {
-        foreach (['/usr/bin/ffmpeg', '/usr/local/bin/ffmpeg'] as $p) {
+        foreach (['/usr/local/bin/ffmpeg', '/usr/bin/ffmpeg'] as $p) {
             if (is_executable($p)) {
                 $ffmpeg = $p;
                 break;
