@@ -211,9 +211,9 @@ def _run_presence_command(
     out_path = tmp.name
     tmp.close()
     cmd = (
-        tmpl.replace("{input}", path)
-        .replace("{output}", out_path)
-        .replace("{duration}", f"{float(duration_s):.3f}")
+        tmpl.replace("{input}", shlex.quote(path))
+        .replace("{output}", shlex.quote(out_path))
+        .replace("{duration}", shlex.quote(f"{float(duration_s):.3f}"))
     )
     timeout = 60.0
     try:
