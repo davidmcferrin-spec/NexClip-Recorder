@@ -242,6 +242,24 @@ class TestFeatures(unittest.TestCase):
         self.assertNotIn("NOPE", hits[0]["payload_json"])
         self.assertFalse(os.path.exists(media + ".nielsen-presence.json"))
 
+    def test_nielsen_presence_command_allows_empty_results(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        script = os.path.join(tmp.name, "presence-empty.py")
+        media = os.path.join(tmp.name, "chunk.mp4")
+        with open(media, "wb"):
+            pass
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write("import json,sys\njson.dump([], open(sys.argv[2],'w'))\n")
+        hits = detect_nielsen_presence(
+            media,
+            30,
+            env={
+                "NEXREC_NIELSEN_PRESENCE_CMD": f"{sys.executable} {script} {{input}} {{output}}",
+            },
+        )
+        self.assertEqual(hits, [])
+
     def test_nielsen_presence_persists_wallclock_every_chunk(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

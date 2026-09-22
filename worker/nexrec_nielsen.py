@@ -222,16 +222,16 @@ def _run_presence_command(
             timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        return [], str(exc)[:240]
+        return None, str(exc)[:240]
     if proc.returncode != 0 or not os.path.isfile(out_path):
         err = (proc.stderr or proc.stdout or "presence command failed").strip()
         _remove_file(out_path)
-        return [], err[:240]
+        return None, err[:240]
     try:
         with open(out_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        return [], str(exc)[:240]
+        return None, str(exc)[:240]
     finally:
         _remove_file(out_path)
     return normalize_presence_payload(data), None
@@ -269,8 +269,6 @@ def detect_nielsen_presence(
         return _hits(coalesce_presence(samples), method)
 
     samples, err = _run_presence_command(path, duration_s, env)
-    if samples:
-        return _hits(coalesce_presence(samples), "command")
     if err is not None:
         stub = StubNielsenPresenceDetector()
         fallback = [
@@ -278,6 +276,8 @@ def detect_nielsen_presence(
             for pts, pts_end in presence_windows(duration_s, step)
         ]
         return _hits(coalesce_presence(fallback), "stub", {"command_error": err})
+    if samples is not None:
+        return _hits(coalesce_presence(samples), "command")
 
     stub = StubNielsenPresenceDetector()
     samples = [
