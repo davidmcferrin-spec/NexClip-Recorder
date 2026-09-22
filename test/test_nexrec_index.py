@@ -12,6 +12,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
 
+import nexrec_index  # noqa: E402
 from nexrec_db import connect, insert_chunk, migrate, upsert_input  # noqa: E402
 from nexrec_index import scan_dir, start_from_filename  # noqa: E402
 from nexrec_util import iso_z, utcnow, valid_input_id  # noqa: E402
@@ -163,6 +164,40 @@ class TestIndex(unittest.TestCase):
         )
         self.assertEqual(again, [])
         self.assertFalse(os.path.exists(log))
+
+    def test_scan_dedupes_same_absolute_path_with_relative_record_path(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        day = os.path.join(tmp.name, "native", "2026", "09", "21")
+        os.makedirs(day)
+        path = os.path.join(day, "demo_20260921T151000Z.mp4")
+        with open(path, "wb") as fh:
+            fh.write(b"\x00" * 128)
+        abs_path = os.path.abspath(path)
+
+        seen = []
+        orig_walk = nexrec_index.os.walk
+        orig_index_file = nexrec_index.index_file
+        orig_ready = nexrec_index.ready_chunk_paths
+        self.addCleanup(lambda: setattr(nexrec_index.os, "walk", orig_walk))
+        self.addCleanup(lambda: setattr(nexrec_index, "index_file", orig_index_file))
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_paths", orig_ready))
+
+        def fake_walk(_root):
+            yield day, [], [os.path.basename(path), os.path.basename(path)]
+
+        def fake_index_file(_conn, probe_path, _input_id, *, kind="native", ffprobe="ffprobe"):
+            del _conn, _input_id, kind, ffprobe
+            seen.append(probe_path)
+            return {"path": os.path.relpath(probe_path, tmp.name)}
+
+        nexrec_index.os.walk = fake_walk
+        nexrec_index.index_file = fake_index_file
+        nexrec_index.ready_chunk_paths = lambda _conn, _input_id, _kind: set()
+
+        found = scan_dir(object(), day, "demo")
+        self.assertEqual(seen, [abs_path])
+        self.assertEqual(found, [{"path": os.path.relpath(abs_path, tmp.name)}])
 
 
 if __name__ == "__main__":
