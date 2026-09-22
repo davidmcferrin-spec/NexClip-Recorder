@@ -89,11 +89,12 @@ Every event sets `audit_grade: false` and `decoded: false`. A stub `absent`
 means **this stub did not detect a watermark**. It is not proof of absence
 and **not** an audit-grade decode.
 
-Optional swap without editing code: `NEXREC_NIELSEN_PRESENCE_CMD` with
-`{input}` and `{output}` (and optional `{duration}`). The command writes a
+Optional swap without editing code: `NEXREC_NIELSEN_PRESENCE_CMD` (Setup field
+`intelligence.nielsen_cmd`) with `{input}` and `{output}` (and optional
+`{duration}`). The command writes a
 JSON array of `{pts, pts_end, present}` only. `sid`, `layer`, and watermark
 `timestamp` fields are ignored. Those logs are still best-effort presence,
-not an SDK decode. There is no `NEXREC_NIELSEN_CMD`.
+not an SDK decode. Leave the command blank to keep the builtin stub.
 
 ## NEXT (not blocking v0 merge)
 

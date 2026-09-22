@@ -14,7 +14,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
-from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate  # noqa: E402
+from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate, overlay_app_settings  # noqa: E402
 from nexrec_ffmpeg import export_concat_argv  # noqa: E402
 from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, utcnow  # noqa: E402
 
@@ -46,9 +46,9 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
     # v0: proxy requested but no proxy files → transcode from native.
     force_tx = quality == "proxy"
 
-    dest_dir = os.path.join(paths["storage"], "exports")
+    dest_dir = env.get("NEXREC_EXPORTS_DIR") or os.path.join(paths["storage"], "exports")
     os.makedirs(dest_dir, exist_ok=True)
-    tmp_dir = os.path.join(paths["storage"], "tmp")
+    tmp_dir = env.get("NEXREC_SCRATCH_DIR") or os.path.join(paths["storage"], "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
 
     produced: list[str] = []
@@ -136,6 +136,8 @@ def main(argv: list[str] | None = None) -> int:
     paths = data_paths(env)
     conn = connect(paths["db"])
     migrate(conn)
+    env = overlay_app_settings(conn, env)
+    paths = data_paths(env)
     if args.once or args.job_id:
         process_one(conn, env, args.job_id or None)
         return 0

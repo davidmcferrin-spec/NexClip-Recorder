@@ -376,8 +376,88 @@ def delete_input_side_data(conn: sqlite3.Connection, input_id: str) -> None:
     conn.execute("DELETE FROM captions WHERE input_id=?", (input_id,))
     conn.execute("DELETE FROM loudness_samples WHERE input_id=?", (input_id,))
     conn.execute("DELETE FROM analyze_jobs WHERE input_id=?", (input_id,))
+    conn.execute("DELETE FROM input_heartbeats WHERE input_id=?", (input_id,))
     try:
         conn.execute("DELETE FROM captions_fts WHERE input_id=?", (input_id,))
     except sqlite3.OperationalError:
         pass
     conn.commit()
+
+
+# app_settings key -> process environment. Empty DB values do not clobber env.
+# nexapp.mode is translated separately (wan -> nexapp-wan) for older readers.
+APP_SETTING_ENV: dict[str, str] = {
+    "station.display_name": "NEXREC_INSTANCE_NAME",
+    "station.instance_id": "NEXREC_INSTANCE_ID",
+    "station.public_url": "NEXREC_PUBLIC_URL",
+    "station.timezone": "NEXREC_TIMEZONE",
+    "storage.recordings": "NEXREC_STORAGE_DIR",
+    "storage.exports": "NEXREC_EXPORTS_DIR",
+    "storage.scratch": "NEXREC_SCRATCH_DIR",
+    "storage.free_space_floor": "NEXREC_FREE_SPACE_FLOOR",
+    "retention.raw_days": "NEXREC_NATIVE_RETENTION_DAYS",
+    "retention.export_days": "NEXREC_EXPORT_RETENTION_DAYS",
+    "ffmpeg.path": "NEXREC_FFMPEG",
+    "ffmpeg.probe": "NEXREC_FFPROBE",
+    "ffmpeg.video_bitrate": "NEXREC_BROADCAST_VIDEO_BITRATE",
+    "ffmpeg.audio_bitrate": "NEXREC_BROADCAST_AUDIO_BITRATE",
+    "ffmpeg.preset": "NEXREC_X264_PRESET",
+    "ffmpeg.segment_seconds": "NEXREC_SEGMENT_SECONDS",
+    "ffmpeg.gop_frames": "NEXREC_GOP_FRAMES",
+    "preview.enabled": "NEXREC_PREVIEW_ENABLED",
+    "preview.mediamtx_rtsp": "NEXREC_MEDIAMTX_RTSP",
+    "preview.whep_port": "NEXREC_WHEP_PORT",
+    "defaults.max_inputs": "NEXREC_MAX_INPUTS",
+    "nexapp.enabled": "NEXREC_NEXAPP_ENABLED",
+    "nexapp.issuer": "NEXAPP_ISSUER",
+    "nexapp.base_url": "NEXAPP_BASE_URL",
+    "nexapp.service_id": "NEXAPP_SERVICE_ID",
+    "nexapp.public_key_path": "NEXAPP_PUBLIC_KEY_PATH",
+    "nexapp.access_url": "NEXAPP_ACCESS_URL",
+    "nexapp.redeem_url": "NEXAPP_REDEEM_URL",
+    "nexapp.logout_url": "NEXAPP_LOGOUT_URL",
+    "nexclip.enabled": "NEXREC_NEXCLIP_ENABLED",
+    "nexclip.api_base": "NEXCLIP_BASE_URL",
+    "nexclip.api_prefix": "NEXCLIP_API_PREFIX",
+    "nexclip.recorder_id": "NEXCLIP_RECORDER_ID",
+    "nexclip.poll_s": "NEXCLIP_POLL_S",
+    "nexclip.num_slots": "NEXCLIP_NUM_SLOTS",
+    "ldap.enabled": "NEXREC_LDAP_ENABLED",
+    "ldap.url": "NEXREC_LDAP_URL",
+    "ldap.bind_dn": "NEXREC_LDAP_BIND_DN",
+    "ldap.base_dn": "NEXREC_LDAP_BASE_DN",
+    "ldap.user_filter": "NEXREC_LDAP_USER_FILTER",
+    "ldap.email_attr": "NEXREC_LDAP_EMAIL_ATTR",
+    "ldap.display_attr": "NEXREC_LDAP_DISPLAY_ATTR",
+    "intelligence.transcribe_engine": "NEXREC_TRANSCRIBE_ENGINE",
+    "intelligence.transcribe_cmd": "NEXREC_TRANSCRIBE_CMD",
+    "intelligence.transcribe_timeout_s": "NEXREC_TRANSCRIBE_TIMEOUT_S",
+    "intelligence.loudness_timeout_s": "NEXREC_LOUDNESS_TIMEOUT_S",
+    "intelligence.nielsen_cmd": "NEXREC_NIELSEN_PRESENCE_CMD",
+}
+
+_MODE_TO_ENV = {"wan": "nexapp-wan", "alias": "alias", "standalone": "standalone"}
+
+
+def overlay_app_settings(conn: sqlite3.Connection, env: dict[str, str]) -> dict[str, str]:
+    """Prefer app_settings over the process environment unless break-glass is set."""
+    out = dict(env)
+    flag = str(env.get("NEXREC_ENV_OVERRIDES") or "").strip().lower()
+    if flag in ("1", "true", "yes", "on"):
+        return out
+    try:
+        rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
+    except sqlite3.OperationalError:
+        return out
+    kv = {str(r["key"]): "" if r["value"] is None else str(r["value"]) for r in rows}
+    for skey, ekey in APP_SETTING_ENV.items():
+        if skey not in kv:
+            continue
+        # A stored row wins, including a cleared value. data_paths treats "" as unset.
+        out[ekey] = kv[skey]
+    mode = kv.get("nexapp.mode") or ""
+    if mode:
+        out["NEXREC_DEPLOY_MODE"] = _MODE_TO_ENV.get(mode, mode)
+    if kv.get("nexapp.base_url") and not out.get("NEXAPP_ISSUER"):
+        out["NEXAPP_ISSUER"] = kv["nexapp.base_url"]
+    return out

@@ -93,6 +93,42 @@ Mode 1 `scheduled_with_safety_net` (calendar starts/stops capture, schedule-poll
 is **out of scope** — older simpler system, not a runtime option and not a
 later switch. Export-request poll only.
 
+## Configuration
+
+Operators change the station in **Setup** (`/settings`), not by editing
+`.env` for day-to-day work. Values live in SQLite `app_settings`. The file
+`nexrec.env` (see `nexrec-example.env`) is **bootstrap and secrets only**:
+
+| Stays in `nexrec.env` | Examples |
+| --- | --- |
+| Where the process finds its data | `NEXREC_DATA_DIR`, `NEXREC_DB` |
+| How HTTP starts | `NEXREC_HTTP_PORT`, `NEXREC_ALLOW_HTTP` |
+| First local admin (only if no users exist) | `NEXREC_ADMIN_USER`, `NEXREC_ADMIN_PASSWORD` |
+| Secrets | `NEXREC_API_KEY`, `NEXREC_LDAP_BIND_PASSWORD`, `NEXAPP_LAUNCH_SECRET`, `NEXCLIP_ENROLLMENT_SECRET`, `NEXCLIP_NODE_TOKEN`, `NEXREC_PUBLISH_JWT` |
+
+First boot copies defaults into `app_settings`. After that the database wins
+until you set break-glass `NEXREC_ENV_OVERRIDES=1`. Restart record, cleanup,
+and nexclip units after path or encode changes. The Mode 2 node bearer is
+written to the SQLite `settings` table at register time and is not shown
+on Setup. Nielsen stays presence-only unless `intelligence.nielsen_cmd` points
+at a best-effort presence command; leaving it blank keeps the builtin stub.
+
+**Services** (`/services`, admin) is the ops console: active/enabled/uptime,
+last 80 journal lines, and start/stop/restart/enable/disable. Controls call
+`bin/nexrec-systemctl.sh`, which allowlists unit names and verbs. `setup.sh`
+installs this sudoers drop-in (path matches the install root):
+
+```
+# /etc/sudoers.d/nexrec-systemctl
+www-data ALL=(root) NOPASSWD: /opt/NexClip-Recorder/bin/nexrec-systemctl.sh
+```
+
+Do not give `www-data` unrestricted `systemctl`. SDI lock needs
+`NEXREC_DECKLINK_STATUS_BIN` (argv: device name; stdout `signal=`, `lock=`,
+`format=`). Without it the signal row says `unknown — needs DeckLink tools`
+and still shows the last format stored by the record worker. IP inputs show
+receiving / stalled / down from that heartbeat and the last chunk time.
+
 ## Demo path (no root, no DeckLink)
 
 Requires `python3`, `ffmpeg`, `ffprobe`, `php`.
@@ -125,7 +161,8 @@ Target OS is **Ubuntu 24.04 LTS** on the host class in **Hardware recommendation
 
 ```bash
 sudo ./setup.sh
-# edits /etc/nexrec/nexrec.env
+# writes /etc/nexrec/nexrec.env only if missing (bootstrap + secrets)
+# day-to-day settings: Setup page after login
 # enable an input:
 sudo cp inputs-example.env /etc/nexrec/inputs/demo.env
 sudo systemctl enable --now nexrec-record@demo nexrec-preview@demo

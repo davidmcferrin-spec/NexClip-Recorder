@@ -19,6 +19,7 @@ import json
 import os
 import shlex
 import subprocess
+import tempfile
 from typing import Any, Protocol
 
 PRESENCE_NOTE = (
@@ -198,16 +199,21 @@ def _run_presence_command(
     path: str,
     duration_s: float,
     env: dict[str, str],
-) -> tuple[list[dict[str, Any]] | None, str | None]:
-    """Run the optional presence command. None means 'not configured'."""
+) -> tuple[bool, list[dict[str, Any]] | None, str | None]:
+    """Run the optional presence command.
+
+    Returns (configured, samples, error).
+    """
     tmpl = (env.get("NEXREC_NIELSEN_PRESENCE_CMD") or "").strip()
     if not tmpl:
-        return None, None
-    out_path = path + ".nielsen-presence.json"
+        return False, None, None
+    tmp = tempfile.NamedTemporaryFile(prefix="nexrec-nielsen-", suffix=".json", delete=False)
+    out_path = tmp.name
+    tmp.close()
     cmd = (
-        tmpl.replace("{input}", path)
-        .replace("{output}", out_path)
-        .replace("{duration}", f"{float(duration_s):.3f}")
+        tmpl.replace("{input}", shlex.quote(path))
+        .replace("{output}", shlex.quote(out_path))
+        .replace("{duration}", shlex.quote(f"{float(duration_s):.3f}"))
     )
     timeout = 60.0
     try:
@@ -222,19 +228,20 @@ def _run_presence_command(
             timeout=timeout,
         )
     except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
-        return [], str(exc)[:240]
+        _remove_file(out_path)
+        return True, None, str(exc)[:240]
     if proc.returncode != 0 or not os.path.isfile(out_path):
         err = (proc.stderr or proc.stdout or "presence command failed").strip()
         _remove_file(out_path)
-        return [], err[:240]
+        return True, None, err[:240]
     try:
         with open(out_path, "r", encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as exc:
-        return [], str(exc)[:240]
+        return True, None, str(exc)[:240]
     finally:
         _remove_file(out_path)
-    return normalize_presence_payload(data), None
+    return True, normalize_presence_payload(data), None
 
 
 def _remove_file(path: str) -> None:
@@ -268,16 +275,21 @@ def detect_nielsen_presence(
         method = str(getattr(detector, "method", "custom") or "custom")
         return _hits(coalesce_presence(samples), method)
 
-    samples, err = _run_presence_command(path, duration_s, env)
-    if samples:
-        return _hits(coalesce_presence(samples), "command")
-    if err is not None:
+    configured, samples, err = _run_presence_command(path, duration_s, env)
+    if configured and err is not None:
         stub = StubNielsenPresenceDetector()
         fallback = [
             {"pts": pts, "pts_end": pts_end, "present": stub.sample(path, pts, pts_end)}
             for pts, pts_end in presence_windows(duration_s, step)
         ]
         return _hits(coalesce_presence(fallback), "stub", {"command_error": err})
+    if configured:
+        if not samples:
+            samples = [
+                {"pts": pts, "pts_end": pts_end, "present": False}
+                for pts, pts_end in presence_windows(duration_s, step)
+            ]
+        return _hits(coalesce_presence(samples), "command")
 
     stub = StubNielsenPresenceDetector()
     samples = [

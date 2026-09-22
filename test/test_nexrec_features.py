@@ -242,6 +242,37 @@ class TestFeatures(unittest.TestCase):
         self.assertNotIn("NOPE", hits[0]["payload_json"])
         self.assertFalse(os.path.exists(media + ".nielsen-presence.json"))
 
+    def test_nielsen_presence_command_allows_empty_results(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        script = os.path.join(tmp.name, "presence-empty.py")
+        media = os.path.join(tmp.name, "chunk.mp4")
+        with open(media, "wb"):
+            pass
+        with open(script, "w", encoding="utf-8") as fh:
+            fh.write("import json,sys\njson.dump([], open(sys.argv[2],'w'))\n")
+        hits = detect_nielsen_presence(
+            media,
+            30,
+            env={
+                "NEXREC_NIELSEN_PRESENCE_CMD": f"{sys.executable} {script} {{input}} {{output}}",
+            },
+        )
+        self.assertEqual([h["subtype"] for h in hits], ["absent"])
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertEqual(payload["method"], "command")
+
+    def test_nielsen_presence_command_error_uses_stub_with_error(self):
+        hits = detect_nielsen_presence(
+            "/tmp/no-such.mp4",
+            30,
+            env={"NEXREC_NIELSEN_PRESENCE_CMD": "/definitely/missing/bin {input} {output}"},
+        )
+        self.assertEqual([h["subtype"] for h in hits], ["absent"])
+        payload = json.loads(hits[0]["payload_json"])
+        self.assertEqual(payload["method"], "stub")
+        self.assertIn("command_error", payload)
+
     def test_nielsen_presence_persists_wallclock_every_chunk(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)
@@ -291,6 +322,9 @@ class TestFeatures(unittest.TestCase):
         payload = json.loads(row["payload_json"])
         self.assertFalse(payload["audit_grade"])
         self.assertNotIn("sid", payload)
+        analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk, storage=tmp.name)
+        n = conn.execute("SELECT COUNT(*) FROM events WHERE chunk_id='chk1' AND kind='nielsen'").fetchone()[0]
+        self.assertEqual(n, 1)
         chunk2 = dict(chunk, id="chk2", start_at="2026-09-21T15:01:30Z", end_at="2026-09-21T15:03:00Z")
         analyze_chunk(conn, {"NEXREC_NIELSEN_WINDOW_S": "30"}, source, chunk2, storage=tmp.name)
         n = conn.execute("SELECT COUNT(*) FROM events WHERE kind='nielsen'").fetchone()[0]

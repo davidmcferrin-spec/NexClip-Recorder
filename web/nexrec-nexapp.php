@@ -15,23 +15,40 @@ declare(strict_types=1);
 
 const NEXREC_NEXAPP_COOKIE = 'NexAPP_AUTH';
 
-/** Example first-host id. Each machine must set NEXAPP_SERVICE_ID uniquely. */
-function nexrec_nexapp_service_id(): string {
-    $o = getenv('NEXAPP_SERVICE_ID');
-    return (is_string($o) && $o !== '') ? $o : 'nexclip-recorder-ctl1';
-}
-
-function nexrec_nexapp_issuer(): string {
-    $o = getenv('NEXAPP_ISSUER');
-    return (is_string($o) && $o !== '') ? rtrim($o, '/') : '';
-}
-
-function nexrec_nexapp_public_key_path(): string {
-    $o = getenv('NEXAPP_PUBLIC_KEY_PATH');
+/** DB setting when Setup is loaded; otherwise the process environment. */
+function nexrec_nexapp_cfg(string $setting, string $envKey, string $default = ''): string {
+    if (function_exists('nexrec_setting')) {
+        $v = nexrec_setting($setting);
+        if ($v !== '') {
+            return $v;
+        }
+    }
+    $o = getenv($envKey);
     if (is_string($o) && $o !== '') {
         return $o;
     }
-    return '/var/www/nexapp/keys/jwt_public.pem';
+    return $default;
+}
+
+/** Example first-host id. Each machine must set NEXAPP_SERVICE_ID uniquely. */
+function nexrec_nexapp_service_id(): string {
+    return nexrec_nexapp_cfg('nexapp.service_id', 'NEXAPP_SERVICE_ID', 'nexclip-recorder-ctl1');
+}
+
+function nexrec_nexapp_issuer(): string {
+    $iss = nexrec_nexapp_cfg('nexapp.issuer', 'NEXAPP_ISSUER', '');
+    if ($iss === '') {
+        $iss = nexrec_nexapp_cfg('nexapp.base_url', 'NEXAPP_BASE_URL', '');
+    }
+    return $iss !== '' ? rtrim($iss, '/') : '';
+}
+
+function nexrec_nexapp_public_key_path(): string {
+    return nexrec_nexapp_cfg(
+        'nexapp.public_key_path',
+        'NEXAPP_PUBLIC_KEY_PATH',
+        '/var/www/nexapp/keys/jwt_public.pem'
+    );
 }
 
 function nexrec_nexapp_root(): string {
@@ -40,8 +57,8 @@ function nexrec_nexapp_root(): string {
 }
 
 function nexrec_nexapp_access_url(): string {
-    $o = getenv('NEXAPP_ACCESS_URL');
-    if (is_string($o) && $o !== '') {
+    $o = nexrec_nexapp_cfg('nexapp.access_url', 'NEXAPP_ACCESS_URL', '');
+    if ($o !== '') {
         return $o;
     }
     $iss = nexrec_nexapp_issuer();
@@ -49,8 +66,8 @@ function nexrec_nexapp_access_url(): string {
 }
 
 function nexrec_nexapp_redeem_url(): string {
-    $o = getenv('NEXAPP_REDEEM_URL');
-    if (is_string($o) && $o !== '') {
+    $o = nexrec_nexapp_cfg('nexapp.redeem_url', 'NEXAPP_REDEEM_URL', '');
+    if ($o !== '') {
         return $o;
     }
     $iss = nexrec_nexapp_issuer();
@@ -58,6 +75,7 @@ function nexrec_nexapp_redeem_url(): string {
 }
 
 function nexrec_nexapp_launch_secret(): string {
+    // Break-glass secret. Never read from app_settings.
     $o = getenv('NEXAPP_LAUNCH_SECRET');
     return is_string($o) ? $o : '';
 }
@@ -84,8 +102,8 @@ function nexrec_nexapp_login_url(?string $next = null): string {
 }
 
 function nexrec_nexapp_logout_url(): string {
-    $o = getenv('NEXAPP_LOGOUT_URL');
-    if (is_string($o) && $o !== '') {
+    $o = nexrec_nexapp_cfg('nexapp.logout_url', 'NEXAPP_LOGOUT_URL', '');
+    if ($o !== '') {
         return $o;
     }
     $iss = nexrec_nexapp_issuer();

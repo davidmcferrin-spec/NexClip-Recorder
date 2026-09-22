@@ -13,7 +13,7 @@
   <a href="/live">Live</a>
   <a href="/export">Export</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
-  <a href="/settings" data-auth-role="admin,operator">Settings</a>
+  <a href="/settings" data-auth-role="admin,operator">Setup</a>
   <a href="/users" data-auth-role="admin">Users</a>
   <a class="active" href="/services" data-auth-role="admin">Services</a>
   <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
@@ -22,24 +22,151 @@
   <button type="button" class="nav-logout" id="nav-logout">Log out</button>
 </nav>
 <main>
+  <div class="bar">
+    <h1 style="margin:0">Services</h1>
+    <button type="button" id="refresh">Refresh</button>
+    <span class="sub" id="hint"></span>
+  </div>
   <div class="panel">
-    <h1>systemd units</h1>
-    <p class="sub">Status is best-effort (inactive on hosts without systemd). Enable with setup.sh.</p>
-    <table><thead><tr><th>Unit</th><th>State</th></tr></thead><tbody id="rows"></tbody></table>
+    <h2>systemd units</h2>
+    <p class="sub">Active, enabled, and uptime come from <code>systemctl show</code>. Start, stop, restart, enable, and disable go through <code>bin/nexrec-systemctl.sh</code> (sudoers allowlist). Hosts without systemd show unknown.</p>
+    <table>
+      <thead>
+        <tr><th>Unit</th><th>Active</th><th>Enabled</th><th>Since</th><th>Uptime</th><th></th></tr>
+      </thead>
+      <tbody id="units"></tbody>
+    </table>
+  </div>
+  <div class="panel">
+    <h2>Journal</h2>
+    <p class="sub" id="log-title">Select a unit to load the last 80 journal lines.</p>
+    <pre class="log-pane" id="log">—</pre>
+  </div>
+  <div class="panel">
+    <h2>Signal</h2>
+    <p class="sub">SDI lock needs a DeckLink status tool (<code>NEXREC_DECKLINK_STATUS_BIN</code>). Without it the row stays unknown and still shows the last format the record worker stored. IP rows use the worker heartbeat and last chunk time.</p>
+    <table>
+      <thead>
+        <tr><th>Input</th><th>Type</th><th>Signal</th><th>SDI lock</th><th>Format</th><th>Last chunk</th><th>Last seen</th><th>Detail</th></tr>
+      </thead>
+      <tbody id="signals"></tbody>
+    </table>
   </div>
 </main>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
-NexRecAuth.requirePage({ roles: ["admin"] }).then(function () {
-  return fetch("/api/ops?action=units", { credentials: "same-origin", cache: "no-store" }).then(function (r) { return r.json(); });
-}).then(function (d) {
-  var tb = document.getElementById("rows");
-  (d.units || []).forEach(function (u) {
-    var tr = document.createElement("tr");
-    tr.innerHTML = "<td>" + u.unit + "</td><td>" + u.state + "</td>";
-    tb.appendChild(tr);
+NexRecAuth.requirePage({ roles: ["admin"] }).then(refresh);
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
   });
-});
+}
+function badge(state) {
+  var cls = "off";
+  if (state === "active" || state === "enabled" || state === "present" || state === "receiving") cls = "on";
+  else if (state === "failed" || state === "down" || state === "no_signal") cls = "bad";
+  else if (state === "stalled" || state === "activating" || state === "deactivating") cls = "warn";
+  return '<span class="badge ' + cls + '">' + esc(state || "unknown") + "</span>";
+}
+function uptime(sec) {
+  if (sec == null || sec === "") return "—";
+  sec = Number(sec);
+  if (!isFinite(sec)) return "—";
+  var h = Math.floor(sec / 3600);
+  var m = Math.floor((sec % 3600) / 60);
+  var s = Math.floor(sec % 60);
+  if (h > 0) return h + "h " + m + "m";
+  if (m > 0) return m + "m " + s + "s";
+  return s + "s";
+}
+function ops(action, body, query) {
+  var url = "/api/ops?action=" + encodeURIComponent(action);
+  if (query) {
+    Object.keys(query).forEach(function (k) {
+      url += "&" + encodeURIComponent(k) + "=" + encodeURIComponent(query[k]);
+    });
+  }
+  var opts = { credentials: "same-origin", cache: "no-store", headers: {} };
+  if (body) {
+    opts.method = "POST";
+    opts.headers["Content-Type"] = "application/json";
+    opts.body = JSON.stringify(body);
+  }
+  return fetch(url, opts).then(function (res) {
+    return res.json().then(function (data) {
+      if (!data) throw new Error("empty");
+      return data;
+    });
+  });
+}
+function loadLog(unit) {
+  document.getElementById("log-title").textContent = unit + " — journalctl -n 80";
+  document.getElementById("log").textContent = "loading…";
+  ops("journal", null, { unit: unit, n: 80 }).then(function (d) {
+    var lines = d.lines || [];
+    document.getElementById("log").textContent = lines.length ? lines.join("\n") : (d.error || "(no journal lines)");
+  }).catch(function (e) {
+    document.getElementById("log").textContent = String(e.message || e);
+  });
+}
+function refresh() {
+  document.getElementById("hint").textContent = "loading…";
+  return Promise.all([ops("units"), ops("signals")]).then(function (all) {
+    var units = all[0].units || [];
+    var can = !!all[0].can_control;
+    var tb = document.getElementById("units");
+    tb.innerHTML = "";
+    units.forEach(function (u) {
+      var tr = document.createElement("tr");
+      var actions = '<button type="button" data-act="log">Log</button>';
+      if (can) {
+        ["start", "stop", "restart", "enable", "disable"].forEach(function (v) {
+          actions += ' <button type="button" data-act="' + v + '">' + v + "</button>";
+        });
+      }
+      tr.innerHTML = "<td><code>" + esc(u.unit) + "</code></td><td>" + badge(u.active) +
+        "</td><td>" + badge(u.enabled) + "</td><td>" + esc(u.active_enter || "—") +
+        "</td><td>" + esc(uptime(u.uptime_s)) + '</td><td class="unit-actions">' + actions + "</td>";
+      tr.querySelectorAll("button").forEach(function (btn) {
+        btn.onclick = function () {
+          var act = btn.getAttribute("data-act");
+          if (act === "log") { loadLog(u.unit); return; }
+          btn.disabled = true;
+          ops("control", { verb: act, unit: u.unit }).then(function (d) {
+            document.getElementById("hint").textContent = d.ok ? (act + " " + u.unit) : (d.error || "control failed");
+            refresh();
+          }).catch(function (e) {
+            document.getElementById("hint").textContent = String(e.message || e);
+            btn.disabled = false;
+          });
+        };
+      });
+      tb.appendChild(tr);
+    });
+    if (!units.length) {
+      tb.innerHTML = '<tr><td colspan="6" class="empty">No units.</td></tr>';
+    }
+    var sb = document.getElementById("signals");
+    sb.innerHTML = "";
+    (all[1].signals || []).forEach(function (s) {
+      var lock = s.sdi_lock == null ? "—" : (Number(s.sdi_lock) ? "locked" : "unlocked");
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + esc(s.name || s.input_id) + "</td><td>" + esc(s.source_type) +
+        "</td><td>" + badge(s.signal) + "</td><td>" + esc(lock) + "</td><td>" + esc(s.format || "—") +
+        "</td><td>" + esc(s.last_chunk_at || "—") + "</td><td>" + esc(s.seen_at || "—") +
+        "</td><td class='sub'>" + esc(s.detail || "") + "</td>";
+      sb.appendChild(tr);
+    });
+    if (!(all[1].signals || []).length) {
+      sb.innerHTML = '<tr><td colspan="8" class="empty">No inputs configured.</td></tr>';
+    }
+    document.getElementById("hint").textContent = can ? "" : "read only";
+  }).catch(function (e) {
+    document.getElementById("hint").textContent = String(e.message || e);
+  });
+}
+document.getElementById("refresh").onclick = refresh;
 </script>
 </body>
 </html>

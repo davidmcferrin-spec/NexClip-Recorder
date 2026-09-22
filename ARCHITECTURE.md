@@ -238,8 +238,9 @@ Helpers: `docs/references/nexapp-access-client.php`,
    create; `protected=1` skips).
 2. Delete native chunks older than the **input’s** `retention_days`.
 3. Remove orphan files under `inputs/` not referenced by `chunks`.
-4. If free space on `NEXREC_STORAGE_DIR` is still below
-   `NEXREC_FREE_SPACE_FLOOR`, delete oldest unprotected exports, then oldest
+4. If free space on the recordings path is still below the free-space floor
+   (`storage.free_space_floor` in Setup, seeded from `NEXREC_FREE_SPACE_FLOOR`),
+   delete oldest unprotected exports, then oldest
    unprotected native chunks, until the floor is met or nothing remains.
 
 Protected exports and in-progress recordings are never deleted by step 4.
@@ -274,6 +275,13 @@ NexClip never dials into this host; `nexrec-nexclip.timer` polls out.
 Workers are Python stdlib. PHP never shells FFmpeg with unsanitized input;
 it writes DB rows. Input ids are `[a-z0-9-]{1,32}`.
 
+Unit start/stop/restart/enable/disable from the Services page goes through
+`bin/nexrec-systemctl.sh` under `sudo -n`. The script allowlists verbs and
+unit names (`mediamtx`, `nexrec-export`, `nexrec-cleanup` service/timer,
+`nexrec-analyze`, `nexrec-nexclip` service/timer, `nexrec-record@<id>`,
+`nexrec-preview@<id>`). `setup.sh` installs
+`/etc/sudoers.d/nexrec-systemctl` for that path only.
+
 ## 11. Monitoring / intelligence (sidecar)
 
 See `docs/FEATURES.md`. Summary:
@@ -291,3 +299,18 @@ See `docs/FEATURES.md`. Summary:
   on the concat/trim window (ITU-R BS.1770 / ATSC A/85 −24 LKFS).
 - Live WFM/vectorscope/VU/64-ch RTA are UI placeholders fed later from the
   **preview/proxy** decode, not the mezzanine record.
+
+## 12. Configuration surface
+
+`nexrec.env` is **bootstrap and secrets**: data dir, DB path, HTTP port,
+the initial admin password, API keys, the NexAPP launch secret, the NexClip
+enrollment secret, and the node bearer. Day-to-day values (storage paths,
+free-space floor, retention, FFmpeg profile, segment length, MediaMTX/WHEP,
+NexAPP mode/issuer/service_id, Mode 2 API base and recorder id, feature
+defaults, the optional Nielsen command path) live in SQLite `app_settings`
+and are edited on **Setup** (`/settings`).
+
+First boot seeds missing keys from the environment, then the database wins.
+`NEXREC_ENV_OVERRIDES=1` is the break-glass switch. Workers call
+`overlay_app_settings()` at start. The Nielsen path stays presence-only:
+an empty `intelligence.nielsen_cmd` keeps the builtin stub.

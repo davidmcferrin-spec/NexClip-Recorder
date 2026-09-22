@@ -416,6 +416,8 @@ def analyze_chunk(
 
         if flag_on(source, "feat_nielsen"):
             # Presence only. No Nielsen Decoder SDK, SID, code time, or layer.
+            if chunk.get("id"):
+                conn.execute("DELETE FROM events WHERE chunk_id=? AND kind='nielsen'", (chunk.get("id"),))
             hits = detect_nielsen_presence(
                 path,
                 _media_duration_s(chunk, env),

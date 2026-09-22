@@ -155,5 +155,6 @@ def scan_dir(
             rec = index_file(conn, path, input_id, kind=kind, ffprobe=ffprobe)
             if rec:
                 found.append(rec)
-                ready.add(rec["path"])
+                ready.add(path)
+                ready.add(os.path.abspath(rec["path"]))
     return found

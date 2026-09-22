@@ -218,6 +218,9 @@ function nexrec_user_verify_local(string $username, string $password): ?array {
 
 function nexrec_ldap_enabled(): bool {
     nexrec_load_station_env();
+    if (function_exists('nexrec_setting_bool')) {
+        return nexrec_setting_bool('ldap.enabled');
+    }
     $v = getenv('NEXREC_LDAP_ENABLED');
     return is_string($v) && in_array(strtolower($v), ['1', 'true', 'yes', 'on'], true);
 }
@@ -445,6 +448,16 @@ function nexrec_user_update(string $id, array $body): array {
 function nexrec_whep_url(string $path): string {
     $host = $_SERVER['HTTP_HOST'] ?? '127.0.0.1';
     $hostOnly = explode(':', $host)[0];
-    $port = getenv('NEXREC_WHEP_PORT') ?: '8889';
+    if (function_exists('nexrec_setting')) {
+        $port = nexrec_setting('preview.whep_port');
+    } else {
+        $envPort = getenv('NEXREC_WHEP_PORT');
+        $port = is_string($envPort) && $envPort !== '' ? $envPort : '8889';
+    }
+    if ($port === '') {
+        $port = '8889';
+    }
     return 'https://' . $hostOnly . ':' . $port . '/' . rawurlencode($path) . '/whep';
 }
+
+require_once __DIR__ . '/nexrec-settings.php';

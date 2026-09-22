@@ -11,8 +11,9 @@ try {
     nexrec_load_station_env();
     nexrec_migrate();
     nexrec_seed_admin();
+    $seeded = nexrec_settings_seed();
     $n = (int) nexrec_db()->querySingle('SELECT COUNT(*) FROM users');
-    fwrite(STDOUT, "auth bootstrap ok: users={$n} db=" . nexrec_db_path() . "\n");
+    fwrite(STDOUT, "auth bootstrap ok: users={$n} settings_seeded={$seeded} db=" . nexrec_db_path() . "\n");
     exit(0);
 } catch (Throwable $e) {
     fwrite(STDERR, 'auth bootstrap failed: ' . $e->getMessage() . "\n");

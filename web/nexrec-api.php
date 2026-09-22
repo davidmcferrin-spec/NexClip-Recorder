@@ -36,6 +36,12 @@ function nexrec_api_body(): array {
 
 function nexrec_storage_dir(): string {
     nexrec_load_station_env();
+    if (function_exists('nexrec_setting')) {
+        $p = nexrec_setting('storage.recordings');
+        if ($p !== '') {
+            return rtrim($p, '/');
+        }
+    }
     $p = getenv('NEXREC_STORAGE_DIR');
     if (is_string($p) && $p !== '') {
         return rtrim($p, '/');
@@ -84,21 +90,21 @@ try {
         $inputs = (int) $db->querySingle('SELECT COUNT(*) FROM inputs');
         $chunks = (int) $db->querySingle('SELECT COUNT(*) FROM chunks WHERE ready=1');
         $exports = (int) $db->querySingle("SELECT COUNT(*) FROM exports WHERE status='done'");
-        $floor = (string) (getenv('NEXREC_FREE_SPACE_FLOOR') ?: '50G');
+        $floor = nexrec_setting('storage.free_space_floor');
         $storage = nexrec_storage_dir();
         $free = is_dir($storage) ? (int) disk_free_space($storage) : 0;
         nexrec_api_ok([
-            'instance_id' => getenv('NEXREC_INSTANCE_ID') ?: null,
-            'instance_name' => getenv('NEXREC_INSTANCE_NAME') ?: null,
-            'mode' => getenv('NEXREC_DEPLOY_MODE') ?: 'standalone',
+            'instance_id' => nexrec_setting('station.instance_id') ?: null,
+            'instance_name' => nexrec_setting('station.display_name') ?: null,
+            'mode' => nexrec_setting('nexapp.mode') ?: 'standalone',
             'inputs' => $inputs,
             'chunks' => $chunks,
             'exports' => $exports,
             'storage_dir' => $storage,
             'free_bytes' => $free,
             'free_space_floor' => $floor,
-            'segment_seconds' => (int) (getenv('NEXREC_SEGMENT_SECONDS') ?: 300),
-            'max_inputs' => (int) (getenv('NEXREC_MAX_INPUTS') ?: 10),
+            'segment_seconds' => nexrec_setting_int('ffmpeg.segment_seconds', 300),
+            'max_inputs' => nexrec_setting_int('defaults.max_inputs', 10),
         ]);
     }
 
@@ -120,9 +126,10 @@ try {
         if (!nexrec_valid_input_id($id)) {
             nexrec_api_fail(400, 'invalid id');
         }
-        $max = (int) (getenv('NEXREC_MAX_INPUTS') ?: 10);
+        $max = nexrec_setting_int('defaults.max_inputs', 10);
         $n = (int) nexrec_db()->querySingle('SELECT COUNT(*) FROM inputs');
         $exists = nexrec_db()->querySingle('SELECT COUNT(*) FROM inputs WHERE id=' . "'" . SQLite3::escapeString($id) . "'");
+        $isNew = !(int) $exists;
         if (!$exists && $n >= $max) {
             nexrec_api_fail(400, "max {$max} inputs");
         }
@@ -164,25 +171,57 @@ try {
         $st->bindValue(':url', $body['url'] ?? '', SQLITE3_TEXT);
         $st->bindValue(':dd', $body['decklink_device'] ?? '', SQLITE3_TEXT);
         $st->bindValue(':df', $body['decklink_format'] ?? '', SQLITE3_TEXT);
+        $pick = static function (string $key, string $setting, int $omit) use ($body, $isNew): int {
+            if (array_key_exists($key, $body)) {
+                return !empty($body[$key]) ? 1 : 0;
+            }
+            if ($isNew) {
+                return nexrec_setting_bool($setting) ? 1 : 0;
+            }
+            return $omit;
+        };
         $st->bindValue(':en', !empty($body['enabled']) ? 1 : 0, SQLITE3_INTEGER);
-        $st->bindValue(':lt', !empty($body['live_transcode']) ? 1 : 0, SQLITE3_INTEGER);
-        $st->bindValue(':cn', !isset($body['copy_native']) || !empty($body['copy_native']) ? 1 : 0, SQLITE3_INTEGER);
-        $st->bindValue(':up', !empty($body['upconvert_1080i']) ? 1 : 0, SQLITE3_INTEGER);
+        $st->bindValue(':lt', $pick('live_transcode', 'defaults.live_transcode', 0), SQLITE3_INTEGER);
+        $st->bindValue(':cn', $pick('copy_native', 'defaults.copy_native', 1), SQLITE3_INTEGER);
+        $st->bindValue(':up', $pick('upconvert_1080i', 'defaults.upconvert_1080i', 0), SQLITE3_INTEGER);
         $st->bindValue(':vb', $body['video_bitrate'] ?? null, SQLITE3_TEXT);
         $st->bindValue(':ab', $body['audio_bitrate'] ?? null, SQLITE3_TEXT);
-        $st->bindValue(':rd', (int) ($body['retention_days'] ?? 28), SQLITE3_INTEGER);
+        if (array_key_exists('retention_days', $body) && $body['retention_days'] !== '' && $body['retention_days'] !== null) {
+            $rd = (int) $body['retention_days'];
+        } elseif ($isNew) {
+            $rd = nexrec_setting_int('retention.raw_days', 28);
+        } else {
+            $rd = 28;
+        }
+        $st->bindValue(':rd', $rd, SQLITE3_INTEGER);
         $st->bindValue(':pp', $body['preview_path'] ?? ('in' . min($n, 9)), SQLITE3_TEXT);
-        $st->bindValue(':pe', !isset($body['preview_enabled']) || !empty($body['preview_enabled']) ? 1 : 0, SQLITE3_INTEGER);
-        $st->bindValue(':scte', nexrec_flag($body, 'feat_scte'), SQLITE3_INTEGER);
-        $st->bindValue(':ava', nexrec_flag($body, 'feat_av_anomaly'), SQLITE3_INTEGER);
-        $st->bindValue(':cc', nexrec_flag($body, 'feat_captions'), SQLITE3_INTEGER);
-        $st->bindValue(':tr', nexrec_flag($body, 'feat_transcribe'), SQLITE3_INTEGER);
-        $st->bindValue(':ni', nexrec_flag($body, 'feat_nielsen'), SQLITE3_INTEGER);
-        $st->bindValue(':mon', nexrec_flag($body, 'feat_monitors'), SQLITE3_INTEGER);
+        $st->bindValue(':pe', $pick('preview_enabled', 'defaults.preview_enabled', 1), SQLITE3_INTEGER);
+        $feat = static function (string $key, string $setting) use ($body, $isNew): int {
+            if (array_key_exists($key, $body)) {
+                return nexrec_flag($body, $key);
+            }
+            return $isNew && nexrec_setting_bool($setting) ? 1 : 0;
+        };
+        $st->bindValue(':scte', $feat('feat_scte', 'defaults.feat_scte'), SQLITE3_INTEGER);
+        $st->bindValue(':ava', $feat('feat_av_anomaly', 'defaults.feat_av_anomaly'), SQLITE3_INTEGER);
+        $st->bindValue(':cc', $feat('feat_captions', 'defaults.feat_captions'), SQLITE3_INTEGER);
+        $st->bindValue(':tr', $feat('feat_transcribe', 'defaults.feat_transcribe'), SQLITE3_INTEGER);
+        $st->bindValue(':ni', $feat('feat_nielsen', 'defaults.feat_nielsen'), SQLITE3_INTEGER);
+        $st->bindValue(':mon', $feat('feat_monitors', 'defaults.feat_monitors'), SQLITE3_INTEGER);
         $st->bindValue(':tf', nexrec_float_body($body, 'thresh_freeze_s', 2.0));
         $st->bindValue(':tb', nexrec_float_body($body, 'thresh_black_s', 2.0));
         $st->bindValue(':tbar', nexrec_float_body($body, 'thresh_bars_s', 5.0));
-        $st->bindValue(':teng', (string) ($body['transcribe_engine'] ?? ''), SQLITE3_TEXT);
+        if (array_key_exists('transcribe_engine', $body)) {
+            $teng = (string) $body['transcribe_engine'];
+        } elseif ($isNew) {
+            $teng = nexrec_setting('intelligence.transcribe_engine');
+            if ($teng === 'none') {
+                $teng = '';
+            }
+        } else {
+            $teng = '';
+        }
+        $st->bindValue(':teng', $teng, SQLITE3_TEXT);
         $slot = (int) ($body['nexclip_slot'] ?? 0);
         if ($slot < 1 || $slot > 8) {
             $slot = 0;
@@ -205,7 +244,7 @@ try {
             nexrec_api_fail(400, 'invalid id');
         }
         $db = nexrec_db();
-        foreach (['events', 'captions', 'loudness_samples', 'analyze_jobs', 'chunks'] as $tbl) {
+        foreach (['events', 'captions', 'loudness_samples', 'analyze_jobs', 'chunks', 'input_heartbeats'] as $tbl) {
             $st = $db->prepare("DELETE FROM {$tbl} WHERE input_id=:i");
             $st->bindValue(':i', $id, SQLITE3_TEXT);
             $st->execute();
@@ -266,7 +305,7 @@ try {
             nexrec_api_fail(400, 'quality must be full or proxy');
         }
         $scope = (string) ($body['scope'] ?? 'one');
-        $days = (int) (getenv('NEXREC_EXPORT_RETENTION_DAYS') ?: 15);
+        $days = nexrec_setting_int('retention.export_days', 15);
         $expId = nexrec_new_id('exp');
         $protected = !empty($body['protected']) ? 1 : 0;
         $expires = $protected ? null : gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400);
@@ -330,22 +369,27 @@ try {
     }
 
     if ($action === 'settings_get') {
-        nexrec_require_roles(['admin', 'operator']);
-        $keys = [
-            'NEXREC_DEPLOY_MODE', 'NEXREC_INSTANCE_ID', 'NEXREC_INSTANCE_NAME',
-            'NEXREC_STORAGE_DIR', 'NEXREC_FREE_SPACE_FLOOR', 'NEXREC_SEGMENT_SECONDS',
-            'NEXREC_NATIVE_RETENTION_DAYS', 'NEXREC_EXPORT_RETENTION_DAYS',
-            'NEXREC_BROADCAST_VIDEO_BITRATE', 'NEXREC_LDAP_ENABLED',
-            'NEXREC_NEXAPP_ENABLED', 'NEXREC_NEXCLIP_ENABLED',
-            'NEXAPP_ISSUER', 'NEXAPP_SERVICE_ID', 'NEXCLIP_BASE_URL', 'NEXREC_PREVIEW_ENABLED',
-            'NEXREC_TRANSCRIBE_ENGINE',
-        ];
-        $out = [];
-        foreach ($keys as $k) {
-            $v = getenv($k);
-            $out[$k] = is_string($v) ? $v : '';
+        $me = nexrec_require_roles(['admin', 'operator']);
+        $pub = nexrec_settings_public();
+        $pub['can_edit'] = (($me['role'] ?? '') === 'admin');
+        nexrec_api_ok($pub);
+    }
+
+    if ($action === 'settings_patch') {
+        $me = nexrec_require_roles(['admin']);
+        $incoming = $body['settings'] ?? null;
+        if (!is_array($incoming)) {
+            nexrec_api_fail(400, 'settings object required');
         }
-        nexrec_api_ok(['settings' => $out]);
+        try {
+            $updated = nexrec_settings_put($incoming, (string) ($me['username'] ?? 'admin'));
+        } catch (InvalidArgumentException $e) {
+            nexrec_api_fail(400, $e->getMessage());
+        }
+        $pub = nexrec_settings_public();
+        $pub['can_edit'] = true;
+        $pub['updated'] = $updated;
+        nexrec_api_ok($pub);
     }
 
     if ($action === 'demo_seed') {
