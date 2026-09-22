@@ -17,9 +17,6 @@ returned 404 for the private repos — do not treat GitHub as the source.
 Recorder implementation lives in this repo. NexClip still does **not**
 include node-side capture software (ADR 0020 non-goal).
 
-Owner decisions baked into this PR (after the brief):
-
-- One unique NexAPP `service_id` per host (general NexAPP rule: Recorder
-  **and** standalone NexClip — e.g. `nexclip-ctl1` / `nexclip-ctl2`). This
-  repo does not change NexClip code.
-- Mode 2 `continuous_24x7` only; Mode 1 is out of scope.
+Owner decisions (one `service_id` per host; Mode 1 out of scope) live in
+[`docs/ASSUMPTIONS.md`](../ASSUMPTIONS.md) and
+[`docs/NEXCLIP-HOOKS.md`](../NEXCLIP-HOOKS.md).

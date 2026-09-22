@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Probe closed MP4 chunks and upsert them into the chunk index."""
+"""Probe closed MP4 chunks and upsert them into the chunk index.
+
+Paths that already have a ready chunks row are left alone. The caller
+still passes the newest open segment as skip_basename.
+"""
 
 from __future__ import annotations
 
@@ -111,6 +115,22 @@ def index_file(
     return rec
 
 
+def ready_chunk_paths(conn, input_id: str, kind: str) -> set[str]:
+    """Absolute paths already stored as ready chunks for this input."""
+    rows = conn.execute(
+        "SELECT path FROM chunks WHERE input_id=? AND kind=? AND ready=1",
+        (input_id, kind),
+    ).fetchall()
+    ready: set[str] = set()
+    for row in rows:
+        stored = str(row["path"] or "")
+        if not stored:
+            continue
+        ready.add(stored)
+        ready.add(os.path.abspath(stored))
+    return ready
+
+
 def scan_dir(
     conn,
     root: str,
@@ -122,14 +142,18 @@ def scan_dir(
     found: list[dict[str, Any]] = []
     if not os.path.isdir(root):
         return found
+    ready = ready_chunk_paths(conn, input_id, kind)
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
             if not name.endswith(".mp4"):
                 continue
             if skip_basename and name == skip_basename:
                 continue
-            path = os.path.join(dirpath, name)
+            path = os.path.abspath(os.path.join(dirpath, name))
+            if path in ready:
+                continue
             rec = index_file(conn, path, input_id, kind=kind, ffprobe=ffprobe)
             if rec:
                 found.append(rec)
+                ready.add(rec["path"])
     return found
