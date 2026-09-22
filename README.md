@@ -38,7 +38,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - 5-minute (configurable) MP4 chunks, **wall-clock aligned**, NTP/system timecode metadata
 - Chunk index in local PostgreSQL
 - Export job: concat overlapping chunks + trim in/out → one Premiere/FCPX-friendly MP4
-- Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player wired, placeholder if MediaMTX is down)
+- Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player; confidence WFM / vectorscope / VU / 64-band RTA on the selected pane, default off)
 - Export editor: shared timeline, mark in/out, one-stream vs all-visible, full vs proxy
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
@@ -54,7 +54,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - WAN redeem round-trip verified on a live hub box
 - Proxy rendition written alongside native (export “proxy” currently transcodes on demand)
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
-- DeckLink-side analyzers, 64-ch RTA from SDI/AES, transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
+- DeckLink SDK scopes, 64-channel SDI/AES embed metering (the live RTA is 64 bands on stereo AAC), transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
 
 ## NexAPP: one `service_id` per host (shared convention)
 
@@ -256,7 +256,7 @@ How to verify on a cabled card is in [docs/DEMO.md](docs/DEMO.md).
 
 ## Per-input intelligence
 
-Selectable sidecar features (SCTE, freeze/black/bars, captions, optional ASR, Nielsen presence — not a decode, live WFM/vector/VU/RTA, export LKFS) are documented in **[docs/FEATURES.md](docs/FEATURES.md)**. They do not change the recorded MP4.
+Selectable sidecar features (SCTE, freeze/black/bars, captions, optional ASR, Nielsen presence — not a decode, live confidence WFM/vectorscope/VU/64-band RTA, export LKFS) are documented in **[docs/FEATURES.md](docs/FEATURES.md)**. They do not change the recorded MP4.
 
 ## License
 

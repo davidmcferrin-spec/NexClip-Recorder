@@ -82,7 +82,7 @@
       <label><input type="checkbox" id="feat_captions"> Closed captions 608/708 (extract + FTS search)</label>
       <label><input type="checkbox" id="feat_transcribe"> Audio transcription + diarization (off unless engine set)</label>
       <label title="Logs whether a Nielsen watermark appears present or absent on the recording timeline (NTP/wall-clock timecode). Best-effort stub. Not audit-grade decode. Does not report SID, watermark time, or layer. No Nielsen Decoder SDK."><input type="checkbox" id="feat_nielsen"> Log Nielsen watermark presence (best-effort; not a decode)</label>
-      <label><input type="checkbox" id="feat_monitors"> Live WFM / vectorscope / VU / 64-ch RTA panes</label>
+      <label title="Marks this input for live confidence monitors. Scopes stay off until enabled on the Live page (this browser). Drawn from the WHEP preview, not the record. VU/RTA follow the stereo AAC proxy; 64-channel SDI/AES metering is not included."><input type="checkbox" id="feat_monitors"> Live confidence monitors (WFM, vectorscope, VU, 64-band RTA)</label>
     </div>
     <div class="thresh-row">
       <div><label>Freeze ≥ seconds</label><input id="thresh_freeze_s" type="number" value="2" min="0.1" step="0.1"></div>

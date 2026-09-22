@@ -20,11 +20,29 @@
 
 Login `admin` / `password`. Pages: Live, Export, Inputs, Settings, Users.
 
-Live includes WFM / vectorscope / VU / 64-ch RTA **placeholders** (preview-path
-analyzers are NEXT). Export includes a CALM/LKFS panel; measure enqueues
-`nexrec-analyze.py`. Inputs has per-input intelligence toggles, a NexClip Mode 2 slot (1–8), and FTS search.
+Live confidence monitors (WFM, vectorscope, VU, 64-band RTA) sit on the
+**selected** pane and read the decoded WHEP preview. Toggles in the Live bar
+default **off** and are saved per browser (`nexrec-scopes-on`, `nexrec-vu-on`,
+`nexrec-spectrum-on`). They are not burned into the record. Export CALM/LKFS
+is a separate ebur128 job (`nexrec-analyze.py`). Inputs has per-input
+intelligence toggles, a NexClip Mode 2 slot (1–8), and full-text search.
 
-Without MediaMTX, Live panes are labeled placeholders (WHEP URL still shown).
+Without MediaMTX, panes stay on the labeled placeholder (the WHEP path is
+still shown). Scopes can still be toggled; they draw an empty graticule
+until a frame arrives, and the VU reads “waiting” until preview audio does.
+
+### Check the monitors on a running preview
+
+1. `./bin/nexrec-demo-ui.sh` (or the station Apache vhost). Log in.
+2. Start an input that publishes WHEP (`nexrec-preview@<id>` for IP, or
+   `nexrec-record@<id>` only for DeckLink — the tee is the preview).
+3. Open **Live**, click the pane, then **Scopes**, **VU**, and **RTA**.
+4. Picture in the waveform/vectorscope tracks the preview. VU shows **L/R**
+   (stereo AAC proxy), not 8 or 64 channels. RTA is 64 bands, 10 Hz–22 kHz.
+5. Click a strip to pop it, drag the popped panel, press Esc to dock.
+   Reload: the toggles and pop/position stick (`localStorage`, `nexrec-` keys).
+6. **Listen** / volume / solo affect this browser only. The `<video>` stays
+   muted. This is not the export LKFS chart.
 Export editor scrubs indexed chunks (run `make demo` first, or click
 **Seed demo chunks** on Inputs as admin).
 

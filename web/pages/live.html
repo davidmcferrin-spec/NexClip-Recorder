@@ -31,87 +31,94 @@
       <button type="button" data-n="4" class="active">4</button>
       <button type="button" data-n="6">6</button>
     </div>
+    <span class="meta">Monitors</span>
+    <div class="seg" id="monitor-seg" title="Confidence scopes on the selected pane, from the decoded WHEP preview. Default off, saved in this browser. Not burned into the record. The RTA is 64 bands on the stereo listen pair — 64-channel SDI/AES embed metering is NEXT.">
+      <button type="button" data-mon="scopes" aria-pressed="false">Scopes</button>
+      <button type="button" data-mon="vu" aria-pressed="false">VU</button>
+      <button type="button" data-mon="rta" aria-pressed="false">RTA</button>
+    </div>
     <span class="meta" id="clock">—</span>
-    <span class="meta">Time-locked live preview (WHEP proxy). Analyzers from preview/proxy decode, not the full-res record path.</span>
+    <span class="meta" id="monitor-hint">Confidence monitors follow the selected pane (decoded preview, not the record). Stereo AAC proxy.</span>
   </div>
   <div class="grid n4" id="grid"></div>
-  <div class="analyzers" id="analyzers">
-    <div class="analyzer">
-      <h2>Waveform (WFM)</h2>
-      <p class="hint">IRE graticule — live decode NEXT</p>
-      <canvas id="wfm" width="320" height="84"></canvas>
-    </div>
-    <div class="analyzer">
-      <h2>Vectorscope</h2>
-      <p class="hint">UV / chroma — proxy path</p>
-      <canvas id="vec" width="320" height="84"></canvas>
-    </div>
-    <div class="analyzer">
-      <h2>VU meters</h2>
-      <p class="hint">Stereo from AAC proxy today</p>
-      <div class="vu"><div class="ch"><span></span></div><div class="ch"><span></span></div></div>
-    </div>
-    <div class="analyzer">
-      <h2>RTA · 64-channel spectrum</h2>
-      <p class="hint">64-ch needs SDI/AES, not stereo proxy. Idle placeholder.</p>
-      <div class="rta-bars" id="rta"></div>
-    </div>
-  </div>
 </main>
+<script src="/assets/nexrec-scopes.js"></script>
+<script src="/assets/nexrec-vu.js"></script>
+<script src="/assets/nexrec-spectrum.js"></script>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
   var n = 4;
   var inputs = [];
   var selected = 0;
+  var monitors = null;
+  var clockTimers = [];
   NexRecAuth.requirePage().then(load);
+  syncToggles();
 
-  function paintAnalyzers() {
-    var rta = document.getElementById("rta");
-    if (rta && !rta.childElementCount) {
-      for (var i = 0; i < 64; i++) {
-        var bar = document.createElement("i");
-        bar.style.height = (8 + (i % 7) * 4) + "%";
-        rta.appendChild(bar);
-      }
+  function syncToggles() {
+    var map = {
+      scopes: window.NexRecScopes && NexRecScopes.getOnPref(),
+      vu: window.NexRecVu && NexRecVu.getVisiblePref(),
+      rta: window.NexRecSpectrum && NexRecSpectrum.getOnPref()
+    };
+    document.querySelectorAll("#monitor-seg button[data-mon]").forEach(function (btn) {
+      var on = !!map[btn.getAttribute("data-mon")];
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+  }
+
+  function destroyMonitors() {
+    if (!monitors) return;
+    try { monitors.spectrum.destroy(); } catch (e) {}
+    try { monitors.vu.detach(); } catch (e) {}
+    try { monitors.scopes.destroy(); } catch (e) {}
+    monitors = null;
+  }
+
+  function bindMonitors() {
+    destroyMonitors();
+    var pane = document.querySelector("#grid .pane.selected");
+    if (!pane || !window.NexRecScopes || !window.NexRecVu || !window.NexRecSpectrum) return;
+    var video = pane.querySelector("video");
+    if (!video) return;
+    var vu = NexRecVu.attach({
+      container: pane,
+      video: video,
+      floatable: true,
+      stream: video.srcObject || null
+    });
+    var scopes = NexRecScopes.attach({ container: pane, video: video });
+    var spectrum = NexRecSpectrum.attach({ container: pane, vu: vu });
+    monitors = { vu: vu, scopes: scopes, spectrum: spectrum, video: video };
+    function syncStream() {
+      if (!monitors || monitors.video !== video) return;
+      if (video.srcObject) vu.setStream(video.srcObject);
     }
-    function line(id, fn) {
-      var c = document.getElementById(id);
-      if (!c || !c.getContext) return;
-      var ctx = c.getContext("2d");
-      var w = c.width, h = c.height;
-      ctx.fillStyle = "#05080c"; ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = "rgba(62,207,142,0.25)"; ctx.lineWidth = 1;
-      for (var y = 0; y < h; y += 14) { ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke(); }
-      ctx.strokeStyle = "#3ecf8e"; ctx.globalAlpha = 0.55; ctx.beginPath();
-      for (var x = 0; x < w; x++) {
-        var v = fn(x / w);
-        var yy = h * 0.5 - v * (h * 0.35);
-        if (x === 0) ctx.moveTo(x, yy); else ctx.lineTo(x, yy);
-      }
-      ctx.stroke(); ctx.globalAlpha = 1;
-    }
-    line("wfm", function (t) { return Math.sin(t * 12) * 0.15; });
-    var vc = document.getElementById("vec");
-    if (vc && vc.getContext) {
-      var ctx = vc.getContext("2d");
-      var w = vc.width, h = vc.height;
-      ctx.fillStyle = "#05080c"; ctx.fillRect(0, 0, w, h);
-      ctx.strokeStyle = "rgba(62,207,142,0.35)";
-      ctx.beginPath(); ctx.arc(w/2, h/2, Math.min(w,h)*0.38, 0, Math.PI*2); ctx.stroke();
-      ctx.beginPath(); ctx.moveTo(w/2, 8); ctx.lineTo(w/2, h-8); ctx.moveTo(8, h/2); ctx.lineTo(w-8, h/2); ctx.stroke();
-    }
+    video.addEventListener("loadedmetadata", syncStream);
+    video.addEventListener("canplay", syncStream);
+    video.addEventListener("playing", syncStream);
+    syncStream();
+    syncToggles();
+  }
+
+  function clearClockTimers() {
+    clockTimers.forEach(function (id) { clearInterval(id); });
+    clockTimers = [];
   }
 
   function load() {
     return NexRecAuth.recApi("inputs_list").then(function (data) {
       inputs = data.inputs || [];
       render();
-      paintAnalyzers();
     });
   }
 
   function render() {
+    if (selected >= n) selected = 0;
+    clearClockTimers();
+    destroyMonitors();
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
@@ -129,7 +136,9 @@
       clock.className = "clock";
       clock.textContent = "—";
       var video = document.createElement("video");
-      video.autoplay = true; video.muted = true; video.playsInline = true;
+      video.autoplay = true;
+      video.muted = true;
+      video.playsInline = true;
       var ph = document.createElement("div");
       ph.className = "ph";
       ph.innerHTML = inp
@@ -140,21 +149,27 @@
       pane.appendChild(tag);
       pane.appendChild(clock);
       pane.addEventListener("click", function () {
+        if (selected === i) return;
         selected = i;
         document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
           p.classList.toggle("selected", idx === selected);
         });
+        bindMonitors();
       });
       grid.appendChild(pane);
       if (inp && inp.preview_path) {
         NexRecAuth.whepConnect(video, inp.preview_path).then(function () {
           if (video.srcObject) ph.style.display = "none";
+          if (monitors && monitors.video === video && video.srcObject) {
+            monitors.vu.setStream(video.srcObject);
+          }
         });
       }
-      setInterval(function () {
+      clockTimers.push(setInterval(function () {
         clock.textContent = new Date().toISOString().substr(11, 8) + "Z";
-      }, 250);
+      }, 250));
     });
+    bindMonitors();
   }
 
   document.getElementById("layout-seg").addEventListener("click", function (ev) {
@@ -166,6 +181,27 @@
     });
     render();
   });
+
+  document.getElementById("monitor-seg").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-mon]");
+    if (!btn) return;
+    var which = btn.getAttribute("data-mon");
+    if (which === "scopes" && window.NexRecScopes) {
+      var onS = monitors && monitors.scopes ? !monitors.scopes.isVisible() : !NexRecScopes.getOnPref();
+      if (monitors && monitors.scopes) monitors.scopes.setVisible(onS);
+      else NexRecScopes.setOnPref(onS);
+    } else if (which === "vu" && window.NexRecVu) {
+      var onV = monitors && monitors.vu ? !monitors.vu.getVisible() : !NexRecVu.getVisiblePref();
+      if (monitors && monitors.vu) monitors.vu.setVisible(onV);
+      else NexRecVu.setVisiblePref(onV);
+    } else if (which === "rta" && window.NexRecSpectrum) {
+      var onR = monitors && monitors.spectrum ? !monitors.spectrum.isVisible() : !NexRecSpectrum.getOnPref();
+      if (monitors && monitors.spectrum) monitors.spectrum.setVisible(onR);
+      else NexRecSpectrum.setOnPref(onR);
+    }
+    syncToggles();
+  });
+
   setInterval(function () {
     document.getElementById("clock").textContent = new Date().toISOString();
   }, 500);
