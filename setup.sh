@@ -37,6 +37,9 @@ systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-time
 
 mkdir -p "$ETC/inputs" "$VAR/storage" "$VAR/auth" "$VAR/sessions"
 chown -R www-data:www-data "$VAR"
+if getent group video >/dev/null 2>&1; then
+  usermod -aG video www-data || warn "could not add www-data to group video (DeckLink device nodes)"
+fi
 chmod 750 "$VAR" "$VAR/auth"
 
 if [[ ! -f "$ETC/nexrec.env" ]]; then
@@ -105,4 +108,5 @@ log "enable Apache DocumentRoot $ROOT/web/public (see apache/nexrec-web-apache.c
 systemctl reload apache2 2>/dev/null || warn "apache2 reload skipped"
 
 echo "$ROOT" > "$ETC/repo.path"
+log "DeckLink capture is ffmpeg -f decklink (needs --enable-decklink). Status helper: tools/decklink-status (Blackmagic SDK). Do not enable nexrec-preview@ for DeckLink inputs."
 log "done. login admin / password (must change). VERSION=$(cat "$ROOT/VERSION")"

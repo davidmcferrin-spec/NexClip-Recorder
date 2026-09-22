@@ -102,6 +102,11 @@ function nexrec_settings_catalog(): array {
             'min' => 1, 'max' => 600, 'env' => 'NEXREC_GOP_FRAMES', 'default' => '60',
             'help' => 'Closed GOP. 60 frames is about 2 seconds at 30 fps.',
         ],
+        'ffmpeg.decklink_status_bin' => [
+            'section' => 'ffmpeg', 'label' => 'DeckLink status helper', 'type' => 'path',
+            'env' => 'NEXREC_DECKLINK_STATUS_BIN', 'default' => '',
+            'help' => 'Absolute path to nexrec-decklink-status (no spaces). Blank also checks /usr/local/bin. Build tools/decklink-status against the Blackmagic SDK. JSON per sub-device: input_locked, input_mode, busy.',
+        ],
 
         'preview.enabled' => [
             'section' => 'preview', 'label' => 'Preview enabled', 'type' => 'bool',

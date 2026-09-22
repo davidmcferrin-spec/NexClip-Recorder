@@ -34,6 +34,8 @@ CREATE TABLE IF NOT EXISTS inputs (
   live_transcode INTEGER NOT NULL DEFAULT 0,
   copy_native INTEGER NOT NULL DEFAULT 1,
   upconvert_1080i INTEGER NOT NULL DEFAULT 0,
+  -- NULL = DeckLink keeps 1080i, IP does not. 0/1 is an explicit operator choice.
+  keep_interlace INTEGER,
   video_bitrate TEXT,
   audio_bitrate TEXT,
   retention_days INTEGER NOT NULL DEFAULT 28,

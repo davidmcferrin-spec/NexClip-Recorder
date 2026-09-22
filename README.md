@@ -48,7 +48,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 
 ### Next (called out, not blocking)
 
-- Live **DeckLink Duo / Quad 2** ingest (FFmpeg decklink input is assembled; needs drivers + `--enable-decklink` on the box)
+- Live **DeckLink Duo / Quad 2** ingest (FFmpeg `-f decklink`, preview teed in the same process; needs drivers + `--enable-decklink`)
 - Production MediaMTX TLS / JWT / ICE the way NexVUE does on-station
 - Copy Mode 2 `delivered_path` into NexClip `relative_dir`/`filename` on a shared MAM volume
 - WAN redeem round-trip verified on a live hub box
@@ -123,11 +123,15 @@ installs this sudoers drop-in (path matches the install root):
 www-data ALL=(root) NOPASSWD: /opt/NexClip-Recorder/bin/nexrec-systemctl.sh
 ```
 
-Do not give `www-data` unrestricted `systemctl`. SDI lock needs
-`NEXREC_DECKLINK_STATUS_BIN` (argv: device name; stdout `signal=`, `lock=`,
-`format=`). Without it the signal row says `unknown — needs DeckLink tools`
-and still shows the last format stored by the record worker. IP inputs show
-receiving / stalled / down from that heartbeat and the last chunk time.
+Do not give `www-data` unrestricted `systemctl`. SDI lock uses
+`nexrec-decklink-status` (`NEXREC_DECKLINK_STATUS_BIN`, or Setup → DeckLink
+status helper, or `/usr/local/bin/nexrec-decklink-status`). The helper prints
+JSON per sub-device (`input_locked`, `input_mode`, `busy`). A busy connector
+still reports lock and format. Older helpers that print `signal=` / `lock=` /
+`format=` still work. Without a helper the signal row says
+`unknown — needs DeckLink tools` and keeps the last format the record worker
+stored. IP inputs show receiving / stalled / down from that heartbeat and the
+last chunk time.
 
 ## Demo path (no root, no DeckLink)
 
@@ -221,6 +225,18 @@ If media lives on a NAS: still keep **10GbE on the recorder box**. Size the NAS 
 ### DeckLink
 
 Need PCIe slots for **Duo / Quad 2**. Install Blackmagic drivers on 24.04; **verify against the current Blackmagic Linux support matrix** before buying a card/box pair.
+
+Software on that host:
+
+1. Desktop Video so `/dev/blackmagic` exists. `setup.sh` adds `www-data` to the `video` group when it exists.
+2. FFmpeg built `--enable-decklink` against the DeckLink SDK headers. Check: `ffmpeg -hide_banner -f decklink -list_devices 1 -i dummy`. `Unknown input format: 'decklink'` means this ffmpeg cannot capture SDI.
+3. Optional status binary: `make -C tools/decklink-status SDK=/path/to/sdk/include && sudo make -C tools/decklink-status install`. See `tools/decklink-status/README.md`.
+
+Sub-device names follow FFmpeg, for example `DeckLink Quad 2 (1)` and `DeckLink Duo (1)`. An index (`0`, `1`, …) is resolved from that list at record start.
+
+Each sub-device is exclusive-open. Configure the input in the UI (device, optional format code such as `Hi59`, keep 1080i unless upconvert). Enable `nexrec-record@<id>` only. The same FFmpeg writes 5-minute clock-aligned H.264+AAC MP4 and publishes the proxy to MediaMTX. `nexrec-preview@<id>` is not used for DeckLink; Services marks it skipped and will not start it.
+
+How to verify on a cabled card is in [docs/DEMO.md](docs/DEMO.md).
 
 ## Per-input intelligence
 

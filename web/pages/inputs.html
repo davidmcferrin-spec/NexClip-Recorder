@@ -38,13 +38,31 @@
         <option value="udp">Multicast/unicast UDP</option>
         <option value="tcp">TCP</option>
         <option value="rtp">RTP</option>
-        <option value="decklink">DeckLink (designed)</option>
+        <option value="decklink">DeckLink SDI</option>
         <option value="testsrc">testsrc (demo)</option>
       </select>
-      <label>URL</label><input id="url" placeholder="rtsp://encoder:554/stream">
+      <div id="ip-fields">
+        <label>URL</label><input id="url" placeholder="rtsp://encoder:554/stream">
+      </div>
+      <div id="decklink-fields" style="display:none">
+        <label>DeckLink sub-device</label>
+        <div class="bar">
+          <select id="decklink_pick"><option value="">Select from this host…</option></select>
+          <button type="button" id="decklink_refresh">Refresh devices</button>
+        </div>
+        <input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
+        <p class="sub" id="decklink_hint">FFmpeg uses the display name (Duo / Quad 2 style: <code>DeckLink Quad 2 (1)</code>). A number is the sub-device index from <code>ffmpeg -f decklink -list_devices</code>.</p>
+        <label>Format code (optional)</label>
+        <div class="bar">
+          <select id="decklink_format_pick"><option value="">Auto-detect</option></select>
+          <button type="button" id="decklink_formats">List formats</button>
+        </div>
+        <input id="decklink_format" placeholder="Hi59">
+        <label><input type="checkbox" id="keep_interlace"> Keep 1080i interlaced</label>
+        <p class="sub">Preview is teed inside the record process (one exclusive open). Do not start <code>nexrec-preview@</code> for this input. SDI is encoded to H.264+AAC. Upconvert overrides keep-interlace.</p>
+      </div>
     </div>
     <div>
-      <label>DeckLink device</label><input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
       <label>Preview path</label><input id="preview_path" placeholder="in0">
       <label>NexClip slot (1–8, Mode 2)</label><input id="nexclip_slot" type="number" min="1" max="8" placeholder="none">
       <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
@@ -117,6 +135,9 @@ function refresh() {
         val("id").value = r.id; val("name").value = r.name;
         val("source_type").value = r.source_type; val("url").value = r.url || "";
         val("decklink_device").value = r.decklink_device || "";
+        val("decklink_format").value = r.decklink_format || "";
+        val("keep_interlace").checked = r.keep_interlace == null ? r.source_type === "decklink" : !!Number(r.keep_interlace);
+        syncType();
         val("preview_path").value = r.preview_path || "";
         val("nexclip_slot").value = r.nexclip_slot || "";
         val("retention_days").value = r.retention_days;
@@ -144,6 +165,8 @@ val("save").onclick = function () {
   NexRecAuth.recApi("input_put", {
     id: val("id").value, name: val("name").value, source_type: val("source_type").value,
     url: val("url").value, decklink_device: val("decklink_device").value,
+    decklink_format: val("decklink_format").value,
+    keep_interlace: val("source_type").value === "decklink" && val("keep_interlace").checked,
     preview_path: val("preview_path").value, nexclip_slot: Number(val("nexclip_slot").value) || null,
     retention_days: Number(val("retention_days").value),
     enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
@@ -173,6 +196,62 @@ val("search").onclick = function () {
       ul.innerHTML = "<li class=\"meta\">no hits (" + (d.engine || "") + ")</li>";
     }
   }).catch(function (e) { document.getElementById("msg").textContent = e.message; });
+};
+function syncType() {
+  var deck = val("source_type").value === "decklink";
+  document.getElementById("ip-fields").style.display = deck ? "none" : "";
+  document.getElementById("decklink-fields").style.display = deck ? "" : "none";
+  if (deck && !val("decklink_device").value) {
+    val("keep_interlace").checked = true;
+  }
+}
+val("source_type").onchange = syncType;
+syncType();
+val("decklink_pick").onchange = function () {
+  if (val("decklink_pick").value) val("decklink_device").value = val("decklink_pick").value;
+};
+val("decklink_format_pick").onchange = function () {
+  val("decklink_format").value = val("decklink_format_pick").value;
+};
+val("decklink_refresh").onclick = function () {
+  var hint = document.getElementById("decklink_hint");
+  hint.textContent = "listing DeckLink devices…";
+  NexRecAuth.recApi("decklink_devices").then(function (d) {
+    var sel = val("decklink_pick");
+    sel.innerHTML = '<option value="">Select from this host…</option>';
+    (d.devices || []).forEach(function (dev) {
+      var opt = document.createElement("option");
+      opt.value = dev.name;
+      opt.textContent = dev.index + " — " + dev.name;
+      sel.appendChild(opt);
+    });
+    if (!d.decklink_enabled) {
+      hint.textContent = d.message || "ffmpeg is not built with DeckLink";
+    } else if (!(d.devices || []).length) {
+      hint.textContent = d.message || "no sub-devices listed";
+    } else {
+      hint.textContent = (d.devices.length) + " sub-device(s). Names look like DeckLink Quad 2 (1) or DeckLink Duo (1).";
+    }
+  }).catch(function (e) { hint.textContent = e.message; });
+};
+val("decklink_formats").onclick = function () {
+  var hint = document.getElementById("decklink_hint");
+  var device = val("decklink_device").value;
+  if (!device || /^[0-9]{1,2}$/.test(device)) {
+    hint.textContent = "pick a display name before listing formats";
+    return;
+  }
+  NexRecAuth.recApi("decklink_formats", { device: device }).then(function (d) {
+    var sel = val("decklink_format_pick");
+    sel.innerHTML = '<option value="">Auto-detect</option>';
+    (d.formats || []).forEach(function (code) {
+      var opt = document.createElement("option");
+      opt.value = code;
+      opt.textContent = code;
+      sel.appendChild(opt);
+    });
+    hint.textContent = d.message || ((d.formats || []).length ? "format codes loaded" : "no format codes reported");
+  }).catch(function (e) { hint.textContent = e.message; });
 };
 val("seed").onclick = function () {
   NexRecAuth.recApi("demo_seed", {}).then(function () {

@@ -1,0 +1,4 @@
+[decklink @ 0x1] Blackmagic DeckLink devices (2):
+[decklink @ 0x1]	'DeckLink Quad 2 (1)'
+[decklink @ 0x1]	'DeckLink Duo (2)'
+dummy: Immediate exit requested

@@ -5,6 +5,8 @@
  */
 declare(strict_types=1);
 
+require_once __DIR__ . '/nexrec-decklink.php';
+
 const NEXREC_OPS_VERBS = ['start', 'stop', 'restart', 'enable', 'disable', 'is-active', 'is-enabled', 'show', 'journal'];
 const NEXREC_OPS_CONTROL_VERBS = ['start', 'stop', 'restart', 'enable', 'disable'];
 
@@ -207,10 +209,50 @@ function nexrec_ops_enabled_input_ids(): array {
     return $ids;
 }
 
+/** @return array<string,string> input id => source_type */
+function nexrec_ops_input_types(): array {
+    $map = [];
+    if (!function_exists('nexrec_db')) {
+        return $map;
+    }
+    $res = nexrec_db()->query('SELECT id, source_type FROM inputs');
+    if ($res === false) {
+        return $map;
+    }
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $map[(string) $row['id']] = strtolower((string) ($row['source_type'] ?? ''));
+    }
+    return $map;
+}
+
+function nexrec_ops_preview_input_id(string $unit): ?string {
+    if (preg_match('/^nexrec-preview@([a-z0-9][a-z0-9-]{0,31})\.service$/', $unit, $m)) {
+        return $m[1];
+    }
+    return null;
+}
+
+function nexrec_ops_decklink_preview_unit(string $unit): bool {
+    $id = nexrec_ops_preview_input_id($unit);
+    if ($id === null) {
+        return false;
+    }
+    $types = nexrec_ops_input_types();
+    return ($types[$id] ?? '') === 'decklink';
+}
+
 function nexrec_ops_units_payload(): array {
+    $types = nexrec_ops_input_types();
     $out = [];
     foreach (nexrec_ops_unit_names(nexrec_ops_enabled_input_ids()) as $unit) {
-        $out[] = nexrec_ops_query_unit($unit);
+        $row = nexrec_ops_query_unit($unit);
+        $id = nexrec_ops_preview_input_id($unit);
+        if ($id !== null && ($types[$id] ?? '') === 'decklink') {
+            $row['skipped'] = true;
+            $row['active'] = 'skipped';
+            $row['note'] = 'Not used. DeckLink preview is teed inside nexrec-record (exclusive-open).';
+        }
+        $out[] = $row;
     }
     return $out;
 }
@@ -232,6 +274,17 @@ function nexrec_ops_journal(string $unit, int $n = 80): array {
 function nexrec_ops_control(string $verb, string $unit): array {
     if (!in_array($verb, NEXREC_OPS_CONTROL_VERBS, true)) {
         throw new InvalidArgumentException('verb not allowed');
+    }
+    if (in_array($verb, ['start', 'restart', 'enable'], true) && nexrec_ops_decklink_preview_unit($unit)) {
+        return [
+            'ok' => false,
+            'verb' => $verb,
+            'unit' => $unit,
+            'rc' => 1,
+            'via' => 'policy',
+            'output' => '',
+            'error' => 'DeckLink preview is teed inside nexrec-record (exclusive-open). Do not start nexrec-preview@ for this input.',
+        ];
     }
     $ran = nexrec_ops_wrapper($verb, $unit, null);
     $ok = $ran['rc'] === 0;
@@ -292,19 +345,41 @@ function nexrec_ops_decklink_probe(string $device): array {
         'format' => '',
         'detail' => 'unknown — needs DeckLink tools',
         'probe' => 'unavailable',
+        'busy' => null,
     ];
     if ($device === '') {
+        $unknown['detail'] = 'unknown — needs DeckLink tools (set a device name such as DeckLink Quad 2 (1))';
         return $unknown;
     }
-    $bin = getenv('NEXREC_DECKLINK_STATUS_BIN');
-    if (is_string($bin) && $bin !== '' && str_starts_with($bin, '/') && is_executable($bin)
-        && !preg_match('/[\s;|&$`]/', $bin)) {
-        $ran = nexrec_ops_proc([$bin, $device]);
+    $bin = nexrec_decklink_status_bin();
+    if ($bin !== '') {
+        $ran = nexrec_decklink_run([$bin, $device], 12);
+        $stdout = ltrim($ran['out']);
+        if (str_starts_with($stdout, '{') || str_starts_with($stdout, '[')) {
+            $parsed = nexrec_decklink_signal_from_json($ran['out'], $device);
+            if (($parsed['probe'] ?? '') === 'unavailable' && ($parsed['signal'] ?? '') === 'unknown') {
+                $parsed['detail'] = (string) ($parsed['detail'] ?? 'unknown — needs DeckLink tools');
+            }
+            return $parsed;
+        }
         $parsed = nexrec_ops_parse_kv_status($ran['out'] . "\n" . $ran['err']);
         if ($parsed['signal'] === 'unknown' && $parsed['format'] === '' && $ran['rc'] !== 0) {
             return $unknown;
         }
+        $parsed['busy'] = null;
         return $parsed;
+    }
+    $configured = '';
+    if (function_exists('nexrec_setting')) {
+        $configured = (string) nexrec_setting('ffmpeg.decklink_status_bin');
+    }
+    if ($configured === '') {
+        $envBin = getenv('NEXREC_DECKLINK_STATUS_BIN');
+        $configured = is_string($envBin) ? trim($envBin) : '';
+    }
+    if ($configured !== '') {
+        $unknown['detail'] = 'unknown — needs DeckLink tools (NEXREC_DECKLINK_STATUS_BIN is set but not executable)';
+        return $unknown;
     }
     $ffmpeg = getenv('NEXREC_FFMPEG');
     if (!is_string($ffmpeg) || $ffmpeg === '' || !is_executable($ffmpeg)) {
@@ -385,6 +460,7 @@ function nexrec_ops_signals(): array {
             'signal' => 'unknown',
             'sdi_lock' => null,
             'format' => (string) ($inp['decklink_format'] ?? ''),
+            'busy' => null,
             'detail' => '',
             'last_chunk_at' => $lastChunk,
             'seen_at' => $seen,
@@ -399,6 +475,7 @@ function nexrec_ops_signals(): array {
                 if ($probe['format'] !== '') {
                     $row['format'] = $probe['format'];
                 }
+                $row['busy'] = $probe['busy'] ?? null;
                 $row['detail'] = (string) ($probe['detail'] ?? '');
             } else {
                 $row['signal'] = (string) ($hb['signal'] ?? 'unknown');

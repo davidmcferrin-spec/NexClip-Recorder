@@ -7,9 +7,13 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/etc/nexrec/nexrec.env
 EnvironmentFile=-/etc/nexrec/inputs/%i.env
+# DeckLink is exclusive-open. Exit 1 skips the unit (condition failed, not a failure).
+ExecCondition=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-preview.py --check-eligible --env /etc/nexrec/nexrec.env --input-env /etc/nexrec/inputs/%i.env --input-id %i
 ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-preview.py --env /etc/nexrec/nexrec.env --input-env /etc/nexrec/inputs/%i.env --input-id %i
 Restart=always
 RestartSec=5
+# 78: DeckLink guard if ExecCondition was bypassed. Do not restart-loop.
+RestartPreventExitStatus=78
 User=www-data
 Group=www-data
 

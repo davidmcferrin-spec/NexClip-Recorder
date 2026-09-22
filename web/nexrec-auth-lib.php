@@ -66,6 +66,7 @@ function nexrec_ensure_input_feature_columns(): void {
         'thresh_bars_s' => 'REAL NOT NULL DEFAULT 5.0',
         'transcribe_engine' => 'TEXT',
         'nexclip_slot' => 'INTEGER',
+        'keep_interlace' => 'INTEGER',
     ];
     $have = [];
     $res = nexrec_db()->query('PRAGMA table_info(inputs)');
