@@ -168,24 +168,30 @@ nexrec_unit_action() {
   printf '%s\n' keep
 }
 
+nexrec_decklink_headers_ok() {
+  local d="$1"
+  [[ -f "$d/DeckLinkAPI.h" && -f "$d/DeckLinkAPIDispatch.cpp" && -f "$d/DeckLinkAPIVersion.h" ]]
+}
+
 nexrec_decklink_include_dir() {
   local p="$1" child
   [[ -n "$p" && -d "$p" ]] || return 1
-  if [[ -f "$p/DeckLinkAPI.h" && -f "$p/DeckLinkAPIDispatch.cpp" ]]; then
+  # FFmpeg 9 compiles DeckLink as C++ and includes DeckLinkAPIVersion.h.
+  if nexrec_decklink_headers_ok "$p"; then
     printf '%s\n' "$p"
     return 0
   fi
-  if [[ -f "$p/Linux/include/DeckLinkAPI.h" && -f "$p/Linux/include/DeckLinkAPIDispatch.cpp" ]]; then
+  if nexrec_decklink_headers_ok "$p/Linux/include"; then
     printf '%s\n' "$p/Linux/include"
     return 0
   fi
-  if [[ -f "$p/include/DeckLinkAPI.h" && -f "$p/include/DeckLinkAPIDispatch.cpp" ]]; then
+  if nexrec_decklink_headers_ok "$p/include"; then
     printf '%s\n' "$p/include"
     return 0
   fi
   for child in "$p"/*; do
     [[ -d "$child" ]] || continue
-    if [[ -f "$child/Linux/include/DeckLinkAPI.h" && -f "$child/Linux/include/DeckLinkAPIDispatch.cpp" ]]; then
+    if nexrec_decklink_headers_ok "$child/Linux/include"; then
       printf '%s\n' "$child/Linux/include"
       return 0
     fi
@@ -345,7 +351,7 @@ nexrec_install_ffmpeg() {
     nexrec_media_log "DeckLink SDK headers: $sdk (--enable-decklink)"
   else
     nexrec_media_warn "DeckLink SDK headers not found. Building IP-capable FFmpeg without --enable-decklink."
-    nexrec_media_warn "Set DECKLINK_SDK or NEXREC_DECKLINK_SDK to the SDK root or the include dir with DeckLinkAPI.h."
+    nexrec_media_warn "Set DECKLINK_SDK or NEXREC_DECKLINK_SDK to the SDK include dir (DeckLinkAPI.h, DeckLinkAPIVersion.h, DeckLinkAPIDispatch.cpp)."
     nexrec_media_warn "Desktop Video drivers (/dev/blackmagic) are separate from those SDK headers and are not installed here."
   fi
 
@@ -411,7 +417,8 @@ nexrec_install_ffmpeg() {
       want_deck=0
       desired="$(nexrec_ffmpeg_desired_stamp "$want_deck" "$want_nvenc" "$want_fdk" "$want_srt" "$want_zvbi" "$prefix")"
     else
-      args+=(--enable-decklink --extra-cflags="-I${sdk}")
+      # decklink_*.cpp is compiled with g++. --extra-cflags does not reach CXXFLAGS.
+      args+=(--enable-decklink --extra-cflags="-I${sdk}" --extra-cxxflags="-I${sdk}")
     fi
   fi
 

@@ -134,6 +134,7 @@ class InstallMediaTests(unittest.TestCase):
             include.mkdir(parents=True)
             (include / "DeckLinkAPI.h").write_text("/* h */\n", encoding="utf-8")
             (include / "DeckLinkAPIDispatch.cpp").write_text("// cpp\n", encoding="utf-8")
+            (include / "DeckLinkAPIVersion.h").write_text("/* v */\n", encoding="utf-8")
             found = bash(
                 'nexrec_find_decklink_include',
                 env={"NEXREC_DECKLINK_SDK": tmp, "NEXREC_DECKLINK_SCAN_SYSTEM": "0"},
@@ -144,6 +145,7 @@ class InstallMediaTests(unittest.TestCase):
             nested_inc.mkdir(parents=True)
             (nested_inc / "DeckLinkAPI.h").write_text("/* h */\n", encoding="utf-8")
             (nested_inc / "DeckLinkAPIDispatch.cpp").write_text("// cpp\n", encoding="utf-8")
+            (nested_inc / "DeckLinkAPIVersion.h").write_text("/* v */\n", encoding="utf-8")
             parent = Path(tmp) / "sdks"
             parent.mkdir()
             # Point the finder at the parent that holds the vendor folder name.
@@ -152,6 +154,7 @@ class InstallMediaTests(unittest.TestCase):
             vendor_inc.mkdir(parents=True)
             (vendor_inc / "DeckLinkAPI.h").write_text("/* h */\n", encoding="utf-8")
             (vendor_inc / "DeckLinkAPIDispatch.cpp").write_text("// cpp\n", encoding="utf-8")
+            (vendor_inc / "DeckLinkAPIVersion.h").write_text("/* v */\n", encoding="utf-8")
             found_vendor = bash(
                 'nexrec_find_decklink_include',
                 env={"NEXREC_DECKLINK_SDK": str(parent), "NEXREC_DECKLINK_SCAN_SYSTEM": "0"},
@@ -194,7 +197,9 @@ class InstallMediaTests(unittest.TestCase):
         self.assertIn("nexrec-managed", unit)
         self.assertIn("/etc/nexrec/mediamtx.yml", unit)
         self.assertIn("8554", (ROOT / "mediamtx.yml").read_text(encoding="utf-8"))
-        self.assertIn("--enable-decklink", (ROOT / "bin" / "nexrec-install-media.sh").read_text(encoding="utf-8"))
+        installer = (ROOT / "bin" / "nexrec-install-media.sh").read_text(encoding="utf-8")
+        self.assertIn("--enable-decklink", installer)
+        self.assertIn('--extra-cxxflags="-I${sdk}"', installer)
         self.assertIn("--enable-libx264", (ROOT / "bin" / "nexrec-install-media.sh").read_text(encoding="utf-8"))
 
 
