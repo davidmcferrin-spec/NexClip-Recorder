@@ -109,8 +109,8 @@ Exports and each closed 5-minute chunk aim for:
 - Container: MP4 (`isom`/`mp42`), `moov` atom at the front (`movflags=faststart`)
 - Video: **H.264 High@L4.1**, `yuv420p`, CABAC, closed GOP (~2 s), B-frames 2
 - Audio: **AAC-LC**, 48 kHz, stereo (or source channel count when copying)
-- Timecode: QuickTime `timecode` / `creation_time` from the **system clock**
-  (assume chrony/NTP; `setup.sh` enables NTP like NexVUE)
+- Timecode: QuickTime `timecode` / `creation_time` in **UTC** (NTP via chrony).
+  The OS zone is America/New_York; the UI shows that zone, including DST.
 
 Interlace: **1080i stays 1080i** (`+ildct+ilme`, field flags). The **only**
 optional upconvert is **1080i → 1080p** (`yadif`) per input. No 720→1080, no
@@ -165,7 +165,7 @@ ffmpeg -hide_banner -nostdin \
   -rtsp_transport tcp \            # RTSP only
   -i {url} \
   -metadata creation_time={iso8601} \
-  -timecode {HH:MM:SS:FF} \        # from local clock at launch / midnight wrap
+  -timecode {HH:MM:SS:FF} \        # UTC at launch; workers pin TZ=UTC
   -c:v libx264 -preset veryfast -profile:v high -level 4.1 -pix_fmt yuv420p \
   -g 60 -bf 2 -b:v 12M -maxrate 12M -bufsize 24M \
   -c:a aac -b:a 192k -ar 48000 -ac 2 \

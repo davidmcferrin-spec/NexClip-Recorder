@@ -2,6 +2,8 @@
 Description=NexCLIP Recorder retention cleanup twice daily
 
 [Timer]
+# Station local, including DST. Recordings stay UTC.
+Timezone=America/New_York
 OnCalendar=*-*-* 06:00:00
 OnCalendar=*-*-* 18:00:00
 Persistent=true

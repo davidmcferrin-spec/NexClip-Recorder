@@ -7,6 +7,8 @@ Wants=network-online.target
 Type=simple
 EnvironmentFile=-/etc/nexrec/nexrec.env
 EnvironmentFile=-/etc/nexrec/inputs/%i.env
+# Chunk names and -segment_atclocktime follow this, not the OS zone.
+Environment=TZ=UTC
 ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-record.py --env /etc/nexrec/nexrec.env --input-env /etc/nexrec/inputs/%i.env --input-id %i
 Restart=always
 RestartSec=5

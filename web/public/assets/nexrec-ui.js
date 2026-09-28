@@ -63,5 +63,37 @@
         .catch(function () {});
     }
   });
-  global.NexRecUI = { getTheme: getTheme, setTheme: setTheme, toggleTheme: toggleTheme };
+  var DISPLAY_TZ = "America/New_York";
+
+  function formatStation(value, withDate) {
+    if (value == null || value === "") return "—";
+    var d = value instanceof Date ? value : new Date(value);
+    if (isNaN(d.getTime())) return String(value);
+    var parts = new Intl.DateTimeFormat("en-US", {
+      timeZone: DISPLAY_TZ,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+      timeZoneName: "short",
+    }).formatToParts(d);
+    var g = {};
+    parts.forEach(function (p) {
+      if (p.type !== "literal") g[p.type] = p.value;
+    });
+    var clock = g.hour + ":" + g.minute + ":" + g.second + " " + (g.timeZoneName || "ET");
+    if (!withDate) return clock;
+    return g.year + "-" + g.month + "-" + g.day + " " + clock;
+  }
+
+  global.NexRecUI = {
+    getTheme: getTheme,
+    setTheme: setTheme,
+    toggleTheme: toggleTheme,
+    timeZone: DISPLAY_TZ,
+    formatStation: formatStation,
+  };
 })(typeof window !== "undefined" ? window : globalThis);

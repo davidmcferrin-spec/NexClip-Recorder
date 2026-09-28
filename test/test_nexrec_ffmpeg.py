@@ -5,8 +5,9 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 import unittest
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
@@ -15,11 +16,12 @@ from nexrec_ffmpeg import (  # noqa: E402
     encode_args,
     export_concat_argv,
     input_args,
+    metadata_args,
     preview_unit_allowed,
     record_argv,
     segment_args,
 )
-from nexrec_util import parse_bytes, wallclock_timecode  # noqa: E402
+from nexrec_util import parse_bytes, pin_process_utc, wallclock_timecode  # noqa: E402
 
 
 class TestFfmpeg(unittest.TestCase):
@@ -186,6 +188,35 @@ class TestFfmpeg(unittest.TestCase):
         tc = wallclock_timecode(datetime(2026, 9, 21, 15, 4, 5, 0), fps=30)
         self.assertRegex(tc, r"^\d{2}:\d{2}:\d{2}:\d{2}$")
         self.assertTrue(tc.startswith("15:04:05"))
+
+    def test_wallclock_timecode_converts_to_utc(self):
+        edt = timezone(timedelta(hours=-4))
+        est = timezone(timedelta(hours=-5))
+        summer = wallclock_timecode(datetime(2026, 7, 15, 15, 4, 5, tzinfo=edt), fps=30)
+        winter = wallclock_timecode(datetime(2026, 1, 15, 15, 4, 5, tzinfo=est), fps=30)
+        self.assertTrue(summer.startswith("19:04:05"))
+        self.assertTrue(winter.startswith("20:04:05"))
+
+    def test_metadata_timecode_matches_utc_creation_time(self):
+        edt = timezone(timedelta(hours=-4))
+        when = datetime(2026, 7, 15, 15, 0, 0, tzinfo=edt)
+        cmd = metadata_args(when, fps=30)
+        self.assertIn("creation_time=2026-07-15T19:00:00Z", cmd)
+        self.assertIn("19:00:00:00", cmd)
+        self.assertNotIn("15:00:00:00", cmd)
+
+    def test_pin_process_utc(self):
+        old = os.environ.get("TZ")
+        try:
+            pin_process_utc()
+            self.assertEqual(os.environ.get("TZ"), "UTC")
+        finally:
+            if old is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = old
+            if hasattr(time, "tzset"):
+                time.tzset()
 
     def test_parse_bytes(self):
         self.assertEqual(parse_bytes("50G"), 50 * 1024**3)

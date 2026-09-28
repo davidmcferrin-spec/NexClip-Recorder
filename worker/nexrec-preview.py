@@ -13,7 +13,7 @@ if HERE not in sys.path:
 
 from nexrec_db import connect, fetchone, migrate, overlay_app_settings  # noqa: E402
 from nexrec_ffmpeg import preview_argv, preview_publish_url, preview_unit_allowed  # noqa: E402
-from nexrec_util import data_paths, load_env_file, valid_input_id  # noqa: E402
+from nexrec_util import data_paths, load_env_file, pin_process_utc, valid_input_id  # noqa: E402
 
 # systemd RestartPreventExitStatus — do not spin if a DeckLink unit is started anyway.
 EX_DECKLINK = 78
@@ -58,6 +58,7 @@ def main(argv: list[str] | None = None) -> int:
         return 1 if args.check_eligible else EX_DECKLINK
     if args.check_eligible:
         return 0
+    pin_process_utc()
     path = row.get("preview_path") or env.get("PREVIEW_PATH") or "in0"
     rtsp = preview_publish_url(str(path), env)
     cmd = preview_argv(row, rtsp, env=env, ffmpeg=paths["ffmpeg"])

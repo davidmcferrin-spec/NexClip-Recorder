@@ -28,7 +28,7 @@ function nexrec_settings_catalog(): array {
         'station.timezone' => [
             'section' => 'station', 'label' => 'Timezone', 'type' => 'string',
             'env' => 'NEXREC_TIMEZONE', 'default' => 'America/New_York',
-            'help' => 'Display timezone. Recording timestamps stay UTC. setup.sh enables NTP (chrony).',
+            'help' => 'UI clock (EST/EDT, including the DST change). Recordings, filenames, and timecode stay UTC. The OS zone is America/New_York; chrony corrects it about once or twice an hour.',
         ],
         'station.ntp_notes' => [
             'section' => 'station', 'label' => 'NTP / timecode notes', 'type' => 'text',

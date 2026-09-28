@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -17,12 +18,28 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc)
 
 
-def iso_z(dt: datetime | None = None) -> str:
+def as_utc(dt: datetime | None = None) -> datetime:
+    """Aware UTC. A naive value is already UTC, matching iso_z and the chunk index."""
     dt = dt or utcnow()
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=timezone.utc)
-    dt = dt.astimezone(timezone.utc)
-    return dt.replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
+    return dt.astimezone(timezone.utc)
+
+
+def pin_process_utc() -> None:
+    """FFmpeg -strftime and -segment_atclocktime use libc localtime.
+
+    The OS zone stays America/New_York (setup.sh). Workers pin TZ=UTC so
+    chunk names and segment boundaries are UTC even when the shell is Eastern.
+    """
+    os.environ["TZ"] = "UTC"
+    tzset = getattr(time, "tzset", None)
+    if tzset is not None:
+        tzset()
+
+
+def iso_z(dt: datetime | None = None) -> str:
+    return as_utc(dt).replace(microsecond=0).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 
 def parse_iso(s: str) -> datetime:
@@ -136,8 +153,12 @@ def expand_chunk_pattern(storage: str, input_id: str, kind: str, when: datetime)
 
 
 def wallclock_timecode(when: datetime | None = None, fps: float = 30.0) -> str:
-    """HH:MM:SS:FF from the system clock (NTP), not a free-running source TC."""
-    when = when or datetime.now()  # local wall clock for studio TC
+    """HH:MM:SS:FF in UTC from NTP, not a free-running source TC.
+
+    The UI presents the same instant in America/New_York. Timecode itself
+    stays UTC so EST/EDT never duplicates or skips an hour on the file.
+    """
+    when = as_utc(when)
     ff = int((when.microsecond / 1_000_000.0) * fps)
     if ff >= int(round(fps)):
         ff = int(round(fps)) - 1

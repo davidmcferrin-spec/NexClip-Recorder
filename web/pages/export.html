@@ -50,6 +50,9 @@
     <div class="mark out" id="mark-out-el" hidden></div>
   </div>
   <div class="bar">
+    <button type="button" id="play-toggle" aria-pressed="false" title="Play the selected pane. Other panes stay muted.">Play</button>
+    <span class="meta">Volume</span>
+    <input type="range" id="listen-vol" class="listen-vol" min="0" max="1" step="0.05" value="0.8" aria-label="Volume for the selected pane">
     <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
     <span class="meta" id="tlabel" style="font-family:var(--nx-mono)">—</span>
   </div>
@@ -80,6 +83,16 @@
 <script>
 (function () {
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, play = 0, markIn = null, markOut = null;
+  var selected = 0, playing = false;
+  var VOL_KEY = "nexrec-export-volume";
+  var volume = 0.8;
+  try {
+    var rawVol = localStorage.getItem(VOL_KEY);
+    if (rawVol != null && rawVol !== "") {
+      var stored = Number(rawVol);
+      if (Number.isFinite(stored)) volume = Math.max(0, Math.min(1, stored));
+    }
+  } catch (e) {}
 
   NexRecAuth.requirePage().then(function () {
     return Promise.all([
@@ -101,19 +114,64 @@
       t1 = Date.now(); t0 = t1 - 3600000;
     }
     play = t0;
+    var vol = document.getElementById("listen-vol");
+    if (vol) vol.value = String(volume);
     paintJobs(all[2].exports || []);
     render();
     tick();
   });
 
   function iso(ms) { return new Date(ms).toISOString().replace(".000", ""); }
-  function tick() {
-    document.getElementById("tlabel").textContent = iso(play);
+
+  function chunkHit(iid, ms) {
+    var list = chunksByInput[iid] || [];
+    for (var i = 0; i < list.length; i++) {
+      var c = list[i];
+      var a = Date.parse(c.start_at);
+      var b = Date.parse(c.end_at || c.start_at);
+      if (a <= ms && b > ms) return c;
+    }
+    return null;
+  }
+
+  function selectedVideo() {
+    var pane = document.querySelector('#grid .pane[data-slot="' + selected + '"]');
+    return pane ? pane.querySelector("video") : null;
+  }
+
+  function selectedInput() {
+    return inputs[selected] || null;
+  }
+
+  function paintPlayButton() {
+    var btn = document.getElementById("play-toggle");
+    if (!btn) return;
+    btn.textContent = playing ? "Pause" : "Play";
+    btn.classList.toggle("tgl", playing);
+    btn.classList.toggle("active", playing);
+    btn.setAttribute("aria-pressed", playing ? "true" : "false");
+  }
+
+  function stopPlayback() {
+    playing = false;
+    paintPlayButton();
+    document.querySelectorAll("#grid .pane video").forEach(function (v) {
+      v.muted = true;
+      if (!v.paused) v.pause();
+    });
+  }
+
+  function station(ms) {
+    return NexRecUI.formatStation(ms, true);
+  }
+
+  function paintChrome() {
+    document.getElementById("tlabel").textContent = station(play);
     var pct = (play - t0) / Math.max(1, t1 - t0);
     document.getElementById("playhead").style.left = (pct * 100) + "%";
     document.getElementById("scrub").value = String(Math.round(pct * 1000));
     document.getElementById("io").textContent =
-      "I " + (markIn ? iso(markIn) : "—") + " / O " + (markOut ? iso(markOut) : "—");
+      "I " + (markIn ? station(markIn) : "—") + " / O " + (markOut ? station(markOut) : "—");
     if (markIn != null) {
       document.getElementById("mark-in-el").hidden = false;
       document.getElementById("mark-in-el").style.left = ((markIn - t0) / Math.max(1, t1 - t0) * 100) + "%";
@@ -122,26 +180,101 @@
       document.getElementById("mark-out-el").hidden = false;
       document.getElementById("mark-out-el").style.left = ((markOut - t0) / Math.max(1, t1 - t0) * 100) + "%";
     }
-    document.querySelectorAll(".pane video").forEach(function (v) {
+  }
+
+  function loadChunk(v, pane, hit, off) {
+    var want = "/api/chunks/" + hit.id + "/media";
+    var startMs = Date.parse(hit.start_at);
+    v.setAttribute("data-start", String(startMs));
+    v.setAttribute("data-end", String(Date.parse(hit.end_at || hit.start_at)));
+    if (v.getAttribute("data-src") === want) return false;
+    v.src = want;
+    v.setAttribute("data-src", want);
+    var ph = pane.querySelector(".ph");
+    if (ph) ph.style.display = "none";
+    v.onloadeddata = function () {
+      v.onloadeddata = null;
+      try { v.currentTime = off; } catch (e) {}
+      if (playing) v.play().catch(function () {});
+    };
+    return true;
+  }
+
+  function syncMedia(followSelected) {
+    document.querySelectorAll("#grid .pane").forEach(function (pane, i) {
+      var v = pane.querySelector("video");
+      if (!v) return;
+      var audible = playing && i === selected;
+      v.muted = !audible;
+      if (audible) v.volume = volume;
       var iid = v.getAttribute("data-input");
-      var list = (chunksByInput[iid] || []).slice().reverse();
-      var hit = list.filter(function (c) {
-        return Date.parse(c.start_at) <= play && Date.parse(c.end_at || c.start_at) > play;
-      })[0];
-      if (hit && hit.path && hit.path.indexOf("/tmp/nexrec-fixture") !== 0) {
-        var want = "/api/chunks/" + hit.id + "/media";
-        if (v.getAttribute("data-src") !== want) {
-          v.src = want; v.setAttribute("data-src", want);
-        }
-        var off = (play - Date.parse(hit.start_at)) / 1000;
-        if (Math.abs((v.currentTime || 0) - off) > 0.4) {
-          try { v.currentTime = Math.max(0, off); } catch (e) {}
-        }
+      var hit = iid ? chunkHit(iid, play) : null;
+      if (!hit || !hit.path || String(hit.path).indexOf("/tmp/nexrec-fixture") === 0) {
+        if (!v.paused) v.pause();
+        return;
+      }
+      var off = Math.max(0, (play - Date.parse(hit.start_at)) / 1000);
+      if (loadChunk(v, pane, hit, off)) return;
+      var skipSeek = followSelected && i === selected && !v.paused;
+      if (!skipSeek && Math.abs((v.currentTime || 0) - off) > 0.35) {
+        try { v.currentTime = off; } catch (e) {}
+      }
+      if (playing) {
+        if (v.paused) v.play().catch(function () {});
+      } else if (!v.paused) {
+        v.pause();
       }
     });
   }
 
+  function advanceChunk() {
+    var v = selectedVideo();
+    var end = v ? Number(v.getAttribute("data-end")) : NaN;
+    play = isFinite(end) ? end : play;
+    if (play >= t1) {
+      play = t1;
+      stopPlayback();
+      paintChrome();
+      return;
+    }
+    var iid = v && v.getAttribute("data-input");
+    if (!iid || !chunkHit(iid, play)) {
+      stopPlayback();
+      paintChrome();
+      return;
+    }
+    syncMedia(false);
+  }
+
+  function onSelectedTime(ev) {
+    if (!playing) return;
+    var v = selectedVideo();
+    if (!v || ev.target !== v || v.seeking || v.paused) return;
+    var start = Number(v.getAttribute("data-start"));
+    if (!isFinite(start)) return;
+    var iid = v.getAttribute("data-input");
+    var loaded = iid ? chunkHit(iid, start + 1) : null;
+    if (!loaded || v.getAttribute("data-src") !== "/api/chunks/" + loaded.id + "/media") return;
+    var next = start + v.currentTime * 1000;
+    var end = Number(v.getAttribute("data-end"));
+    if (isFinite(end) && next > end + 250) return;
+    play = Math.min(t1, next);
+    paintChrome();
+    syncMedia(true);
+  }
+
+  function onSelectedEnded(ev) {
+    if (!playing || ev.target !== selectedVideo()) return;
+    advanceChunk();
+  }
+
+  function tick() {
+    paintChrome();
+    syncMedia(false);
+  }
+
   function render() {
+    if (selected >= n) selected = 0;
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
@@ -149,17 +282,28 @@
     while (slots.length < n) slots.push(null);
     slots.forEach(function (inp, i) {
       var pane = document.createElement("div");
-      pane.className = "pane";
+      pane.className = "pane" + (i === selected ? " selected" : "");
+      pane.setAttribute("data-slot", String(i));
       var tag = document.createElement("div");
       tag.className = "tag";
       tag.textContent = inp ? inp.name : ("empty " + (i + 1));
       var video = document.createElement("video");
       video.setAttribute("data-input", inp ? inp.id : "");
       video.muted = true; video.playsInline = true; video.controls = false;
+      video.addEventListener("timeupdate", onSelectedTime);
+      video.addEventListener("ended", onSelectedEnded);
       var ph = document.createElement("div");
       ph.className = "ph";
       ph.textContent = inp ? "time-locked chunk preview" : "no input";
       pane.appendChild(video); pane.appendChild(ph); pane.appendChild(tag);
+      pane.addEventListener("click", function () {
+        if (selected === i) return;
+        selected = i;
+        document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
+          p.classList.toggle("selected", idx === selected);
+        });
+        syncMedia(false);
+      });
       grid.appendChild(pane);
     });
   }
@@ -171,7 +315,7 @@
       var tr = document.createElement("tr");
       var dl = (j.status === "done" && j.path)
         ? '<a href="/api/exports/' + j.id + '/file">download</a>' : "";
-      tr.innerHTML = "<td>" + j.id + "</td><td>" + j.t_in + " → " + j.t_out + "</td><td>" + j.status + "</td><td>" + dl + "</td>";
+      tr.innerHTML = "<td>" + j.id + "</td><td>" + station(j.t_in) + " → " + station(j.t_out) + "</td><td>" + j.status + "</td><td>" + dl + "</td>";
       tb.appendChild(tr);
     });
   }
@@ -183,14 +327,36 @@
     document.querySelectorAll("#layout-seg button").forEach(function (b) { b.classList.toggle("active", b === btn); });
     render(); tick();
   });
-  document.getElementById("scrub").addEventListener("input", function (ev) {
-    play = t0 + (Number(ev.target.value) / 1000) * (t1 - t0);
+  function seekTo(ms) {
+    play = Math.max(t0, Math.min(t1, ms));
+    var one = selectedInput();
+    if (playing && (!one || !chunkHit(one.id, play) || play >= t1)) stopPlayback();
     tick();
+  }
+  document.getElementById("play-toggle").onclick = function () {
+    if (playing) {
+      stopPlayback();
+      return;
+    }
+    var one = selectedInput();
+    if (!one || !chunkHit(one.id, play) || play >= t1) return;
+    playing = true;
+    paintPlayButton();
+    syncMedia(false);
+  };
+  document.getElementById("listen-vol").addEventListener("input", function (ev) {
+    volume = Math.max(0, Math.min(1, Number(ev.target.value)));
+    if (!Number.isFinite(volume)) volume = 0.8;
+    try { localStorage.setItem(VOL_KEY, String(volume)); } catch (e) {}
+    var v = selectedVideo();
+    if (v && playing && !v.muted) v.volume = volume;
+  });
+  document.getElementById("scrub").addEventListener("input", function (ev) {
+    seekTo(t0 + (Number(ev.target.value) / 1000) * (t1 - t0));
   });
   document.getElementById("timeline").addEventListener("click", function (ev) {
     var r = ev.currentTarget.getBoundingClientRect();
-    play = t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0);
-    tick();
+    seekTo(t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0));
   });
   document.getElementById("mark-in").onclick = function () { markIn = play; tick(); };
   document.getElementById("mark-out").onclick = function () { markOut = play; tick(); };
@@ -202,7 +368,8 @@
     }
     var visible = inputs.slice(0, n).filter(Boolean);
     var scope = document.getElementById("scope").value;
-    var ids = scope === "all" ? visible.map(function (x) { return x.id; }) : (visible[0] ? [visible[0].id] : []);
+    var one = selectedInput();
+    var ids = scope === "all" ? visible.map(function (x) { return x.id; }) : (one ? [one.id] : []);
     if (!ids.length) { msg.textContent = "no inputs"; return; }
     NexRecAuth.recApi("export_create", {
       input_ids: ids,
@@ -223,8 +390,8 @@
       msg.textContent = "mark I before O";
       return;
     }
-    var visible = inputs.slice(0, n).filter(Boolean);
-    var iid = visible[0] && visible[0].id;
+    var one = selectedInput();
+    var iid = one && one.id;
     if (!iid) { msg.textContent = "no input"; return; }
     var tin = iso(markIn), tout = iso(markOut);
     NexRecAuth.recApi("loudness_enqueue", { input_id: iid, t_in: tin, t_out: tout }).then(function (d) {

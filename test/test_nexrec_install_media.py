@@ -183,6 +183,9 @@ class InstallMediaTests(unittest.TestCase):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
         self.assertIn('bash "$ROOT/bin/nexrec-install-media.sh" all', setup)
         self.assertIn('bash "$ROOT/bin/nexrec-install-postgres.sh"', setup)
+        self.assertIn("timedatectl set-timezone America/New_York", setup)
+        self.assertIn("minpoll 11 maxpoll 12", setup)
+        self.assertIn("/etc/chrony/sources.d/nexrec.sources", setup)
         self.assertNotIn("php-sqlite3", setup)
         self.assertNotIn("sqlite3", setup)
         apt = setup.split("apt-get install", 2)[1]

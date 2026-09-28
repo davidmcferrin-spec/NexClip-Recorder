@@ -166,7 +166,7 @@
         });
       }
       clockTimers.push(setInterval(function () {
-        clock.textContent = new Date().toISOString().substr(11, 8) + "Z";
+        clock.textContent = NexRecUI.formatStation(new Date());
       }, 250));
     });
     bindMonitors();
@@ -203,7 +203,7 @@
   });
 
   setInterval(function () {
-    document.getElementById("clock").textContent = new Date().toISOString();
+    document.getElementById("clock").textContent = NexRecUI.formatStation(new Date(), true);
   }, 500);
 })();
 </script>

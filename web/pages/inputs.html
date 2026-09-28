@@ -188,7 +188,8 @@ val("search").onclick = function () {
     ul.innerHTML = "";
     (d.hits || []).forEach(function (h) {
       var li = document.createElement("li");
-      li.innerHTML = "<span class=\"meta\">" + (h.t_start || "") + " " + (h.kind || "") +
+      var when = h.t_start ? NexRecUI.formatStation(h.t_start, true) : "";
+      li.innerHTML = "<span class=\"meta\">" + when + " " + (h.kind || "") +
         (h.speaker ? " " + h.speaker : "") + "</span> " + (h.text || "");
       ul.appendChild(li);
     });

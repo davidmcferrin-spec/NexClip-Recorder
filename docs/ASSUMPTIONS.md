@@ -17,7 +17,7 @@ use their own Postgres on the hub. Do not point this box at the hub database.
 Theme tokens follow
 NexAPP (`--nx-*`, ADR 0028) with layout remaining ours.
 
-Timezone remains `America/New_York` + NTP (NexVUE / NexClip pathing).
+OS timezone is `America/New_York` (DST) plus chrony about once or twice an hour. Recordings, filenames, and timecode are UTC. The UI shows America/New_York.
 
 ## Auth / NexAPP (real paths)
 

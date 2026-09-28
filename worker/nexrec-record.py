@@ -30,6 +30,7 @@ from nexrec_util import (  # noqa: E402
     env_int,
     iso_z,
     load_env_file,
+    pin_process_utc,
     utcnow,
     valid_input_id,
 )
@@ -120,6 +121,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--once-seconds", type=float, default=0, help="exit after N seconds (demo/tests)")
     p.add_argument("--segment-seconds", type=int, default=0)
     args = p.parse_args(argv)
+    pin_process_utc()
 
     if not valid_input_id(args.input_id):
         print("invalid --input-id", file=sys.stderr)

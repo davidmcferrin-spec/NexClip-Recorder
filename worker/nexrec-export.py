@@ -16,7 +16,7 @@ if HERE not in sys.path:
 
 from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate, overlay_app_settings  # noqa: E402
 from nexrec_ffmpeg import export_concat_argv  # noqa: E402
-from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, utcnow  # noqa: E402
+from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, pin_process_utc, utcnow  # noqa: E402
 
 
 def write_concat(paths: list[str], dest: str) -> None:
@@ -132,6 +132,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--job-id", default="")
     p.add_argument("--poll", type=float, default=2.0)
     args = p.parse_args(argv)
+    pin_process_utc()
     env = load_env_file(args.env) if args.env else dict(os.environ)
     paths = data_paths(env)
     conn = connect(env)

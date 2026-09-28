@@ -3,10 +3,10 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
-from nexrec_util import iso_z, wallclock_timecode
+from nexrec_util import as_utc, iso_z, wallclock_timecode
 
 SOURCE_TYPES = ("rtsp", "srt", "udp", "tcp", "rtp", "decklink", "testsrc")
 
@@ -173,12 +173,12 @@ def encode_args(
 
 
 def metadata_args(when: datetime | None = None, fps: float = 30.0) -> list[str]:
-    when = when or datetime.now()
-    utc = when.astimezone(timezone.utc) if when.tzinfo else when.replace(tzinfo=timezone.utc)
+    utc = as_utc(when)
+    tc = wallclock_timecode(utc, fps=fps)
     return [
         "-metadata", f"creation_time={iso_z(utc)}",
-        "-timecode", wallclock_timecode(when, fps=fps),
-        "-metadata:s:v:0", f"timecode={wallclock_timecode(when, fps=fps)}",
+        "-timecode", tc,
+        "-metadata:s:v:0", f"timecode={tc}",
     ]
 
 

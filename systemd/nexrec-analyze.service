@@ -5,6 +5,7 @@ After=network-online.target
 [Service]
 Type=simple
 EnvironmentFile=-/etc/nexrec/nexrec.env
+Environment=TZ=UTC
 ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-analyze.py --env /etc/nexrec/nexrec.env --loop
 Restart=always
 RestartSec=5

@@ -26,7 +26,7 @@ from nexrec_db import (  # noqa: E402
     overlay_app_settings,
 )
 from nexrec_features import analyze_chunk, measure_concat_loudness  # noqa: E402
-from nexrec_util import data_paths, iso_z, load_env_file  # noqa: E402
+from nexrec_util import data_paths, iso_z, load_env_file, pin_process_utc  # noqa: E402
 
 import importlib.util
 
@@ -146,6 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--chunk-id", default="")
     p.add_argument("--loop", action="store_true")
     args = p.parse_args(argv)
+    pin_process_utc()
     env = load_env_file(args.env) if args.env else dict(os.environ)
     paths = data_paths(env)
     conn = connect(env)

@@ -157,7 +157,7 @@ function refresh() {
       var tr = document.createElement("tr");
       tr.innerHTML = "<td>" + esc(s.name || s.input_id) + "</td><td>" + esc(s.source_type) +
         "</td><td>" + badge(s.signal) + "</td><td>" + esc(lock) + "</td><td>" + esc(s.format || "—") +
-        "</td><td>" + esc(s.last_chunk_at || "—") + "</td><td>" + esc(s.seen_at || "—") +
+        "</td><td>" + esc(s.last_chunk_at ? NexRecUI.formatStation(s.last_chunk_at, true) : "—") + "</td><td>" + esc(s.seen_at ? NexRecUI.formatStation(s.seen_at, true) : "—") +
         "</td><td class='sub'>" + esc(s.detail || "") + "</td>";
       sb.appendChild(tr);
     });

@@ -11,6 +11,54 @@ VAR=/var/lib/nexrec
 log() { printf '[nexrec-setup] %s\n' "$*"; }
 warn() { printf '[nexrec-setup] WARN %s\n' "$*" >&2; }
 
+# OS zone is station local so date, journalctl, and the cleanup timer follow
+# America/New_York (DST included). Recorder units pin TZ=UTC; timecode is UTC.
+configure_clock() {
+  if timedatectl set-timezone America/New_York; then
+    log "OS timezone America/New_York"
+  else
+    ln -sfn /usr/share/zoneinfo/America/New_York /etc/localtime
+    printf 'America/New_York\n' > /etc/timezone
+    warn "timedatectl set-timezone failed; linked /etc/localtime to America/New_York"
+  fi
+
+  if ! command -v chronyd >/dev/null 2>&1 && ! command -v chronyc >/dev/null 2>&1; then
+    apt-get install -y -qq chrony || { warn "chrony is not installed; OS clock will not be disciplined"; return 0; }
+  fi
+
+  # timesyncd and chrony must not both step the clock.
+  systemctl disable --now systemd-timesyncd >/dev/null 2>&1 || true
+
+  mkdir -p /etc/chrony/sources.d
+  cat > /etc/chrony/sources.d/nexrec.sources <<'EOF'
+# NexCLIP Recorder NTP. minpoll and maxpoll are log2(seconds).
+# 11 = 2048s (~34 min), 12 = 4096s (~68 min): about twice an hour,
+# backing off to about once an hour when the offset is stable.
+# iburst still samples quickly the first time chronyd starts.
+pool ntp.ubuntu.com iburst minpoll 11 maxpoll 12 maxsources 4
+EOF
+
+  local conf=/etc/chrony/chrony.conf
+  if [[ -f "$conf" ]]; then
+    if ! grep -qE '^[[:space:]]*sourcedir[[:space:]]+/etc/chrony/sources.d[[:space:]]*$' "$conf"; then
+      printf '\n# NexCLIP Recorder NTP sources\nsourcedir /etc/chrony/sources.d\n' >> "$conf"
+    fi
+    # Distro pool/server lines poll about once a minute. Comment them so
+    # only nexrec.sources disciplines the clock. Idempotent: already-commented
+    # lines do not match.
+    sed -i -E 's/^(pool|server)[[:space:]]+/# nexrec: /' "$conf"
+  else
+    warn "missing $conf; wrote /etc/chrony/sources.d/nexrec.sources only"
+  fi
+
+  systemctl enable chrony >/dev/null 2>&1 || systemctl enable chronyd >/dev/null 2>&1 || true
+  systemctl restart chrony >/dev/null 2>&1 || systemctl restart chronyd >/dev/null 2>&1 || true
+  if command -v chronyc >/dev/null 2>&1; then
+    chronyc makestep >/dev/null 2>&1 || true
+  fi
+  log "chrony corrects the OS clock about once or twice an hour"
+}
+
 if [[ "${1:-}" == "--check" ]]; then
   [[ -f "$ETC/nexrec.env" ]] || { echo "missing $ETC/nexrec.env"; exit 1; }
   set -a
@@ -44,8 +92,7 @@ apt-get install -y -qq \
   apache2 libapache2-mod-php python3 python3-psycopg2 \
   postgresql postgresql-contrib
 
-timedatectl set-timezone America/New_York 2>/dev/null || true
-systemctl enable --now chrony 2>/dev/null || systemctl enable --now systemd-timesyncd 2>/dev/null || true
+configure_clock
 
 mkdir -p "$ETC/inputs" "$VAR/storage" "$VAR/auth" "$VAR/sessions"
 chown -R www-data:www-data "$VAR"
@@ -137,13 +184,94 @@ UPDATE app_settings SET value='${FFPREFIX}/bin/ffprobe' WHERE key='ffmpeg.probe'
 SQL
 fi
 
+# The live tree is the checkout this script ran from (systemd units are rewritten
+# to ROOT). The /opt rsync is a copy and is not the Directory grant.
+PUBLIC="$ROOT/web/public"
 CONF=/etc/apache2/conf-available/nexrec-web.conf
 sed "s|@@APP_ROOT@@|$ROOT/web|g" "$ROOT/apache/nexrec-web-apache.conf" > "$CONF"
+chmod 644 "$CONF"
 a2enmod rewrite >/dev/null
-a2enconf nexrec-web >/dev/null || true
-# DocumentRoot hint — do not blindly rewrite every vhost (NexVUE does this carefully).
-log "enable Apache DocumentRoot $ROOT/web/public (see apache/nexrec-web-apache.conf)"
-systemctl reload apache2 2>/dev/null || warn "apache2 reload skipped"
+a2enconf nexrec-web >/dev/null || warn "a2enconf nexrec-web failed"
+if [[ -e /etc/apache2/sites-available/000-default.conf ]]; then
+  a2ensite 000-default >/dev/null || warn "a2ensite 000-default failed"
+fi
+
+# www-data must traverse every parent. A clone under /home/<user> (mode 750)
+# is otherwise AH01630 or (13) Permission denied after DocumentRoot is set.
+nexrec_open_parents() {
+  local dir="$1" mode other
+  while [[ "$dir" != "/" ]]; do
+    mode="$(stat -c %a "$dir" 2>/dev/null || echo "")"
+    other="${mode: -1}"
+    if [[ -n "$other" && $((other & 1)) -eq 0 ]]; then
+      chmod o+x "$dir" || warn "could not add other-execute on $dir"
+      log "traverse for www-data: chmod o+x $dir"
+    fi
+    dir="$(dirname "$dir")"
+  done
+}
+nexrec_open_parents "$PUBLIC"
+
+# Rewrite only the Ubuntu default docroot and a previous /opt copy. Leave any
+# other vhost (a co-hosted app) alone.
+if command -v python3 >/dev/null 2>&1; then
+  python3 - "$PUBLIC" "$APP_ROOT/web/public" <<'PY' || warn "DocumentRoot patch failed"
+import pathlib, re, sys
+public, opt_public = sys.argv[1], sys.argv[2]
+targets = {"/var/www/html", "/var/www/html/"}
+if opt_public != public:
+    targets.add(opt_public)
+    targets.add(opt_public.rstrip("/") + "/")
+pat = re.compile(
+    r'^(?P<prefix>\s*DocumentRoot\s+)"?(?P<path>/[^"\s#]+)"?(?P<suffix>\s*(?:#.*)?)$',
+    re.M,
+)
+seen = set()
+patched = 0
+for dname in ("sites-available", "sites-enabled"):
+    d = pathlib.Path("/etc/apache2") / dname
+    if not d.is_dir():
+        continue
+    for p in sorted(d.iterdir()):
+        try:
+            real = p.resolve()
+        except OSError:
+            continue
+        if real in seen or not real.is_file():
+            continue
+        seen.add(real)
+        try:
+            text = real.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        def repl(m, _text=text):
+            path = m.group("path")
+            if path in targets or path.rstrip("/") in {t.rstrip("/") for t in targets}:
+                quote = '"' if '"' in m.group(0) else ""
+                return f'{m.group("prefix")}{quote}{public}{quote}{m.group("suffix")}'
+            return m.group(0)
+        new, n = pat.subn(repl, text)
+        if new != text:
+            real.write_text(new, encoding="utf-8")
+            patched += n
+            print(f"[nexrec-setup] DocumentRoot → {public} in {real}")
+if patched == 0 and not any(
+    re.search(r'^\s*DocumentRoot\s+"?' + re.escape(public) + r'/?"?', p.read_text(encoding="utf-8", errors="replace"), re.M)
+    for p in seen
+):
+    print(f"[nexrec-setup] WARN no DocumentRoot updated — set DocumentRoot {public} in the site vhost", file=sys.stderr)
+PY
+else
+  warn "python3 missing — set DocumentRoot $PUBLIC in 000-default.conf manually"
+fi
+
+systemctl enable apache2 >/dev/null 2>&1 || true
+if apache2ctl configtest >/dev/null 2>&1; then
+  systemctl reload apache2 2>/dev/null || warn "apache2 reload skipped"
+  log "Apache DocumentRoot $PUBLIC"
+else
+  warn "apache2ctl configtest failed — DocumentRoot should be $PUBLIC"
+fi
 
 echo "$ROOT" > "$ETC/repo.path"
 log "Local PostgreSQL role and database are configured. The password is only in $ETC/nexrec.env."
