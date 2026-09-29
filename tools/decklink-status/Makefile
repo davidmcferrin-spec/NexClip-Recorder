@@ -16,14 +16,18 @@ PREFIX ?= /usr/local
 
 .PHONY: all clean install
 
-all: nexrec-decklink-status
+all: nexrec-decklink-status nexrec-decklink-configure
 
 nexrec-decklink-status: decklink-status.cpp
 	$(CXX) $(CXXFLAGS) -o $@ decklink-status.cpp $(DISPATCH) -ldl -lpthread
 
-install: nexrec-decklink-status
+nexrec-decklink-configure: decklink-configure.cpp
+	$(CXX) $(CXXFLAGS) -o $@ decklink-configure.cpp $(DISPATCH) -ldl -lpthread
+
+install: nexrec-decklink-status nexrec-decklink-configure
 	install -d $(DESTDIR)$(PREFIX)/bin
 	install -m 755 nexrec-decklink-status $(DESTDIR)$(PREFIX)/bin/nexrec-decklink-status
+	install -m 755 nexrec-decklink-configure $(DESTDIR)$(PREFIX)/bin/nexrec-decklink-configure
 
 clean:
-	rm -f nexrec-decklink-status
+	rm -f nexrec-decklink-status nexrec-decklink-configure

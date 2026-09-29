@@ -203,6 +203,13 @@ detection; a busy input (this FFmpeg holds it) falls back to `IDeckLinkStatus`
 so lock and mode still show. Point Setup or `NEXREC_DECKLINK_STATUS_BIN` at
 the binary. Names match FFmpeg: `DeckLink Quad 2 (1)`, `DeckLink Duo (1)`.
 
+`nexrec-decklink-configure` sets Duo 2 / Quad 2 profile groups to half-duplex
+so each BNC is an input (`two_half_duplex`). `setup.sh` runs `--apply-inputs`
+and enables `nexrec-decklink-configure.service` to do it again before record
+units at boot. `SetActive` persists in Desktop Video. `--status` reports
+`profile`, `duplex`, and `capture_ready`. Stop `nexrec-record@` before a
+manual re-apply.
+
 ## 5. WebRTC preview
 
 Every recordable input has a MediaMTX path `in0`…`in9`:

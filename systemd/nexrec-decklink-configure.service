@@ -1,0 +1,17 @@
+# Set Duo 2 / Quad 2 BNC mapping so each connector is an input.
+# SetActive persists in Desktop Video preferences. Runs before record units.
+# A missing binary or no DeckLink API must not block recording.
+
+[Unit]
+Description=NexCLIP Recorder DeckLink half-duplex connector mapping
+Before=nexrec-record@.service
+After=systemd-udev-settle.service
+Wants=systemd-udev-settle.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/bash -c 'if [ ! -x /usr/local/bin/nexrec-decklink-configure ]; then echo "nexrec-decklink-configure missing — skip"; exit 0; fi; /usr/local/bin/nexrec-decklink-configure --apply-inputs; rc=$$?; [ "$$rc" -eq 1 ] && exit 0; exit "$$rc"'
+
+[Install]
+WantedBy=multi-user.target

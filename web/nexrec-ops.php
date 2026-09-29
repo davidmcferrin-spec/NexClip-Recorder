@@ -12,7 +12,7 @@ const NEXREC_OPS_CONTROL_VERBS = ['start', 'stop', 'restart', 'enable', 'disable
 
 function nexrec_ops_unit_allowed(string $unit): bool {
     return (bool) preg_match(
-        '/^(?:mediamtx\.service|nexrec-export\.service|nexrec-cleanup\.(?:service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(?:service|timer)|nexrec-(?:record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$/',
+        '/^(?:mediamtx\.service|nexrec-export\.service|nexrec-cleanup\.(?:service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(?:service|timer)|nexrec-decklink-configure\.service|nexrec-(?:record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$/',
         $unit
     );
 }
@@ -30,6 +30,7 @@ function nexrec_ops_fixed_units(): array {
         'nexrec-analyze.service',
         'nexrec-nexclip.service',
         'nexrec-nexclip.timer',
+        'nexrec-decklink-configure.service',
     ];
 }
 

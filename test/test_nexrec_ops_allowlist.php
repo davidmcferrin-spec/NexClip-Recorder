@@ -20,6 +20,7 @@ $allowed = [
     'nexrec-analyze.service',
     'nexrec-nexclip.service',
     'nexrec-nexclip.timer',
+    'nexrec-decklink-configure.service',
     'nexrec-record@demo.service',
     'nexrec-record@studio-a.service',
     'nexrec-preview@in1.service',

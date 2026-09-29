@@ -1,5 +1,6 @@
 # Built on the capture host against the DeckLink SDK (not committed).
 tools/decklink-status/nexrec-decklink-status
+tools/decklink-status/nexrec-decklink-configure
 
 # Local / runtime
 *.pyc

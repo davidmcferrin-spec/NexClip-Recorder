@@ -276,7 +276,7 @@ fi
 echo "$ROOT" > "$ETC/repo.path"
 log "Local PostgreSQL role and database are configured. The password is only in $ETC/nexrec.env."
 log "FFmpeg ${NEXREC_FFMPEG_VERSION:-9.0.2} is built into ${NEXREC_FFMPEG_PREFIX:-/usr/local} (libx264, openssl, optional fdk-aac/srt/zvbi/nvenc)."
-log "DeckLink (--enable-decklink and nexrec-decklink-status) is included only when SDK headers are present. Desktop Video drivers are a separate Blackmagic package."
+log "DeckLink (--enable-decklink, nexrec-decklink-status, nexrec-decklink-configure) is included only when SDK headers are present. Configure sets Quad 2 / Duo 2 to one input per BNC. Desktop Video drivers are a separate Blackmagic package."
 log "MediaMTX v1.21.1 serves WHEP. Do not enable nexrec-preview@ for DeckLink inputs."
 log "Rebuild: NEXREC_FORCE_FFMPEG_BUILD=1. Replace MediaMTX: NEXREC_FORCE_MEDIAMTX=1."
 log "done. login admin / password (must change). VERSION=$(cat "$ROOT/VERSION")"

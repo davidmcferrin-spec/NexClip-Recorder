@@ -200,6 +200,8 @@ class InstallMediaTests(unittest.TestCase):
         installer = (ROOT / "bin" / "nexrec-install-media.sh").read_text(encoding="utf-8")
         self.assertIn("--enable-decklink", installer)
         self.assertIn('--extra-cxxflags="-I${sdk}"', installer)
+        self.assertIn("--apply-inputs", installer)
+        self.assertIn("nexrec-decklink-configure", installer)
         self.assertIn("--enable-libx264", (ROOT / "bin" / "nexrec-install-media.sh").read_text(encoding="utf-8"))
 
 

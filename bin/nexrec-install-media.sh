@@ -546,7 +546,26 @@ nexrec_install_decklink_status() {
   fi
   make -C "$root/tools/decklink-status" SDK="$sdk"
   make -C "$root/tools/decklink-status" SDK="$sdk" PREFIX="$prefix" install
-  nexrec_media_log "installed ${prefix}/bin/nexrec-decklink-status"
+  nexrec_media_log "installed ${prefix}/bin/nexrec-decklink-status and nexrec-decklink-configure"
+  local cfg="${prefix}/bin/nexrec-decklink-configure"
+  if [[ -x "$cfg" ]]; then
+    # One input per BNC. SetActive persists. Exit 1 means no driver; do not fail setup.
+    if "$cfg" --apply-inputs >/tmp/nexrec-decklink-configure.json 2>/tmp/nexrec-decklink-configure.err; then
+      nexrec_media_log "decklink-configure --apply-inputs (half-duplex, one input per BNC)"
+    else
+      local rc=$?
+      if [[ "$rc" -eq 1 ]]; then
+        nexrec_media_warn "decklink-configure: no DeckLink API (Desktop Video not installed?)"
+      else
+        nexrec_media_warn "decklink-configure --apply-inputs failed (rc=$rc) — stop nexrec-record@ units and re-run: sudo ${cfg} --apply-inputs"
+      fi
+    fi
+  fi
+  if command -v systemctl >/dev/null 2>&1; then
+    systemctl daemon-reload || true
+    systemctl enable nexrec-decklink-configure.service >/dev/null 2>&1 \
+      || nexrec_media_warn "could not enable nexrec-decklink-configure.service"
+  fi
 }
 
 nexrec_install_media_all() {
