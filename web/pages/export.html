@@ -83,7 +83,8 @@
 <script>
 (function () {
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, play = 0, markIn = null, markOut = null;
-  var selected = 0, playing = false;
+  var selected = 0, playing = false, slotIds = null;
+  var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
   try {
@@ -102,6 +103,7 @@
     ]);
   }).then(function (all) {
     inputs = all[0].inputs || [];
+    if (slotIds == null) slotIds = NexRecUI.readPaneSlots(localStorage, SLOT_KEY);
     (all[1].chunks || []).forEach(function (c) {
       (chunksByInput[c.input_id] = chunksByInput[c.input_id] || []).push(c);
     });
@@ -139,8 +141,36 @@
     return pane ? pane.querySelector("video") : null;
   }
 
+  function visibleIds() {
+    return NexRecUI.paneSlotIds(inputs, slotIds);
+  }
+
   function selectedInput() {
-    return inputs[selected] || null;
+    var id = visibleIds()[selected] || "";
+    if (!id) return null;
+    for (var i = 0; i < inputs.length; i++) {
+      if (String(inputs[i].id) === id) return inputs[i];
+    }
+    return null;
+  }
+
+  function choosePane(i) {
+    if (selected === i) return;
+    selected = i;
+    document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
+      p.classList.toggle("selected", idx === selected);
+    });
+    syncMedia(false);
+  }
+
+  function assignPane(i, inputId) {
+    slotIds = NexRecUI.paneAssign(visibleIds(), i, inputId);
+    NexRecUI.writePaneSlots(localStorage, SLOT_KEY, slotIds);
+    selected = i;
+    render();
+    var one = selectedInput();
+    if (playing && (!one || !chunkHit(one.id, play))) stopPlayback();
+    tick();
   }
 
   function paintPlayButton() {
@@ -278,32 +308,40 @@
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
-    var slots = inputs.slice(0, n);
-    while (slots.length < n) slots.push(null);
+    var ids = visibleIds();
+    var slots = NexRecUI.paneInputs(inputs, ids, n);
     slots.forEach(function (inp, i) {
       var pane = document.createElement("div");
       pane.className = "pane" + (i === selected ? " selected" : "");
       pane.setAttribute("data-slot", String(i));
-      var tag = document.createElement("div");
-      tag.className = "tag";
-      tag.textContent = inp ? inp.name : ("empty " + (i + 1));
+      var pick = document.createElement("div");
+      pick.className = "pick";
+      var sel = document.createElement("select");
+      sel.setAttribute("aria-label", "Input for pane " + (i + 1));
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "No input";
+      sel.appendChild(blank);
+      inputs.forEach(function (row) {
+        var opt = document.createElement("option");
+        opt.value = String(row.id);
+        opt.textContent = row.name || row.id;
+        sel.appendChild(opt);
+      });
+      sel.value = ids[i] || "";
+      sel.addEventListener("mousedown", function () { choosePane(i); });
+      sel.addEventListener("change", function () { assignPane(i, sel.value); });
+      pick.appendChild(sel);
       var video = document.createElement("video");
-      video.setAttribute("data-input", inp ? inp.id : "");
+      video.setAttribute("data-input", inp ? String(inp.id) : "");
       video.muted = true; video.playsInline = true; video.controls = false;
       video.addEventListener("timeupdate", onSelectedTime);
       video.addEventListener("ended", onSelectedEnded);
       var ph = document.createElement("div");
       ph.className = "ph";
       ph.textContent = inp ? "time-locked chunk preview" : "no input";
-      pane.appendChild(video); pane.appendChild(ph); pane.appendChild(tag);
-      pane.addEventListener("click", function () {
-        if (selected === i) return;
-        selected = i;
-        document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
-          p.classList.toggle("selected", idx === selected);
-        });
-        syncMedia(false);
-      });
+      pane.appendChild(video); pane.appendChild(ph); pane.appendChild(pick);
+      pane.addEventListener("click", function () { choosePane(i); });
       grid.appendChild(pane);
     });
   }
@@ -366,7 +404,7 @@
     if (markIn == null || markOut == null || markOut <= markIn) {
       msg.textContent = "mark I before O"; msg.style.color = "var(--bad)"; return;
     }
-    var visible = inputs.slice(0, n).filter(Boolean);
+    var visible = NexRecUI.paneInputs(inputs, visibleIds(), n).filter(Boolean);
     var scope = document.getElementById("scope").value;
     var one = selectedInput();
     var ids = scope === "all" ? visible.map(function (x) { return x.id; }) : (one ? [one.id] : []);

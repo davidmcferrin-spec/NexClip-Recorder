@@ -88,8 +88,16 @@ def parse_status_text(text: str) -> dict[str, Any]:
     return {"signal": signal, "sdi_lock": lock, "format": fmt[:80], "detail": "", "probe": "tool"}
 
 
-def probe_decklink(device: str, env: dict[str, str] | None = None, now: float | None = None) -> dict[str, Any]:
-    """Best-effort SDI status. Never uses a shell."""
+def probe_decklink(
+    device: str,
+    env: dict[str, str] | None = None,
+    now: float | None = None,
+    fresh: bool = False,
+) -> dict[str, Any]:
+    """Best-effort SDI status. Never uses a shell.
+
+    fresh=True skips the 15s cache so a record process can wait for lock.
+    """
     env = env or {}
     unknown = {
         "signal": "unknown",
@@ -106,7 +114,7 @@ def probe_decklink(device: str, env: dict[str, str] | None = None, now: float | 
     stamp = now if now is not None else time.time()
     cache_key = device
     last = _PROBE_AT.get(cache_key, 0.0)
-    if cache_key in _PROBE_CACHE and (stamp - last) < 15:
+    if not fresh and cache_key in _PROBE_CACHE and (stamp - last) < 15:
         return dict(_PROBE_CACHE[cache_key])
     try:
         proc = subprocess.run(

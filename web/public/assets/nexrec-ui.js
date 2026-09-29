@@ -89,11 +89,106 @@
     return g.year + "-" + g.month + "-" + g.day + " " + clock;
   }
 
+  var PANE_MAX = 6;
+
+  // saved null → first inputs in list order (API returns name order).
+  // A saved array is the user's pane assignment; unknown or duplicate ids become blank.
+  function paneSlotIds(inputs, saved) {
+    var known = {};
+    (inputs || []).forEach(function (inp) {
+      if (inp && inp.id != null && inp.id !== "") known[String(inp.id)] = true;
+    });
+    if (!Array.isArray(saved)) {
+      var fresh = [];
+      var filled = {};
+      (inputs || []).forEach(function (inp) {
+        if (!inp || inp.id == null || inp.id === "" || fresh.length >= PANE_MAX) return;
+        var id = String(inp.id);
+        if (filled[id]) return;
+        filled[id] = true;
+        fresh.push(id);
+      });
+      while (fresh.length < PANE_MAX) fresh.push("");
+      return fresh;
+    }
+    var ids = [];
+    var seen = {};
+    for (var i = 0; i < PANE_MAX; i++) {
+      var id = saved[i] == null ? "" : String(saved[i]);
+      if (id && known[id] && !seen[id]) {
+        seen[id] = true;
+        ids.push(id);
+      } else {
+        ids.push("");
+      }
+    }
+    return ids;
+  }
+
+  // Picking an input that already occupies another pane swaps the two.
+  function paneAssign(slotIds, paneIndex, inputId) {
+    var source = Array.isArray(slotIds) ? slotIds : [];
+    var next = [];
+    for (var i = 0; i < PANE_MAX; i++) {
+      next.push(source[i] == null ? "" : String(source[i]));
+    }
+    var id = inputId == null ? "" : String(inputId);
+    if (paneIndex < 0 || paneIndex >= PANE_MAX) return next;
+    if (!id) {
+      next[paneIndex] = "";
+      return next;
+    }
+    var other = next.indexOf(id);
+    if (other >= 0 && other !== paneIndex) {
+      var prev = next[paneIndex] || "";
+      next[paneIndex] = id;
+      next[other] = prev;
+      return next;
+    }
+    next[paneIndex] = id;
+    return next;
+  }
+
+  function paneInputs(inputs, slotIds, n) {
+    var byId = {};
+    (inputs || []).forEach(function (inp) {
+      if (inp && inp.id != null && inp.id !== "") byId[String(inp.id)] = inp;
+    });
+    var count = n > PANE_MAX ? PANE_MAX : n;
+    var out = [];
+    for (var i = 0; i < count; i++) {
+      var id = slotIds && slotIds[i] ? String(slotIds[i]) : "";
+      out.push(id && byId[id] ? byId[id] : null);
+    }
+    return out;
+  }
+
+  function readPaneSlots(storage, key) {
+    try {
+      var raw = storage.getItem(key);
+      if (!raw) return null;
+      var parsed = JSON.parse(raw);
+      return Array.isArray(parsed) ? parsed : null;
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function writePaneSlots(storage, key, ids) {
+    try { storage.setItem(key, JSON.stringify(ids)); } catch (e) {}
+  }
+
   global.NexRecUI = {
     getTheme: getTheme,
     setTheme: setTheme,
     toggleTheme: toggleTheme,
     timeZone: DISPLAY_TZ,
     formatStation: formatStation,
+    PANE_MAX: PANE_MAX,
+    paneSlotIds: paneSlotIds,
+    paneAssign: paneAssign,
+    paneInputs: paneInputs,
+    readPaneSlots: readPaneSlots,
+    writePaneSlots: writePaneSlots,
   };
 })(typeof window !== "undefined" ? window : globalThis);

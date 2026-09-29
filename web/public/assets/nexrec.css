@@ -103,6 +103,20 @@ th { color: var(--dim); font-weight: 500; }
   color: var(--acc); padding: 3px 8px; border-radius: 4px; font-size: 11px;
   pointer-events: none;
 }
+.pane .pick {
+  position: absolute; top: 8px; left: 8px; z-index: 6;
+  display: flex; align-items: center; gap: 6px;
+  max-width: calc(100% - 108px);
+}
+.pane .pick select {
+  width: auto; max-width: 100%;
+  padding: 2px 6px; font-size: 11px;
+  background: rgba(0, 0, 0, .72); color: #fff; border-color: transparent;
+}
+.pane .pick .mon {
+  flex: 0 0 auto; font-size: 10px; color: var(--acc);
+  background: rgba(0, 0, 0, .72); padding: 2px 6px; border-radius: 4px;
+}
 .pane .clock {
   position: absolute; top: 8px; right: 8px; z-index: 5; background: rgba(0,0,0,.65);
   color: #fff; padding: 3px 8px; border-radius: 4px; font-size: 11px;

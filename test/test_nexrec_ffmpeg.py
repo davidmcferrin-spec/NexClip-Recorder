@@ -57,27 +57,69 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("high", args)
         self.assertIn("aac", args)
         self.assertIn("12M", args)
+        self.assertIn("4.1", args)
         self.assertNotIn("+ildct+ilme", args)
 
-    def test_decklink_keeps_interlace_flags(self):
+    def test_keep_interlace_does_not_force_field_coding(self):
         args = encode_args({"source_type": "decklink", "live_transcode": 1, "keep_interlace": 1})
-        self.assertIn("+ildct+ilme", args)
-
-    def test_decklink_explicit_progressive(self):
-        args = encode_args({"source_type": "decklink", "keep_interlace": 0, "upconvert_1080i": 0})
         self.assertNotIn("+ildct+ilme", args)
+        self.assertIn("4.2", args)
+
+    def test_locked_1080i_stays_interlaced(self):
+        args = encode_args({
+            "source_type": "decklink",
+            "signal_mode": "1080i59.94",
+            "keep_interlace": 0,
+        })
+        self.assertIn("+ildct+ilme", args)
+        self.assertIn("tff=1", args)
+        self.assertIn("4.1", args)
+        self.assertNotIn("4.2", args)
+
+    def test_locked_1080p60_stays_progressive(self):
+        args = encode_args({
+            "source_type": "decklink",
+            "signal_mode": "1080p60",
+            "keep_interlace": 1,
+            "upconvert_1080i": 0,
+        })
+        self.assertNotIn("+ildct+ilme", args)
+        self.assertNotIn("tff=1", args)
+        self.assertIn("4.2", args)
         self.assertIn("libx264", args)
 
-    def test_decklink_default_interlace_and_no_copy(self):
+    def test_ntsc_is_bottom_field(self):
+        args = encode_args({"source_type": "decklink", "signal_mode": "525i59.94 (NTSC)"})
+        self.assertIn("bff=1", args)
+        self.assertNotIn("tff=1", args)
+
+    def test_decklink_without_a_mode_does_not_copy(self):
         args = encode_args({"source_type": "decklink", "copy_native": 1, "live_transcode": 0})
         self.assertIn("libx264", args)
-        self.assertIn("+ildct+ilme", args)
+        self.assertNotIn("+ildct+ilme", args)
+        self.assertIn("4.2", args)
         self.assertNotEqual(args, ["-c", "copy"])
 
-    def test_decklink_upconvert_skips_field_flags(self):
-        args = encode_args({"source_type": "decklink", "upconvert_1080i": 1, "keep_interlace": 1})
+    def test_upconvert_1080i_is_progressive_field_rate(self):
+        args = encode_args({
+            "source_type": "decklink",
+            "signal_mode": "1080i59.94",
+            "upconvert_1080i": 1,
+            "keep_interlace": 1,
+        })
         self.assertNotIn("+ildct+ilme", args)
         self.assertTrue(any("yadif" in str(a) for a in args))
+        self.assertIn("4.2", args)
+
+    def test_format_code_wins_over_a_different_status_mode(self):
+        args = encode_args({
+            "source_type": "decklink",
+            "decklink_format": "Hi59",
+            "signal_mode": "1080p60",
+        })
+        self.assertIn("+ildct+ilme", args)
+        self.assertIn("tff=1", args)
+        self.assertIn("4.1", args)
 
     def test_decklink_record_is_clocked_h264(self):
         cmd = record_argv(
@@ -101,6 +143,9 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("libx264", cmd)
         self.assertIn("aac", cmd)
         self.assertIn("+ildct+ilme", cmd)
+        self.assertIn("tff=1", cmd)
+        self.assertIn("4.1", cmd)
+        self.assertNotIn("-timecode", cmd)
         self.assertNotIn("split=2", " ".join(cmd))
 
     def test_decklink_tee_is_one_open(self):
@@ -109,6 +154,7 @@ class TestFfmpeg(unittest.TestCase):
             {
                 "source_type": "decklink",
                 "decklink_device": "DeckLink Duo (1)",
+                "signal_mode": "1080p60",
                 "keep_interlace": 1,
                 "preview_enabled": 1,
             },
@@ -124,7 +170,8 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("-segment_atclocktime", cmd)
         self.assertIn("libx264", cmd)
         self.assertIn("aac", cmd)
-        self.assertIn("+ildct+ilme", cmd)
+        self.assertNotIn("+ildct+ilme", cmd)
+        self.assertIn("4.2", cmd)
         self.assertIn(rtsp, cmd)
         self.assertLess(cmd.index("/data/in_%Y%m%dT%H%M%SZ.mp4"), cmd.index(rtsp))
         self.assertNotIn("-vf", cmd)
@@ -136,6 +183,7 @@ class TestFfmpeg(unittest.TestCase):
             {
                 "source_type": "decklink",
                 "decklink_device": "DeckLink Quad 2 (2)",
+                "signal_mode": "1080i59.94",
                 "upconvert_1080i": 1,
                 "keep_interlace": 1,
             },
@@ -146,6 +194,7 @@ class TestFfmpeg(unittest.TestCase):
         joined = " ".join(cmd)
         self.assertIn("yadif=mode=1", joined)
         self.assertNotIn("+ildct+ilme", cmd)
+        self.assertIn("4.2", cmd)
         self.assertEqual(cmd.count("decklink"), 1)
 
     def test_ip_record_ignores_preview_url(self):
@@ -202,8 +251,25 @@ class TestFfmpeg(unittest.TestCase):
         when = datetime(2026, 7, 15, 15, 0, 0, tzinfo=edt)
         cmd = metadata_args(when, fps=30)
         self.assertIn("creation_time=2026-07-15T19:00:00Z", cmd)
-        self.assertIn("19:00:00:00", cmd)
-        self.assertNotIn("15:00:00:00", cmd)
+        self.assertIn("timecode=19:00:00:00", cmd)
+        self.assertNotIn("15:00:00:00", " ".join(cmd))
+        self.assertNotIn("-timecode", cmd)
+
+    def test_progressive_timecode_uses_frame_rate(self):
+        when = datetime(2026, 9, 29, 3, 15, 5, 200000, tzinfo=timezone.utc)
+        cmd = record_argv(
+            {
+                "source_type": "decklink",
+                "decklink_device": "DeckLink Quad (1)",
+                "signal_mode": "1080p60",
+            },
+            "/data/out.mp4",
+            segment_seconds=300,
+            when=when,
+        )
+        self.assertIn("timecode=03:15:05:12", cmd)
+        self.assertNotIn("-timecode", cmd)
+        self.assertIn("4.2", cmd)
 
     def test_pin_process_utc(self):
         old = os.environ.get("TZ")

@@ -51,6 +51,8 @@
   var n = 4;
   var inputs = [];
   var selected = 0;
+  var slotIds = null;
+  var SLOT_KEY = "nexrec-live-slots";
   var monitors = null;
   var clockTimers = [];
   NexRecAuth.requirePage().then(load);
@@ -111,8 +113,29 @@
   function load() {
     return NexRecAuth.recApi("inputs_list").then(function (data) {
       inputs = data.inputs || [];
+      if (slotIds == null) slotIds = NexRecUI.readPaneSlots(localStorage, SLOT_KEY);
       render();
     });
+  }
+
+  function visibleIds() {
+    return NexRecUI.paneSlotIds(inputs, slotIds);
+  }
+
+  function choosePane(i) {
+    if (selected === i) return;
+    selected = i;
+    document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
+      p.classList.toggle("selected", idx === selected);
+    });
+    bindMonitors();
+  }
+
+  function assignPane(i, inputId) {
+    slotIds = NexRecUI.paneAssign(visibleIds(), i, inputId);
+    NexRecUI.writePaneSlots(localStorage, SLOT_KEY, slotIds);
+    selected = i;
+    render();
   }
 
   function render() {
@@ -122,16 +145,36 @@
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
-    var slots = inputs.slice(0, n);
-    while (slots.length < n) slots.push(null);
+    var ids = visibleIds();
+    var slots = NexRecUI.paneInputs(inputs, ids, n);
     slots.forEach(function (inp, i) {
       var pane = document.createElement("div");
       pane.className = "pane" + (i === selected ? " selected" : "");
       pane.setAttribute("data-slot", String(i));
-      var tag = document.createElement("div");
-      tag.className = "tag";
-      tag.textContent = inp ? inp.name : ("empty " + (i + 1));
-      if (inp && inp.feat_monitors) tag.textContent += " · mon";
+      var pick = document.createElement("div");
+      pick.className = "pick";
+      var sel = document.createElement("select");
+      sel.setAttribute("aria-label", "Input for pane " + (i + 1));
+      var blank = document.createElement("option");
+      blank.value = "";
+      blank.textContent = "No input";
+      sel.appendChild(blank);
+      inputs.forEach(function (row) {
+        var opt = document.createElement("option");
+        opt.value = String(row.id);
+        opt.textContent = row.name || row.id;
+        sel.appendChild(opt);
+      });
+      sel.value = ids[i] || "";
+      sel.addEventListener("mousedown", function () { choosePane(i); });
+      sel.addEventListener("change", function () { assignPane(i, sel.value); });
+      pick.appendChild(sel);
+      if (inp && inp.feat_monitors) {
+        var mon = document.createElement("span");
+        mon.className = "mon";
+        mon.textContent = "mon";
+        pick.appendChild(mon);
+      }
       var clock = document.createElement("div");
       clock.className = "clock";
       clock.textContent = "—";
@@ -146,16 +189,9 @@
         : "<span>no input</span>";
       pane.appendChild(video);
       pane.appendChild(ph);
-      pane.appendChild(tag);
+      pane.appendChild(pick);
       pane.appendChild(clock);
-      pane.addEventListener("click", function () {
-        if (selected === i) return;
-        selected = i;
-        document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
-          p.classList.toggle("selected", idx === selected);
-        });
-        bindMonitors();
-      });
+      pane.addEventListener("click", function () { choosePane(i); });
       grid.appendChild(pane);
       if (inp && inp.preview_path) {
         NexRecAuth.whepConnect(video, inp.preview_path).then(function () {

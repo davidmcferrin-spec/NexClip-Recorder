@@ -3,8 +3,9 @@
 
 from __future__ import annotations
 
+import re
 from datetime import datetime
-from typing import Any
+from typing import Any, NamedTuple
 
 from nexrec_util import as_utc, iso_z, wallclock_timecode
 
@@ -14,6 +15,27 @@ SOURCE_TYPES = ("rtsp", "srt", "udp", "tcp", "rtp", "decklink", "testsrc")
 PREVIEW_SIZE = "960x540"
 PREVIEW_VBITRATE = "1500k"
 PREVIEW_ABITRATE = "96k"
+
+# Broadcast floor. 1080p60 and upconverted 1080i step up from here.
+_H264_LEVELS = (
+    ("4.1", 245760, 8192),
+    ("4.2", 522240, 8704),
+    ("5.0", 589824, 22080),
+    ("5.1", 983040, 36864),
+    ("5.2", 2073600, 36864),
+)
+
+_STATUS_RE = re.compile(
+    r"(?P<size>525|625|720|1080|2160)\s*(?P<scan>PsF|i|p)\s*(?P<rate>\d+(?:\.\d+)?)",
+    re.IGNORECASE,
+)
+_STATUS_SIZE = {
+    "525": (720, 486),
+    "625": (720, 576),
+    "720": (1280, 720),
+    "1080": (1920, 1080),
+    "2160": (3840, 2160),
+}
 
 
 def input_args(source: dict[str, Any]) -> list[str]:
@@ -69,19 +91,130 @@ def _explicit_flag(source: dict[str, Any], key: str) -> bool | None:
     return bool(v)
 
 
-def _keep_interlace(source: dict[str, Any]) -> bool:
-    """1080i stays 1080i unless upconvert is on, or the operator cleared the flag.
+class SignalMode(NamedTuple):
+    width: int
+    height: int
+    frame_fps: float
+    field_fps: float
+    interlaced: bool
+    field: str | None
 
-    DeckLink defaults to interlaced when keep_interlace was never stored (NULL).
-    An explicit 0 is honored so the Inputs checkbox can turn field flags off.
+
+def _nominal_rate(value: float) -> float:
+    """Map a printed Blackmagic rate onto the exact NTSC fraction."""
+    if abs(value - 59.94) < 0.02:
+        return 60000 / 1001
+    if abs(value - 29.97) < 0.02:
+        return 30000 / 1001
+    if abs(value - 23.98) < 0.02:
+        return 24000 / 1001
+    return value
+
+
+def _mode(
+    width: int,
+    height: int,
+    frame_num: int,
+    frame_den: int,
+    interlaced: bool,
+    field: str | None,
+) -> SignalMode:
+    frame = frame_num / frame_den
+    fields = frame * 2 if interlaced else frame
+    return SignalMode(width, height, frame, fields, interlaced, field)
+
+
+# FFmpeg DeckLink format_code → raster. Names are case-sensitive (Hp60 ≠ hp60).
+# Interlaced frame_fps is pictures per second; field_fps is the nameplate field rate.
+_FORMAT_CODE: dict[str, SignalMode] = {
+    "ntsc": _mode(720, 486, 30000, 1001, True, "bff"),
+    "nt23": _mode(720, 486, 24000, 1001, True, "bff"),
+    "ntsp": _mode(720, 486, 30000, 1001, False, None),
+    "pal": _mode(720, 576, 25, 1, True, "tff"),
+    "palp": _mode(720, 576, 25, 1, False, None),
+    "23ps": _mode(1920, 1080, 24000, 1001, False, None),
+    "24ps": _mode(1920, 1080, 24, 1, False, None),
+    "Hp25": _mode(1920, 1080, 25, 1, False, None),
+    "Hp29": _mode(1920, 1080, 30000, 1001, False, None),
+    "Hp30": _mode(1920, 1080, 30, 1, False, None),
+    "Hp50": _mode(1920, 1080, 50, 1, False, None),
+    "Hp59": _mode(1920, 1080, 60000, 1001, False, None),
+    "Hp60": _mode(1920, 1080, 60, 1, False, None),
+    "Hi50": _mode(1920, 1080, 25, 1, True, "tff"),
+    "Hi59": _mode(1920, 1080, 30000, 1001, True, "tff"),
+    "Hi60": _mode(1920, 1080, 30, 1, True, "tff"),
+    "hp50": _mode(1280, 720, 50, 1, False, None),
+    "hp59": _mode(1280, 720, 60000, 1001, False, None),
+    "hp60": _mode(1280, 720, 60, 1, False, None),
+    "4k23": _mode(3840, 2160, 24000, 1001, False, None),
+    "4k24": _mode(3840, 2160, 24, 1, False, None),
+    "4k25": _mode(3840, 2160, 25, 1, False, None),
+    "4k29": _mode(3840, 2160, 30000, 1001, False, None),
+    "4k30": _mode(3840, 2160, 30, 1, False, None),
+    "4k50": _mode(3840, 2160, 50, 1, False, None),
+    "4k59": _mode(3840, 2160, 60000, 1001, False, None),
+    "4k60": _mode(3840, 2160, 60, 1, False, None),
+}
+
+
+def parse_signal_mode(text: str) -> SignalMode | None:
+    """Parse a DeckLink status name or an FFmpeg format code.
+
+    Status names use the field rate for interlaced modes (`1080i59.94` is
+    29.97 frames). PsF is progressive. 1080i is top field first; 525i is bottom.
     """
-    if _explicit_flag(source, "upconvert_1080i"):
-        return False
-    explicit = _explicit_flag(source, "keep_interlace")
-    if explicit is not None:
-        return explicit
-    t = (source.get("source_type") or "").lower()
-    return t == "decklink"
+    raw = (text or "").strip()
+    if not raw or raw.lower() == "unknown":
+        return None
+    coded = _FORMAT_CODE.get(raw)
+    if coded is not None:
+        return coded
+    match = _STATUS_RE.search(raw)
+    if not match:
+        return None
+    width, height = _STATUS_SIZE[match.group("size")]
+    rate = _nominal_rate(float(match.group("rate")))
+    scan = match.group("scan").lower()
+    if scan == "i":
+        field = "bff" if match.group("size") == "525" else "tff"
+        return SignalMode(width, height, rate / 2.0, rate, True, field)
+    return SignalMode(width, height, rate, rate, False, None)
+
+
+def source_signal_mode(source: dict[str, Any]) -> SignalMode | None:
+    """Format code wins when set, because that is the raster FFmpeg opens.
+
+    Auto-detect uses signal_mode from the DeckLink status probe.
+    """
+    fmt = str(source.get("decklink_format") or source.get("DECKLINK_FORMAT") or "").strip()
+    if fmt:
+        parsed = parse_signal_mode(fmt)
+        if parsed is not None:
+            return parsed
+    mode = str(source.get("signal_mode") or "").strip()
+    if mode:
+        return parse_signal_mode(mode)
+    return None
+
+
+def record_raster(source: dict[str, Any]) -> SignalMode | None:
+    """Raster written to the file. Upconvert turns 1080i into progressive at field rate."""
+    mode = source_signal_mode(source)
+    if mode is None:
+        return None
+    if bool(int(source.get("upconvert_1080i") or 0)) and mode.interlaced:
+        return SignalMode(mode.width, mode.height, mode.field_fps, mode.field_fps, False, None)
+    return mode
+
+
+def h264_level(width: int, height: int, fps: float) -> str:
+    """Lowest broadcast level whose macroblock rate covers this raster. Floor is 4.1."""
+    mb = ((width + 15) // 16) * ((height + 15) // 16)
+    rate = mb * fps
+    for level, mbps, max_fs in _H264_LEVELS:
+        if mb <= max_fs and rate <= mbps:
+            return level
+    return _H264_LEVELS[-1][0]
 
 
 def preview_unit_allowed(source: dict[str, Any]) -> bool:
@@ -153,11 +286,19 @@ def encode_args(
     args: list[str] = []
     if vf and include_vf:
         args += ["-vf", ",".join(vf)]
+    raster = record_raster(source)
+    if raster is not None:
+        level = h264_level(raster.width, raster.height, raster.frame_fps)
+    elif (source.get("source_type") or "").lower() == "decklink":
+        # Unknown lock (no status helper). 4.2 covers 1080p60; 1080i still fits.
+        level = "4.2"
+    else:
+        level = "4.1"
     args += [
         "-c:v", "libx264",
         "-preset", preset,
         "-profile:v", "high",
-        "-level", "4.1",
+        "-level", level,
         "-pix_fmt", "yuv420p",
         "-g", gop,
         "-bf", "2",
@@ -165,9 +306,10 @@ def encode_args(
         "-maxrate", vbr,
         "-bufsize", "24M",
     ]
-    if _keep_interlace(source) and not up:
-        # Preserve interlaced raster when the source is 1080i. Harmless on progressive.
-        args += ["-flags", "+ildct+ilme", "-x264-params", "tff=1"]
+    # Field flags only for a locked interlaced raster. Progressive 1080p must
+    # stay progressive; keep_interlace does not override a known mode.
+    if raster is not None and raster.interlaced and raster.field and not up:
+        args += ["-flags", "+ildct+ilme", "-x264-params", f"{raster.field}=1"]
     args += ["-c:a", "aac", "-b:a", abr, "-ar", "48000", "-ac", "2"]
     return args
 
@@ -175,11 +317,18 @@ def encode_args(
 def metadata_args(when: datetime | None = None, fps: float = 30.0) -> list[str]:
     utc = as_utc(when)
     tc = wallclock_timecode(utc, fps=fps)
+    # Stream metadata is what the MP4 carries. -timecode maps to gop_timecode,
+    # which libx264 does not consume.
     return [
         "-metadata", f"creation_time={iso_z(utc)}",
-        "-timecode", tc,
         "-metadata:s:v:0", f"timecode={tc}",
     ]
+
+
+def _metadata_for(source: dict[str, Any], when: datetime | None) -> list[str]:
+    raster = record_raster(source)
+    fps = raster.frame_fps if raster is not None else 30.0
+    return metadata_args(when=when, fps=fps)
 
 
 def segment_args(
@@ -239,7 +388,7 @@ def _decklink_tee_argv(
     argv += input_args(source)
     argv += ["-filter_complex", decklink_filter_complex(source)]
     argv += ["-map", "[vrec]", "-map", "[arec]"]
-    argv += metadata_args(when=when)
+    argv += _metadata_for(source, when)
     # yadif for upconvert lives in the filter graph, not a second -vf.
     argv += encode_args(source, env, include_vf=False)
     argv += segment_args(out_pattern, segment_seconds=segment_seconds, at_clock=at_clock)
@@ -267,7 +416,7 @@ def record_argv(
     if (source.get("source_type") or "") == "testsrc":
         # testsrc uses two lavfi inputs.
         argv = [ffmpeg] + input_args(source) + ["-map", "0:v:0", "-map", "1:a:0"]
-    argv += metadata_args(when=when)
+    argv += _metadata_for(source, when)
     argv += encode_args(source, env)
     at_clock = str(env.get("NEXREC_SEGMENT_AT_CLOCK", "1")).strip() not in ("0", "false", "no")
     argv += segment_args(out_pattern, segment_seconds=segment_seconds, at_clock=at_clock)

@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
 
 from nexrec_decklink import (  # noqa: E402
+    apply_decklink_probe,
     parse_list_devices,
     parse_list_formats,
     parse_status_json,
@@ -86,6 +87,24 @@ class TestDecklink(unittest.TestCase):
         self.assertFalse(should_probe_decklink(True, 0.2))
         self.assertTrue(should_probe_decklink(True, 4.0))
         self.assertTrue(should_probe_decklink(False, 0.0))
+
+    def test_probe_waits_without_signal_and_stores_a_lock(self):
+        source = {"source_type": "decklink", "decklink_device": "DeckLink Quad (1)"}
+        waiting, action = apply_decklink_probe(source, {
+            "signal": "no_signal", "sdi_lock": 0, "format": "", "probe": "tool",
+        })
+        self.assertEqual(action, "wait")
+        self.assertNotIn("signal_mode", waiting)
+        ready, action = apply_decklink_probe(source, {
+            "signal": "present", "sdi_lock": 1, "format": "1080p60", "probe": "tool",
+        })
+        self.assertEqual(action, "ready")
+        self.assertEqual(ready["signal_mode"], "1080p60")
+        skipped, action = apply_decklink_probe(source, {
+            "signal": "unknown", "sdi_lock": None, "format": "", "probe": "unavailable",
+        })
+        self.assertEqual(action, "ready")
+        self.assertNotIn("signal_mode", skipped)
 
     def test_fixture_is_json(self):
         json.loads(Path(FIX, "decklink-status.json").read_text(encoding="utf-8"))

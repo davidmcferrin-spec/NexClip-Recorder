@@ -19,10 +19,15 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, fetchone, migrate, overlay_app_settings, upsert_input  # noqa: E402
-from nexrec_decklink import list_ffmpeg_devices, resolve_decklink_spec  # noqa: E402
+from nexrec_decklink import (  # noqa: E402
+    apply_decklink_probe,
+    list_ffmpeg_devices,
+    resolve_decklink_spec,
+    resolve_status_bin,
+)
 from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import preview_publish_url, record_argv  # noqa: E402
-from nexrec_heartbeat import write_heartbeat  # noqa: E402
+from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
 from nexrec_index import scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
     chunk_dir,
@@ -91,6 +96,36 @@ def load_input(conn, env: dict[str, str], input_id: str) -> dict:
     rec = input_from_env(env, input_id)
     upsert_input(conn, rec)
     return rec
+
+
+def wait_for_decklink_lock(source: dict, env: dict[str, str]) -> dict:
+    """Block until the sub-device reports a lock, then store signal_mode.
+
+    FFmpeg's DeckLink demuxer errors out when autodetect runs with no signal.
+    The status helper reads lock without opening the input.
+    """
+    device = str(source.get("decklink_device") or "").strip()
+    if resolve_status_bin(env) is None:
+        print("decklink status helper unavailable; encode follows the format code only", flush=True)
+        return source
+    while not STOP:
+        probed = probe_decklink(device, env, now=time.time(), fresh=True)
+        updated, action = apply_decklink_probe(source, probed)
+        if action == "ready":
+            mode = str(updated.get("signal_mode") or "").strip()
+            if mode:
+                print(f"decklink locked {mode}", flush=True)
+            elif str(probed.get("probe") or "") == "unavailable":
+                print("decklink status probe unavailable; encode follows the format code only", flush=True)
+            else:
+                print("decklink locked", flush=True)
+            return updated
+        print("decklink no signal; waiting", flush=True)
+        for _ in range(8):
+            if STOP:
+                return source
+            time.sleep(0.25)
+    return source
 
 
 def newest_mp4(root: str) -> str | None:
@@ -177,6 +212,15 @@ def main(argv: list[str] | None = None) -> int:
             source["decklink_device"] = name
             print(f"decklink index {spec} → {name}", flush=True)
 
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+
+    if (source.get("source_type") or "").lower() == "decklink":
+        source = wait_for_decklink_lock(source, env)
+        if STOP:
+            print("stopped before ingest", flush=True)
+            return 0
+
     preview_rtsp = None
     if (source.get("source_type") or "").lower() == "decklink":
         station_on = str(env.get("NEXREC_PREVIEW_ENABLED", "1")).strip().lower() not in ("0", "false", "no")
@@ -195,9 +239,6 @@ def main(argv: list[str] | None = None) -> int:
         preview_rtsp=preview_rtsp,
     )
     print("exec:", " ".join(cmd), flush=True)
-
-    signal.signal(signal.SIGTERM, _stop)
-    signal.signal(signal.SIGINT, _stop)
 
     proc = subprocess.Popen(cmd)
     t0 = time.time()

@@ -214,6 +214,28 @@ def safe_status_bin(path: str) -> str | None:
     return path
 
 
+def apply_decklink_probe(source: dict[str, Any], probed: dict[str, Any]) -> tuple[dict[str, Any], str]:
+    """Attach a locked mode. Returns (source, 'ready' or 'wait').
+
+    No signal keeps the record process from opening DeckLink (that exits
+    immediately). A missing status helper is ready so a format code can
+    still start the encode.
+    """
+    out = dict(source)
+    if str(probed.get("probe") or "") == "unavailable":
+        return out, "ready"
+    detail = str(probed.get("detail") or "")
+    if "did not report this sub-device" in detail:
+        return out, "ready"
+    locked = str(probed.get("signal") or "") == "present" or probed.get("sdi_lock") == 1
+    if not locked:
+        return out, "wait"
+    mode = str(probed.get("format") or "").strip()
+    if mode and mode.lower() != "unknown":
+        out["signal_mode"] = mode
+    return out, "ready"
+
+
 def resolve_status_bin(env: dict[str, str] | None = None) -> str | None:
     env = env or {}
     explicit = (env.get("NEXREC_DECKLINK_STATUS_BIN") or "").strip()

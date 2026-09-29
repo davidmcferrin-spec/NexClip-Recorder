@@ -57,8 +57,7 @@
           <button type="button" id="decklink_formats">List formats</button>
         </div>
         <input id="decklink_format" placeholder="Hi59">
-        <label><input type="checkbox" id="keep_interlace"> Keep 1080i interlaced</label>
-        <p class="sub">Preview is teed inside the record process (one exclusive open). Do not start <code>nexrec-preview@</code> for this input. SDI is encoded to H.264+AAC. Upconvert overrides keep-interlace.</p>
+        <p class="sub">Preview is teed inside the record process (one exclusive open). Do not start <code>nexrec-preview@</code> for this input. SDI is encoded to H.264+AAC in the locked scan: progressive stays progressive, 1080i stays interlaced. Upconvert is the only deinterlace.</p>
       </div>
     </div>
     <div>
@@ -135,7 +134,6 @@ function refresh() {
         val("source_type").value = r.source_type; val("url").value = r.url || "";
         val("decklink_device").value = r.decklink_device || "";
         val("decklink_format").value = r.decklink_format || "";
-        val("keep_interlace").checked = r.keep_interlace == null ? r.source_type === "decklink" : !!Number(r.keep_interlace);
         syncType();
         val("preview_path").value = r.preview_path || "";
         val("nexclip_slot").value = r.nexclip_slot || "";
@@ -165,7 +163,7 @@ val("save").onclick = function () {
     id: val("id").value, name: val("name").value, source_type: val("source_type").value,
     url: val("url").value, decklink_device: val("decklink_device").value,
     decklink_format: val("decklink_format").value,
-    keep_interlace: val("source_type").value === "decklink" && val("keep_interlace").checked,
+    keep_interlace: 0,
     preview_path: val("preview_path").value, nexclip_slot: Number(val("nexclip_slot").value) || null,
     retention_days: Number(val("retention_days").value),
     enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
@@ -201,9 +199,6 @@ function syncType() {
   var deck = val("source_type").value === "decklink";
   document.getElementById("ip-fields").style.display = deck ? "none" : "";
   document.getElementById("decklink-fields").style.display = deck ? "" : "none";
-  if (deck && !val("decklink_device").value) {
-    val("keep_interlace").checked = true;
-  }
 }
 val("source_type").onchange = syncType;
 syncType();
