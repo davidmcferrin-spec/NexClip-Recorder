@@ -38,6 +38,17 @@
   </div>
   <div class="metric-grid" id="cards"></div>
   <div class="panel">
+    <h2>Drive</h2>
+    <p class="sub" id="drive-summary">Filesystem that holds the recordings path. Samples are about a minute apart.</p>
+    <div class="drive-chart" id="drive-chart"></div>
+    <table>
+      <thead>
+        <tr><th>Time</th><th>Path</th><th>Used</th><th>Free</th><th>Total</th><th>%</th></tr>
+      </thead>
+      <tbody id="drive"></tbody>
+    </table>
+  </div>
+  <div class="panel">
     <h2>SDI lock</h2>
     <p class="sub">Each mark is one sample, about a minute apart. Green is locked, red is unlocked. The recorder writes the current lock on the Services page; this log is the history.</p>
     <table>
@@ -88,6 +99,78 @@ function spark(values) {
 function card(label, value, series) {
   return '<div class="metric-card"><div class="sub">' + esc(label) + '</div><div class="val">' + esc(value) + '</div>' + spark(series) + '</div>';
 }
+function diskRows(host) {
+  return host.filter(function (r) {
+    return r.disk_total_bytes != null && r.disk_total_bytes !== "" && Number(r.disk_total_bytes) > 0;
+  });
+}
+function downsample(rows, max) {
+  if (rows.length <= max) return rows.slice();
+  var out = [];
+  var step = (rows.length - 1) / (max - 1);
+  var last = -1;
+  for (var i = 0; i < max; i++) {
+    var idx = Math.round(i * step);
+    if (idx !== last) out.push(rows[idx]);
+    last = idx;
+  }
+  return out;
+}
+function driveChart(rows) {
+  var box = document.getElementById("drive-chart");
+  if (!rows.length) {
+    box.innerHTML = "";
+    return;
+  }
+  var w = 1000, h = 160, pad = 28;
+  var step = rows.length > 1 ? (w - pad * 2) / (rows.length - 1) : 0;
+  var d = [];
+  rows.forEach(function (r, i) {
+    var p = pct(r.disk_used_bytes, r.disk_total_bytes);
+    if (p == null) return;
+    var x = pad + i * step;
+    var y = pad + (1 - p / 100) * (h - pad * 2);
+    d.push((d.length ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1));
+  });
+  var axis = "";
+  [0, 50, 100].forEach(function (mark) {
+    var y = pad + (1 - mark / 100) * (h - pad * 2);
+    axis += '<line x1="' + pad + '" y1="' + y.toFixed(1) + '" x2="' + (w - 8) + '" y2="' + y.toFixed(1) + '" stroke="#2a3542" stroke-width="1"/>';
+    axis += '<text x="4" y="' + (y + 4).toFixed(1) + '" fill="#9aa8b5" font-size="12">' + mark + '</text>';
+  });
+  box.innerHTML = '<svg viewBox="0 0 ' + w + ' ' + h + '" role="img" aria-label="Drive used percent">' +
+    axis +
+    (d.length ? '<path d="' + d.join(" ") + '" fill="none" stroke="#3ecf8e" stroke-width="2"/>' : "") +
+    "</svg>";
+}
+function paintDrive(host) {
+  var rows = diskRows(host);
+  var summary = document.getElementById("drive-summary");
+  var body = document.getElementById("drive");
+  driveChart(rows);
+  if (!rows.length) {
+    summary.textContent = "No disk samples yet. The metrics timer writes one about once a minute.";
+    body.innerHTML = '<tr><td colspan="6">No disk samples yet.</td></tr>';
+    return;
+  }
+  var last = rows[rows.length - 1];
+  var used = Number(last.disk_used_bytes);
+  var total = Number(last.disk_total_bytes);
+  var free = Math.max(0, total - used);
+  var p = pct(used, total);
+  summary.textContent = (last.disk_path || "recordings path") + " · " +
+    (p == null ? "—" : p + "% used") + " · " + gib(free) + " free of " + gib(total);
+  body.innerHTML = downsample(rows, 24).slice().reverse().map(function (r) {
+    var u = Number(r.disk_used_bytes);
+    var t = Number(r.disk_total_bytes);
+    var f = Math.max(0, t - u);
+    var when = window.NexRecUI && NexRecUI.formatStation ? NexRecUI.formatStation(r.sampled_at, true) : (r.sampled_at || "—");
+    var pp = pct(u, t);
+    return "<tr><td>" + esc(when) + "</td><td>" + esc(r.disk_path || "—") +
+      "</td><td>" + esc(gib(u)) + "</td><td>" + esc(gib(f)) + "</td><td>" + esc(gib(t)) +
+      "</td><td>" + esc(pp == null ? "—" : pp + "%") + "</td></tr>";
+  }).join("");
+}
 function lockCell(v) {
   if (v === 1 || v === "1") return '<i class="on" title="locked"></i>';
   if (v === 0 || v === "0") return '<i class="off" title="unlocked"></i>';
@@ -107,6 +190,7 @@ function paint(data) {
     card("Disk", diskP == null ? "—" : diskP + "% · " + gib(last.disk_used_bytes) + " used", host.map(function (r) { return pct(r.disk_used_bytes, r.disk_total_bytes); })),
     card("GPU" + (last.gpu_name ? " · " + last.gpu_name : ""), gpu + enc, host.map(function (r) { return r.gpu_util_pct == null ? null : Number(r.gpu_util_pct); })),
   ].join("");
+  paintDrive(host);
   var byInput = {};
   (data.sdi || []).forEach(function (row) {
     if (!byInput[row.input_id]) byInput[row.input_id] = [];

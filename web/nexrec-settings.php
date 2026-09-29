@@ -59,7 +59,7 @@ function nexrec_settings_catalog(): array {
         'storage.recordings' => [
             'section' => 'storage', 'label' => 'Recordings path', 'type' => 'path',
             'env' => 'NEXREC_STORAGE_DIR', 'default' => '',
-            'help' => 'Native chunks. Blank uses $NEXREC_DATA_DIR/storage. Put this on the media pool.',
+            'help' => 'Where chunks, exports, and scratch are stored. First boot seeds $NEXREC_DATA_DIR/storage (usually /var/lib/nexrec/storage). Blank still means that path. Exports and scratch stay underneath unless set below. Saving a new path does not move files already written; restart record and cleanup to use it.',
         ],
         'storage.exports' => [
             'section' => 'storage', 'label' => 'Exports path', 'type' => 'path',
@@ -552,6 +552,9 @@ function nexrec_settings_seed(): int {
         $raw = nexrec_settings_env_raw($spec);
         if ($raw === null) {
             $raw = (string) ($spec['default'] ?? '');
+        }
+        if ($key === 'storage.recordings' && $raw === '') {
+            $raw = rtrim(str_replace('\\', '/', nexrec_data_dir()), '/') . '/storage';
         }
         try {
             $val = nexrec_settings_normalize($spec, $raw);

@@ -32,6 +32,17 @@ if ($first < 10) {
 if (nexrec_setting('storage.free_space_floor') !== '12G') {
     fail('seed should copy free-space floor from env, got ' . nexrec_setting('storage.free_space_floor'));
 }
+$recordings = nexrec_setting('storage.recordings');
+$wantRecordings = rtrim(str_replace('\\', '/', $tmp), '/') . '/storage';
+if ($recordings !== $wantRecordings && $recordings !== rtrim($tmp, '/\\') . '/storage') {
+    fail('recordings path should default to the data dir storage, got ' . $recordings);
+}
+if (str_starts_with($wantRecordings, '/')) {
+    $stored = nexrec_db()->querySingle("SELECT value FROM app_settings WHERE key='storage.recordings'");
+    if ($stored !== $wantRecordings) {
+        fail('recordings path should be seeded, got ' . $stored);
+    }
+}
 if (nexrec_setting('station.display_name') !== 'From Env') {
     fail('seed display name');
 }
