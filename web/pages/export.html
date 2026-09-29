@@ -32,8 +32,8 @@
       <button type="button" data-n="4">4</button>
       <button type="button" data-n="6">6</button>
     </div>
-    <button type="button" id="mark-in">Mark I</button>
-    <button type="button" id="mark-out">Mark O</button>
+    <button type="button" id="mark-in" title="Mark in at the playhead (I). Shift+I jumps to the in point.">Mark I</button>
+    <button type="button" id="mark-out" title="Mark out at the playhead (O). Shift+O jumps to the out point.">Mark O</button>
     <span class="meta" id="io">I — / O —</span>
     <label class="meta" style="margin:0">Scope
       <select id="scope"><option value="one">This stream</option><option value="all">All visible</option></select>
@@ -66,7 +66,8 @@
   </div>
   <p class="sub" id="coverage-note">Shaded spans have a recording inside this range. Empty stretches do not.</p>
   <div class="bar">
-    <button type="button" id="play-toggle" aria-pressed="false" title="Play the selected pane. Other panes stay muted.">Play</button>
+    <button type="button" id="play-toggle" aria-pressed="false" title="Play or pause (Space). J reverse, K stop, L forward. Left and Right step one frame; Shift steps five. Home and End jump the range.">Play</button>
+    <span class="meta" id="transport-hint">I/O mark · JKL shuttle · ← → frame</span>
     <span class="meta">Volume</span>
     <input type="range" id="listen-vol" class="listen-vol" min="0" max="1" step="0.05" value="0.8" aria-label="Volume for the selected pane">
     <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
@@ -104,6 +105,7 @@
 (function () {
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, archive0 = 0, archive1 = 0, play = 0, markIn = null, markOut = null;
   var selected = 0, playing = false, slotIds = null, scrolledJob = "";
+  var shuttle = 0, kHeld = false, shuttleTimer = null;
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -209,19 +211,37 @@
   function paintPlayButton() {
     var btn = document.getElementById("play-toggle");
     if (!btn) return;
-    btn.textContent = playing ? "Pause" : "Play";
-    btn.classList.toggle("tgl", playing);
-    btn.classList.toggle("active", playing);
-    btn.setAttribute("aria-pressed", playing ? "true" : "false");
+    var on = playing || shuttle !== 0;
+    var label = "Play";
+    if (shuttle < 0) label = "\u2212" + Math.abs(shuttle) + "\u00d7";
+    else if (playing && shuttle > 1) label = shuttle + "\u00d7";
+    else if (playing) label = "Pause";
+    btn.textContent = label;
+    btn.classList.toggle("tgl", on);
+    btn.classList.toggle("active", on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function pauseVideos() {
+    document.querySelectorAll("#grid .pane video").forEach(function (v) {
+      v.muted = true;
+      try { v.playbackRate = 1; } catch (e) {}
+      if (!v.paused) v.pause();
+    });
+  }
+
+  function clearShuttleTimer() {
+    if (!shuttleTimer) return;
+    clearInterval(shuttleTimer);
+    shuttleTimer = null;
   }
 
   function stopPlayback() {
+    shuttle = 0;
+    clearShuttleTimer();
     playing = false;
+    pauseVideos();
     paintPlayButton();
-    document.querySelectorAll("#grid .pane video").forEach(function (v) {
-      v.muted = true;
-      if (!v.paused) v.pause();
-    });
   }
 
   function station(ms) {
@@ -330,6 +350,9 @@
     v.onloadeddata = function () {
       v.onloadeddata = null;
       try { v.currentTime = off; } catch (e) {}
+      if (playing && shuttle > 0) {
+        try { v.playbackRate = shuttle; } catch (e) {}
+      }
       if (playing) v.play().catch(function () {});
     };
     return true;
@@ -355,8 +378,14 @@
       var off = Math.max(0, (play - Date.parse(hit.start_at)) / 1000);
       if (loadChunk(v, pane, hit, off)) return;
       var skipSeek = followSelected && i === selected && !v.paused;
-      if (!skipSeek && Math.abs((v.currentTime || 0) - off) > 0.35) {
+      // While the selected pane is playing, other panes can sit a third of a
+      // second off. A paused step is one frame (~33 ms) and must still seek.
+      var slack = playing ? 0.35 : 0.0005;
+      if (!skipSeek && Math.abs((v.currentTime || 0) - off) > slack) {
         try { v.currentTime = off; } catch (e) {}
+      }
+      if (playing && i === selected && shuttle > 0) {
+        try { v.playbackRate = shuttle; } catch (e) {}
       }
       if (playing) {
         if (v.paused) v.play().catch(function () {});
@@ -548,17 +577,158 @@
     if (playing && (!one || !chunkHit(one.id, play) || play >= t1)) stopPlayback();
     tick();
   }
-  document.getElementById("play-toggle").onclick = function () {
-    if (playing) {
+  function frameMs() {
+    var one = selectedInput();
+    var hit = one && chunkHit(one.id, play);
+    var fps = hit && Number(hit.fps);
+    if (!fps || fps < 1 || fps > 120) fps = 30;
+    return 1000 / fps;
+  }
+  function canPlayHere() {
+    var one = selectedInput();
+    return !!(one && chunkHit(one.id, play) && play < t1);
+  }
+  function startForward(speed) {
+    clearShuttleTimer();
+    if (!canPlayHere()) {
       stopPlayback();
       return;
     }
-    var one = selectedInput();
-    if (!one || !chunkHit(one.id, play) || play >= t1) return;
+    shuttle = speed;
     playing = true;
     paintPlayButton();
     syncMedia(false);
-  };
+    var v = selectedVideo();
+    if (v) {
+      try { v.playbackRate = speed; } catch (e) {}
+    }
+  }
+  function startReverse(speed) {
+    clearShuttleTimer();
+    playing = false;
+    pauseVideos();
+    shuttle = -speed;
+    paintPlayButton();
+    var frame = frameMs();
+    var interval = speed <= 1 ? Math.max(33, Math.round(frame)) : 80;
+    var step = speed * interval;
+    shuttleTimer = setInterval(function () {
+      var v = selectedVideo();
+      if (v && v.seeking && speed <= 1) return;
+      if (play <= t0) {
+        stopPlayback();
+        seekTo(t0);
+        return;
+      }
+      seekTo(play - step);
+    }, interval);
+  }
+  function stepFrames(n) {
+    stopPlayback();
+    seekTo(play + n * frameMs());
+  }
+  function togglePlay() {
+    if (playing || shuttle !== 0) {
+      stopPlayback();
+      return;
+    }
+    startForward(1);
+  }
+  function markInAtPlay() { markIn = play; paintChrome(); }
+  function markOutAtPlay() { markOut = play; paintChrome(); }
+  function goToMark(ms) {
+    if (ms == null) return;
+    stopPlayback();
+    seekTo(ms);
+  }
+  function typingTarget(el) {
+    if (!el || !el.tagName) return false;
+    if (el.isContentEditable) return true;
+    var tag = el.tagName;
+    if (tag === "TEXTAREA" || tag === "SELECT") return true;
+    if (tag === "INPUT") {
+      var type = (el.type || "text").toLowerCase();
+      return type !== "range" && type !== "button" && type !== "checkbox" && type !== "radio";
+    }
+    return false;
+  }
+  function onTransportKey(ev) {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
+    if (typingTarget(ev.target)) return;
+    var key = ev.key;
+    if (key === "k" || key === "K") {
+      if (ev.repeat) return;
+      kHeld = true;
+      stopPlayback();
+      ev.preventDefault();
+      return;
+    }
+    if (key === "j" || key === "J" || key === "l" || key === "L") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      var forward = key === "l" || key === "L";
+      if (kHeld) {
+        stepFrames(forward ? 1 : -1);
+        return;
+      }
+      if (forward) {
+        if (shuttle >= 8) return;
+        if (shuttle > 0) startForward(shuttle * 2);
+        else startForward(1);
+      } else if (shuttle <= -8) {
+        return;
+      } else if (shuttle < 0) {
+        startReverse(Math.abs(shuttle) * 2);
+      } else {
+        startReverse(1);
+      }
+      return;
+    }
+    if (key === " " || key === "Spacebar") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      togglePlay();
+      return;
+    }
+    if (key === "i" || key === "I") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      if (ev.shiftKey) goToMark(markIn);
+      else markInAtPlay();
+      return;
+    }
+    if (key === "o" || key === "O") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      if (ev.shiftKey) goToMark(markOut);
+      else markOutAtPlay();
+      return;
+    }
+    if (key === "ArrowLeft" || key === "ArrowRight") {
+      ev.preventDefault();
+      var dir = key === "ArrowRight" ? 1 : -1;
+      stepFrames(dir * (ev.shiftKey ? 5 : 1));
+      return;
+    }
+    if (key === "Home") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      stopPlayback();
+      seekTo(t0);
+      return;
+    }
+    if (key === "End") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      stopPlayback();
+      seekTo(t1);
+    }
+  }
+  document.addEventListener("keydown", onTransportKey, true);
+  document.addEventListener("keyup", function (ev) {
+    if (ev.key === "k" || ev.key === "K") kHeld = false;
+  }, true);
+  document.getElementById("play-toggle").onclick = togglePlay;
   document.getElementById("listen-vol").addEventListener("input", function (ev) {
     volume = Math.max(0, Math.min(1, Number(ev.target.value)));
     if (!Number.isFinite(volume)) volume = 0.8;
@@ -613,8 +783,8 @@
     var r = ev.currentTarget.getBoundingClientRect();
     seekTo(t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0));
   });
-  document.getElementById("mark-in").onclick = function () { markIn = play; tick(); };
-  document.getElementById("mark-out").onclick = function () { markOut = play; tick(); };
+  document.getElementById("mark-in").onclick = markInAtPlay;
+  document.getElementById("mark-out").onclick = markOutAtPlay;
   document.getElementById("do-export").onclick = function () {
     var msg = document.getElementById("msg");
     msg.textContent = "";
