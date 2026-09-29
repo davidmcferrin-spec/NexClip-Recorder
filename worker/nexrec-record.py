@@ -28,7 +28,7 @@ from nexrec_decklink import (  # noqa: E402
 from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import preview_publish_url, record_argv  # noqa: E402
 from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
-from nexrec_index import scan_dir  # noqa: E402
+from nexrec_index import open_segment_basename, scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
     chunk_dir,
     data_paths,
@@ -129,23 +129,7 @@ def wait_for_decklink_lock(source: dict, env: dict[str, str]) -> dict:
 
 
 def newest_mp4(root: str) -> str | None:
-    newest = None
-    newest_m = -1.0
-    if not os.path.isdir(root):
-        return None
-    for dirpath, _d, files in os.walk(root):
-        for name in files:
-            if not name.endswith(".mp4"):
-                continue
-            path = os.path.join(dirpath, name)
-            try:
-                m = os.path.getmtime(path)
-            except OSError:
-                continue
-            if m > newest_m:
-                newest_m = m
-                newest = os.path.basename(path)
-    return newest
+    return open_segment_basename(root)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -244,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     t0 = time.time()
     native_root = os.path.join(paths["storage"], "inputs", args.input_id, "native")
     indexed: set[str] = set()
+    pending: dict[str, tuple[int, int]] = {}
 
     try:
         while not STOP:
@@ -253,14 +238,20 @@ def main(argv: list[str] | None = None) -> int:
             # Pre-create tomorrow's UTC dir near midnight so strftime can open files.
             os.makedirs(chunk_dir(paths["storage"], args.input_id, "native", utcnow()), exist_ok=True)
             skip = newest_mp4(native_root) if proc.poll() is None else None
-            for rec in scan_dir(
-                conn,
-                native_root,
-                args.input_id,
-                kind="native",
-                ffprobe=paths["ffprobe"],
-                skip_basename=skip,
-            ):
+            try:
+                indexed_now = scan_dir(
+                    conn,
+                    native_root,
+                    args.input_id,
+                    kind="native",
+                    ffprobe=paths["ffprobe"],
+                    skip_basename=skip,
+                    pending=pending,
+                )
+            except Exception as exc:  # noqa: BLE001 — never fail ingest
+                print(f"index skip: {exc}", file=sys.stderr, flush=True)
+                indexed_now = []
+            for rec in indexed_now:
                 if rec["path"] not in indexed:
                     indexed.add(rec["path"])
                     print(f"indexed {rec['path']} duration={rec.get('duration_s')}", flush=True)
@@ -303,8 +294,19 @@ def main(argv: list[str] | None = None) -> int:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
-        # Final index including last file.
-        scan_dir(conn, native_root, args.input_id, kind="native", ffprobe=paths["ffprobe"])
+        # Final index including last file. A fragment with no moov must not
+        # replace the process exit.
+        try:
+            scan_dir(
+                conn,
+                native_root,
+                args.input_id,
+                kind="native",
+                ffprobe=paths["ffprobe"],
+                pending=pending,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"index skip: {exc}", file=sys.stderr, flush=True)
         try:
             write_heartbeat(
                 conn,

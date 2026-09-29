@@ -2,7 +2,9 @@
 """Probe closed MP4 chunks and upsert them into the chunk index.
 
 Paths that already have a ready chunks row are left alone. The caller
-still passes the newest open segment as skip_basename.
+passes the open segment as skip_basename (latest filename timestamp, not
+mtime). A file ffprobe cannot read because the moov atom is missing is
+left for a later pass instead of failing the scan.
 """
 
 from __future__ import annotations
@@ -11,6 +13,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 from datetime import timedelta
 from typing import Any
 
@@ -31,6 +34,14 @@ def start_from_filename(path: str) -> str | None:
     return f"{ts[0:4]}-{ts[4:6]}-{ts[6:8]}T{ts[9:11]}:{ts[11:13]}:{ts[13:15]}Z"
 
 
+class IncompleteChunk(RuntimeError):
+    """ffprobe cannot read this MP4 yet. The moov atom is written when the segment closes."""
+
+
+def incomplete_stderr(err: str) -> bool:
+    return "moov atom not found" in (err or "").lower()
+
+
 def probe(path: str, ffprobe: str = "ffprobe") -> dict[str, Any]:
     cmd = [
         ffprobe, "-v", "error",
@@ -40,7 +51,10 @@ def probe(path: str, ffprobe: str = "ffprobe") -> dict[str, Any]:
     ]
     proc = subprocess.run(cmd, capture_output=True, text=True, check=False)
     if proc.returncode != 0:
-        raise RuntimeError(proc.stderr.strip() or "ffprobe failed")
+        err = proc.stderr.strip() or "ffprobe failed"
+        if incomplete_stderr(err):
+            raise IncompleteChunk(err)
+        raise RuntimeError(err)
     data = json.loads(proc.stdout or "{}")
     fmt = data.get("format") or {}
     duration = float(fmt.get("duration") or 0)
@@ -131,6 +145,32 @@ def ready_chunk_paths(conn, input_id: str, kind: str) -> set[str]:
     return ready
 
 
+def open_segment_basename(root: str) -> str | None:
+    """Basename of the segment still being written.
+
+    Names encode the segment start (``id_YYYYMMDDTHHMMSSZ.mp4``). The greatest
+    timestamp is the open file. mtime is the wrong signal: ``movflags=faststart``
+    rewrites the segment that just closed, so that closed file is newer than
+    the one ffmpeg has open.
+    """
+    latest_ts = ""
+    latest_name: str | None = None
+    if not os.path.isdir(root):
+        return None
+    for _dirpath, _dirs, files in os.walk(root):
+        for name in files:
+            if not name.endswith(".mp4"):
+                continue
+            match = FNAME_RE.match(name)
+            if not match:
+                continue
+            ts = match.group("ts")
+            if ts > latest_ts:
+                latest_ts = ts
+                latest_name = name
+    return latest_name
+
+
 def scan_dir(
     conn,
     root: str,
@@ -138,6 +178,7 @@ def scan_dir(
     kind: str = "native",
     ffprobe: str = "ffprobe",
     skip_basename: str | None = None,
+    pending: dict[str, tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     if not os.path.isdir(root):
@@ -152,7 +193,23 @@ def scan_dir(
             path = os.path.abspath(os.path.join(dirpath, name))
             if path in ready:
                 continue
-            rec = index_file(conn, path, input_id, kind=kind, ffprobe=ffprobe)
+            try:
+                st = os.stat(path)
+            except OSError:
+                continue
+            sig = (int(st.st_size), int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))))
+            if pending is not None and pending.get(path) == sig:
+                continue
+            try:
+                rec = index_file(conn, path, input_id, kind=kind, ffprobe=ffprobe)
+            except IncompleteChunk as exc:
+                if pending is not None and path not in pending:
+                    print(f"index wait {path}: {exc}", file=sys.stderr, flush=True)
+                if pending is not None:
+                    pending[path] = sig
+                continue
+            if pending is not None:
+                pending.pop(path, None)
             if rec:
                 found.append(rec)
                 ready.add(path)

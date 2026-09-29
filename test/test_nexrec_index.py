@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
 
 import nexrec_index  # noqa: E402
 from nexrec_db import connect, insert_chunk, migrate, upsert_input  # noqa: E402
-from nexrec_index import scan_dir, start_from_filename  # noqa: E402
+from nexrec_index import open_segment_basename, scan_dir, start_from_filename  # noqa: E402
 from nexrec_util import iso_z, utcnow, valid_input_id  # noqa: E402
 
 
@@ -198,6 +198,82 @@ class TestIndex(unittest.TestCase):
         found = scan_dir(object(), day, "demo")
         self.assertEqual(seen, [abs_path])
         self.assertEqual(found, [{"path": os.path.relpath(abs_path, tmp.name)}])
+
+    def test_open_segment_is_latest_name_not_mtime(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        day = os.path.join(tmp.name, "2026", "09", "29")
+        os.makedirs(day)
+        closed = os.path.join(day, "in1_20260929T031500Z.mp4")
+        opened = os.path.join(day, "in1_20260929T032000Z.mp4")
+        for path in (opened, closed):
+            with open(path, "wb") as fh:
+                fh.write(b"\x00" * 128)
+        # faststart rewrites the closed segment after the new one is created.
+        os.utime(opened, (1_000, 1_000))
+        os.utime(closed, (2_000, 2_000))
+        self.assertEqual(open_segment_basename(tmp.name), "in1_20260929T032000Z.mp4")
+
+    def test_missing_moov_does_not_fail_the_scan(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        day = os.path.join(tmp.name, "native", "2026", "09", "29")
+        os.makedirs(day)
+        good = os.path.join(day, "in1_20260929T031500Z.mp4")
+        broken = os.path.join(day, "in1_20260929T032000Z.mp4")
+        for path in (good, broken):
+            with open(path, "wb") as fh:
+                fh.write(b"\x00" * 128)
+        log = os.path.join(tmp.name, "probed.txt")
+        probe = os.path.join(tmp.name, "ffprobe")
+        broken_abs = os.path.abspath(broken)
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(
+                "#!/usr/bin/env python3\n"
+                "import json, sys\n"
+                f"open({log!r}, 'a', encoding='utf-8').write(sys.argv[-1] + '\\n')\n"
+                f"if sys.argv[-1] == {broken_abs!r}:\n"
+                "    sys.stderr.write('[mov,mp4] moov atom not found\\n')\n"
+                "    raise SystemExit(1)\n"
+                "json.dump({'format': {'duration': '300.0', 'size': '128', 'tags': {}}, "
+                "'streams': [{'codec_type': 'video', 'codec_name': 'h264', "
+                "'width': 16, 'height': 16, 'avg_frame_rate': '30/1', "
+                "'field_order': 'progressive'}]}, sys.stdout)\n"
+            )
+        os.chmod(probe, os.stat(probe).st_mode | stat.S_IEXEC)
+        orig_ready = nexrec_index.ready_chunk_paths
+        orig_insert = nexrec_index.insert_chunk
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_paths", orig_ready))
+        self.addCleanup(lambda: setattr(nexrec_index, "insert_chunk", orig_insert))
+        nexrec_index.ready_chunk_paths = lambda *_a, **_k: set()
+        nexrec_index.insert_chunk = lambda _conn, rec: inserted.append(rec)
+        inserted: list[dict] = []
+        pending: dict[str, tuple[int, int]] = {}
+        found = scan_dir(
+            object(),
+            os.path.join(tmp.name, "native"),
+            "in1",
+            ffprobe=probe,
+            pending=pending,
+        )
+        self.assertEqual([os.path.basename(rec["path"]) for rec in found], [os.path.basename(good)])
+        self.assertIn(os.path.abspath(broken), pending)
+        with open(log, encoding="utf-8") as fh:
+            first = fh.read().splitlines()
+        self.assertEqual(len(first), 2)
+        os.remove(log)
+        again = scan_dir(
+            object(),
+            os.path.join(tmp.name, "native"),
+            "in1",
+            ffprobe=probe,
+            pending=pending,
+        )
+        self.assertTrue(all(os.path.basename(rec["path"]) != os.path.basename(broken) for rec in again))
+        with open(log, encoding="utf-8") as fh:
+            second = fh.read()
+        self.assertNotIn(broken_abs, second)
+        self.assertIn(os.path.abspath(good), second)
 
 
 if __name__ == "__main__":
