@@ -46,12 +46,25 @@
   </div>
   <div class="grid n1" id="grid"></div>
   <div class="stage-rest">
-  <div class="timeline" id="timeline" title="Scrub wall-clock timeline. Shaded spans have a recording.">
+  <div class="bar" id="range-bar">
+    <span class="meta">Range</span>
+    <input type="text" class="range-time" id="range-start" spellcheck="false" autocomplete="off" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Timeline start, station time">
+    <span class="meta">to</span>
+    <input type="text" class="range-time" id="range-end" spellcheck="false" autocomplete="off" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Timeline end, station time">
+    <button type="button" id="range-apply">Apply</button>
+    <button type="button" id="range-hour">Last hour</button>
+    <button type="button" id="range-all">All loaded</button>
+  </div>
+  <div class="timeline" id="timeline" title="Scrub the selected station-time range. Shaded spans have a recording.">
     <div class="playhead" id="playhead"></div>
     <div class="mark in" id="mark-in-el" hidden></div>
     <div class="mark out" id="mark-out-el" hidden></div>
   </div>
-  <p class="sub" id="coverage-note">Shaded spans have a recording for the visible inputs. Empty stretches do not.</p>
+  <div class="timeline-scale">
+    <span id="scale-start">—</span>
+    <span id="scale-end">—</span>
+  </div>
+  <p class="sub" id="coverage-note">Shaded spans have a recording inside this range. Empty stretches do not.</p>
   <div class="bar">
     <button type="button" id="play-toggle" aria-pressed="false" title="Play the selected pane. Other panes stay muted.">Play</button>
     <span class="meta">Volume</span>
@@ -89,7 +102,7 @@
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
-  var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, play = 0, markIn = null, markOut = null;
+  var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, archive0 = 0, archive1 = 0, play = 0, markIn = null, markOut = null;
   var selected = 0, playing = false, slotIds = null, scrolledJob = "";
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
@@ -122,7 +135,10 @@
     } else {
       t1 = Date.now(); t0 = t1 - 3600000;
     }
+    archive0 = t0;
+    archive1 = t1;
     play = t0;
+    fillRangeFields();
     var vol = document.getElementById("listen-vol");
     if (vol) vol.value = String(volume);
     paintJobs(all[2].exports || []);
@@ -207,21 +223,36 @@
     return NexRecUI.formatStation(ms, true);
   }
 
+  function fillRangeFields() {
+    document.getElementById("range-start").value = NexRecUI.stationStamp(t0);
+    document.getElementById("range-end").value = NexRecUI.stationStamp(t1);
+  }
+
+  function placeMark(id, ms) {
+    var el = document.getElementById(id);
+    if (ms == null || ms < t0 || ms > t1) {
+      el.hidden = true;
+      return;
+    }
+    el.hidden = false;
+    el.style.left = ((ms - t0) / Math.max(1, t1 - t0) * 100) + "%";
+  }
+
   function paintChrome() {
     document.getElementById("tlabel").textContent = station(play);
+    document.getElementById("scale-start").textContent = station(t0);
+    document.getElementById("scale-end").textContent = station(t1);
     var pct = (play - t0) / Math.max(1, t1 - t0);
     document.getElementById("playhead").style.left = (pct * 100) + "%";
     document.getElementById("scrub").value = String(Math.round(pct * 1000));
     document.getElementById("io").textContent =
       "I " + (markIn ? station(markIn) : "—") + " / O " + (markOut ? station(markOut) : "—");
-    if (markIn != null) {
-      document.getElementById("mark-in-el").hidden = false;
-      document.getElementById("mark-in-el").style.left = ((markIn - t0) / Math.max(1, t1 - t0) * 100) + "%";
-    }
-    if (markOut != null) {
-      document.getElementById("mark-out-el").hidden = false;
-      document.getElementById("mark-out-el").style.left = ((markOut - t0) / Math.max(1, t1 - t0) * 100) + "%";
-    }
+    placeMark("mark-in-el", markIn);
+    placeMark("mark-out-el", markOut);
+    document.getElementById("coverage-note").textContent =
+      "Scrubbing " + station(t0) + " → " + station(t1) +
+      ". Shaded spans have a recording in this range. Loaded archive is " +
+      station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
     paintCoverage();
   }
 
@@ -246,6 +277,37 @@
     });
   }
 
+  function inputName(iid) {
+    for (var i = 0; i < inputs.length; i++) {
+      if (String(inputs[i].id) === String(iid)) return inputs[i].name || iid;
+    }
+    return iid || "";
+  }
+
+  function clearPicture(v) {
+    if (!v.getAttribute("data-src") && !v.getAttribute("src")) {
+      if (!v.paused) v.pause();
+      return;
+    }
+    if (!v.paused) v.pause();
+    v.removeAttribute("src");
+    v.removeAttribute("data-src");
+    v.removeAttribute("data-start");
+    v.removeAttribute("data-end");
+    try { v.load(); } catch (e) {}
+  }
+
+  function showPaneNote(pane, v, kind, text) {
+    pane.classList.toggle("norec", kind === "gap");
+    var ph = pane.querySelector(".ph");
+    if (ph) {
+      ph.classList.toggle("gap", kind === "gap");
+      ph.textContent = text;
+      ph.style.display = "";
+    }
+    if (kind !== "media") clearPicture(v);
+  }
+
   function loadChunk(v, pane, hit, off) {
     var want = "/api/chunks/" + hit.id + "/media";
     var startMs = Date.parse(hit.start_at);
@@ -254,8 +316,12 @@
     if (v.getAttribute("data-src") === want) return false;
     v.src = want;
     v.setAttribute("data-src", want);
+    pane.classList.remove("norec");
     var ph = pane.querySelector(".ph");
-    if (ph) ph.style.display = "none";
+    if (ph) {
+      ph.classList.remove("gap");
+      ph.style.display = "none";
+    }
     v.onloadeddata = function () {
       v.onloadeddata = null;
       try { v.currentTime = off; } catch (e) {}
@@ -272,9 +338,13 @@
       v.muted = !audible;
       if (audible) v.volume = volume;
       var iid = v.getAttribute("data-input");
-      var hit = iid ? chunkHit(iid, play) : null;
+      if (!iid) {
+        showPaneNote(pane, v, "empty", "no input");
+        return;
+      }
+      var hit = chunkHit(iid, play);
       if (!hit || !hit.path || String(hit.path).indexOf("/tmp/nexrec-fixture") === 0) {
-        if (!v.paused) v.pause();
+        showPaneNote(pane, v, "gap", "No recording for " + inputName(iid) + " at this time");
         return;
       }
       var off = Math.max(0, (play - Date.parse(hit.start_at)) / 1000);
@@ -491,6 +561,46 @@
     var v = selectedVideo();
     if (v && playing && !v.muted) v.volume = volume;
   });
+  function setWindow(startMs, endMs) {
+    var note = document.getElementById("coverage-note");
+    if (!isFinite(startMs) || !isFinite(endMs)) {
+      note.textContent = "Use station time YYYY-MM-DD HH:MM:SS.";
+      return;
+    }
+    if (endMs <= startMs) {
+      note.textContent = "Range end must be after the start.";
+      return;
+    }
+    t0 = startMs;
+    t1 = endMs;
+    if (play < t0 || play > t1) {
+      play = t0;
+      stopPlayback();
+    }
+    fillRangeFields();
+    tick();
+  }
+  document.getElementById("range-apply").onclick = function () {
+    setWindow(
+      NexRecUI.parseStation(document.getElementById("range-start").value),
+      NexRecUI.parseStation(document.getElementById("range-end").value)
+    );
+  };
+  document.getElementById("range-start").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") document.getElementById("range-apply").click();
+  });
+  document.getElementById("range-end").addEventListener("keydown", function (ev) {
+    if (ev.key === "Enter") document.getElementById("range-apply").click();
+  });
+  document.getElementById("range-hour").onclick = function () {
+    var end = archive1;
+    var start = Math.max(archive0, end - 3600000);
+    if (end <= start) start = archive0;
+    setWindow(start, end);
+  };
+  document.getElementById("range-all").onclick = function () {
+    setWindow(archive0, archive1);
+  };
   document.getElementById("scrub").addEventListener("input", function (ev) {
     seekTo(t0 + (Number(ev.target.value) / 1000) * (t1 - t0));
   });

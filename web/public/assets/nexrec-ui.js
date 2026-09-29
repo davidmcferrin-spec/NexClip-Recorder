@@ -89,6 +89,47 @@
     return g.year + "-" + g.month + "-" + g.day + " " + clock;
   }
 
+  function stationStamp(value) {
+    var full = formatStation(value, true);
+    if (full === "—") return "";
+    return full.replace(/ [A-Za-z0-9+\-]+$/, "");
+  }
+
+  function wallPartsUtc(ms, timeZone) {
+    var dtf = new Intl.DateTimeFormat("en-US", {
+      timeZone: timeZone,
+      hourCycle: "h23",
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+    });
+    var g = {};
+    dtf.formatToParts(new Date(ms)).forEach(function (p) {
+      if (p.type !== "literal") g[p.type] = p.value;
+    });
+    var hour = Number(g.hour);
+    if (hour === 24) hour = 0;
+    return Date.UTC(Number(g.year), Number(g.month) - 1, Number(g.day), hour, Number(g.minute), Number(g.second));
+  }
+
+  function parseStation(text) {
+    var m = String(text == null ? "" : text).trim().match(
+      /^(\d{4})-(\d{2})-(\d{2})[ T](\d{2}):(\d{2})(?::(\d{2}))?/
+    );
+    if (!m) return NaN;
+    var y = Number(m[1]), mo = Number(m[2]), d = Number(m[3]);
+    var h = Number(m[4]), mi = Number(m[5]), s = Number(m[6] || 0);
+    if (mo < 1 || mo > 12 || d < 1 || d > 31 || h > 23 || mi > 59 || s > 59) return NaN;
+    var utc = Date.UTC(y, mo - 1, d, h, mi, s);
+    var offset = wallPartsUtc(utc, DISPLAY_TZ) - utc;
+    var result = utc - offset;
+    var offset2 = wallPartsUtc(result, DISPLAY_TZ) - result;
+    return utc - offset2;
+  }
+
   var PANE_MAX = 6;
 
   // saved null → first inputs in list order (API returns name order).
@@ -259,6 +300,8 @@
     toggleTheme: toggleTheme,
     timeZone: DISPLAY_TZ,
     formatStation: formatStation,
+    stationStamp: stationStamp,
+    parseStation: parseStation,
     PANE_MAX: PANE_MAX,
     paneSlotIds: paneSlotIds,
     paneAssign: paneAssign,
