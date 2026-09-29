@@ -17,6 +17,7 @@ from nexrec_ffmpeg import (  # noqa: E402
     export_concat_argv,
     input_args,
     metadata_args,
+    parse_export_progress,
     preview_unit_allowed,
     record_argv,
     segment_args,
@@ -227,6 +228,12 @@ class TestFfmpeg(unittest.TestCase):
         )
         self.assertIn("testsrc=", " ".join(cmd))
         self.assertIn("-map", cmd)
+
+    def test_export_progress_clock(self):
+        self.assertAlmostEqual(parse_export_progress("out_time_us=2500000"), 2.5)
+        self.assertAlmostEqual(parse_export_progress("out_time=00:01:02.500000"), 62.5)
+        self.assertAlmostEqual(parse_export_progress("frame=1 fps=30 time=00:00:03.00 bitrate=1k"), 3.0)
+        self.assertIsNone(parse_export_progress("progress=continue"))
 
     def test_export_has_faststart(self):
         cmd = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.5, 10.0, copy=True)

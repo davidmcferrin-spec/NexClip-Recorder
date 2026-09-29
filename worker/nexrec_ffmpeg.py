@@ -457,6 +457,32 @@ def preview_argv(
     return argv
 
 
+_OUT_US = re.compile(r"^out_time_us=(\d+)\s*$")
+_OUT_CLOCK = re.compile(r"^out_time=(\d+):(\d+):(\d+(?:\.\d+)?)\s*$")
+_STAT_TIME = re.compile(r"time=(\d+):(\d+):(\d+(?:\.\d+)?)")
+
+
+def _clock_seconds(hours: str, minutes: str, seconds: str) -> float:
+    return int(hours) * 3600 + int(minutes) * 60 + float(seconds)
+
+
+def parse_export_progress(line: str) -> float | None:
+    """Seconds encoded so far, from an FFmpeg -progress line or a stats time= field."""
+    text = line.strip()
+    us = _OUT_US.match(text)
+    if us:
+        return int(us.group(1)) / 1_000_000.0
+    clock = _OUT_CLOCK.match(text)
+    if clock:
+        return _clock_seconds(clock.group(1), clock.group(2), clock.group(3))
+    if text.startswith("out_time"):
+        return None
+    stat = _STAT_TIME.search(text)
+    if stat:
+        return _clock_seconds(stat.group(1), stat.group(2), stat.group(3))
+    return None
+
+
 def export_concat_argv(
     concat_path: str,
     dest_path: str,

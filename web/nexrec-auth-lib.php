@@ -282,8 +282,19 @@ function nexrec_ensure_input_feature_columns(): void {
     while ($res !== false && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
         $expHave[(string) $row['name']] = true;
     }
-    if (empty($expHave['nexclip_capture_id'])) {
-        nexrec_db()->exec('ALTER TABLE exports ADD COLUMN nexclip_capture_id TEXT');
+    $exportCols = [
+        'nexclip_capture_id' => 'TEXT',
+        'started_at' => 'TEXT',
+        'finished_at' => 'TEXT',
+        'progress_pct' => 'DOUBLE PRECISION',
+        'progress_at' => 'TEXT',
+        'encode_mode' => "TEXT NOT NULL DEFAULT ''",
+        'cancel_requested' => 'INTEGER NOT NULL DEFAULT 0',
+    ];
+    foreach ($exportCols as $name => $decl) {
+        if (empty($expHave[$name])) {
+            nexrec_db()->exec('ALTER TABLE exports ADD COLUMN ' . $name . ' ' . $decl);
+        }
     }
 }
 

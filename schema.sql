@@ -94,7 +94,13 @@ CREATE TABLE IF NOT EXISTS exports (
   created_at TEXT NOT NULL,
   expires_at TEXT,
   nexclip_schedule_id TEXT,
-  nexclip_capture_id TEXT
+  nexclip_capture_id TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  progress_pct DOUBLE PRECISION,
+  progress_at TEXT,
+  encode_mode TEXT NOT NULL DEFAULT '',
+  cancel_requested INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status);

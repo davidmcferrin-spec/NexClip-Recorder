@@ -195,6 +195,64 @@
     return out;
   }
 
+  function exportDurationMs(job) {
+    var a = Date.parse(job && job.t_in);
+    var b = Date.parse(job && job.t_out);
+    if (!isFinite(a) || !isFinite(b) || b <= a) return 0;
+    return b - a;
+  }
+
+  function exportRate(job) {
+    if (job && job.encode_mode === "copy") return 15;
+    if (job && job.encode_mode === "encode") return 1;
+    if (job && job.quality === "proxy") return 1;
+    return 8;
+  }
+
+  function exportRemainingMs(job, now) {
+    if (!job) return 0;
+    var status = job.status;
+    if (status === "done" || status === "error" || status === "cancelled") return 0;
+    var dur = exportDurationMs(job);
+    if (status === "running") {
+      var pct = Number(job.progress_pct);
+      var started = Date.parse(job.started_at || "");
+      if (pct > 1 && pct < 100 && isFinite(started) && now > started) {
+        return Math.max(0, (now - started) * (100 - pct) / pct);
+      }
+      return dur / exportRate(job);
+    }
+    return dur / exportRate(job);
+  }
+
+  function exportQueueEta(jobs, job, now) {
+    var active = (jobs || []).filter(function (row) {
+      return row && (row.status === "running" || row.status === "queued");
+    });
+    active.sort(function (a, b) {
+      if (a.status !== b.status) return a.status === "running" ? -1 : 1;
+      return String(a.created_at || "").localeCompare(String(b.created_at || ""));
+    });
+    var total = 0;
+    for (var i = 0; i < active.length; i++) {
+      total += exportRemainingMs(active[i], now);
+      if (active[i].id === job.id) return total;
+    }
+    return 0;
+  }
+
+  function formatEta(ms) {
+    if (ms == null || !isFinite(ms) || ms < 1000) return "—";
+    var s = Math.round(ms / 1000);
+    if (s < 60) return s + "s";
+    var m = Math.floor(s / 60);
+    s = s % 60;
+    if (m < 60) return m + "m " + s + "s";
+    var h = Math.floor(m / 60);
+    m = m % 60;
+    return h + "h " + m + "m";
+  }
+
   global.NexRecUI = {
     getTheme: getTheme,
     setTheme: setTheme,
@@ -208,5 +266,9 @@
     readPaneSlots: readPaneSlots,
     writePaneSlots: writePaneSlots,
     coverageSpans: coverageSpans,
+    exportDurationMs: exportDurationMs,
+    exportRemainingMs: exportRemainingMs,
+    exportQueueEta: exportQueueEta,
+    formatEta: formatEta,
   };
 })(typeof window !== "undefined" ? window : globalThis);

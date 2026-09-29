@@ -50,6 +50,26 @@ function nexrec_storage_dir(): string {
     return nexrec_data_dir() . '/storage';
 }
 
+function nexrec_exports_dir(): string {
+    if (function_exists('nexrec_setting')) {
+        $p = nexrec_setting('storage.exports');
+        if ($p !== '') {
+            return rtrim($p, '/\\');
+        }
+    }
+    return nexrec_storage_dir() . '/exports';
+}
+
+function nexrec_export_file_allowed(string $path): bool {
+    $realFile = realpath($path);
+    $realRoot = realpath(nexrec_exports_dir());
+    if ($realFile === false || $realRoot === false) {
+        return false;
+    }
+    $prefix = rtrim($realRoot, '/\\') . DIRECTORY_SEPARATOR;
+    return $realFile === $realRoot || str_starts_with($realFile, $prefix);
+}
+
 function nexrec_valid_input_id(string $id): bool {
     return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,31}$/', $id);
 }
@@ -376,6 +396,68 @@ try {
         $st->bindValue(':p', !empty($body['protected']) ? 1 : 0, SQLITE3_INTEGER);
         $st->bindValue(':id', $id, SQLITE3_TEXT);
         $st->execute();
+        nexrec_api_ok(['id' => $id]);
+    }
+
+    if ($action === 'export_cancel') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        $st = nexrec_db()->prepare('SELECT status FROM exports WHERE id=:id');
+        $st->bindValue(':id', $id, SQLITE3_TEXT);
+        $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
+        if (!$row) {
+            nexrec_api_fail(404, 'not found');
+        }
+        $status = (string) $row['status'];
+        if ($status === 'queued') {
+            $up = nexrec_db()->prepare(
+                "UPDATE exports SET status='cancelled', finished_at=:t, cancel_requested=0 WHERE id=:id AND status='queued'"
+            );
+            $up->bindValue(':t', nexrec_now_iso(), SQLITE3_TEXT);
+            $up->bindValue(':id', $id, SQLITE3_TEXT);
+            $up->execute();
+        } elseif ($status === 'running') {
+            $up = nexrec_db()->prepare('UPDATE exports SET cancel_requested=1 WHERE id=:id AND status=\'running\'');
+            $up->bindValue(':id', $id, SQLITE3_TEXT);
+            $up->execute();
+        } else {
+            nexrec_api_fail(400, 'not in the queue');
+        }
+        nexrec_api_ok(['id' => $id, 'status' => $status === 'queued' ? 'cancelled' : 'running']);
+    }
+
+    if ($action === 'export_retry') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        $up = nexrec_db()->prepare(
+            "UPDATE exports SET status='queued', error=NULL, progress_pct=NULL, progress_at=NULL,
+             started_at=NULL, finished_at=NULL, encode_mode='', cancel_requested=0, path=NULL, size_bytes=NULL
+             WHERE id=:id AND status IN ('error','cancelled')"
+        );
+        $up->bindValue(':id', $id, SQLITE3_TEXT);
+        $up->execute();
+        nexrec_api_ok(['id' => $id]);
+    }
+
+    if ($action === 'export_remove') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        $st = nexrec_db()->prepare('SELECT status, path FROM exports WHERE id=:id');
+        $st->bindValue(':id', $id, SQLITE3_TEXT);
+        $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
+        if (!$row) {
+            nexrec_api_fail(404, 'not found');
+        }
+        if ((string) $row['status'] === 'running') {
+            nexrec_api_fail(400, 'cancel the running export first');
+        }
+        $path = (string) ($row['path'] ?? '');
+        if ($path !== '' && is_file($path) && nexrec_export_file_allowed($path)) {
+            unlink($path);
+        }
+        $del = nexrec_db()->prepare('DELETE FROM exports WHERE id=:id AND status<>\'running\'');
+        $del->bindValue(':id', $id, SQLITE3_TEXT);
+        $del->execute();
         nexrec_api_ok(['id' => $id]);
     }
 

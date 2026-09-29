@@ -11,6 +11,35 @@ VAR=/var/lib/nexrec
 log() { printf '[nexrec-setup] %s\n' "$*"; }
 warn() { printf '[nexrec-setup] WARN %s\n' "$*" >&2; }
 
+# www-data must traverse every parent. A clone under /home/<user> (mode 750)
+# is otherwise (13) Permission denied when systemd opens the worker script.
+nexrec_open_parents() {
+  local dir="$1" mode other
+  while [[ "$dir" != "/" ]]; do
+    mode="$(stat -c %a "$dir" 2>/dev/null || echo "")"
+    other="${mode: -1}"
+    if [[ -n "$other" && $((other & 1)) -eq 0 ]]; then
+      chmod o+x "$dir" || warn "could not add other-execute on $dir"
+      log "traverse for www-data: chmod o+x $dir"
+    fi
+    dir="$(dirname "$dir")"
+  done
+}
+
+nexrec_grant_www_data() {
+  nexrec_open_parents "$ROOT"
+  nexrec_open_parents "$ROOT/web/public"
+  chmod -R a+rX "$ROOT/worker" "$ROOT/web" "$ROOT/bin" \
+    || warn "could not grant www-data read under $ROOT"
+  if command -v runuser >/dev/null 2>&1; then
+    if runuser -u www-data -- test -r "$ROOT/worker/nexrec-export.py"; then
+      log "www-data can read the export worker"
+    else
+      warn "www-data still cannot read $ROOT/worker/nexrec-export.py"
+    fi
+  fi
+}
+
 # OS zone is station local so date, journalctl, and the cleanup timer follow
 # America/New_York (DST included). Recorder units pin TZ=UTC; timecode is UTC.
 configure_clock() {
@@ -156,6 +185,10 @@ EOF
   log "sudoers: www-data NOPASSWD $HELPER"
 fi
 
+# Open the checkout before the first start. Restart=always otherwise
+# crash-loops on EACCES (python status 2) until a parent mode is fixed.
+nexrec_grant_www_data
+
 systemctl daemon-reload
 systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
 
@@ -196,20 +229,7 @@ if [[ -e /etc/apache2/sites-available/000-default.conf ]]; then
   a2ensite 000-default >/dev/null || warn "a2ensite 000-default failed"
 fi
 
-# www-data must traverse every parent. A clone under /home/<user> (mode 750)
-# is otherwise AH01630 or (13) Permission denied after DocumentRoot is set.
-nexrec_open_parents() {
-  local dir="$1" mode other
-  while [[ "$dir" != "/" ]]; do
-    mode="$(stat -c %a "$dir" 2>/dev/null || echo "")"
-    other="${mode: -1}"
-    if [[ -n "$other" && $((other & 1)) -eq 0 ]]; then
-      chmod o+x "$dir" || warn "could not add other-execute on $dir"
-      log "traverse for www-data: chmod o+x $dir"
-    fi
-    dir="$(dirname "$dir")"
-  done
-}
+# Apache DocumentRoot uses the same www-data traverse grant as the workers.
 nexrec_open_parents "$PUBLIC"
 
 # Rewrite only the Ubuntu default docroot and a previous /opt copy. Leave any

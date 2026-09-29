@@ -76,10 +76,13 @@
       </svg>
     </div>
   </div>
-  <div class="panel">
-    <h1>Jobs</h1>
-    <table><thead><tr><th>ID</th><th>Window</th><th>Status</th><th></th></tr></thead>
-    <tbody id="jobs"></tbody></table>
+  <div class="panel" id="jobs-panel">
+    <h1>Queue</h1>
+    <p class="sub">The export service works this list one job at a time. ETA uses the trim length and FFmpeg’s progress. Cancel stops a queued job immediately and asks a running job to stop.</p>
+    <table>
+      <thead><tr><th>Job</th><th>Window</th><th>Inputs</th><th>Quality</th><th>Status</th><th>ETA</th><th></th></tr></thead>
+      <tbody id="jobs"></tbody>
+    </table>
   </div>
   </div>
 </main>
@@ -87,7 +90,7 @@
 <script>
 (function () {
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, play = 0, markIn = null, markOut = null;
-  var selected = 0, playing = false, slotIds = null;
+  var selected = 0, playing = false, slotIds = null, scrolledJob = "";
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -128,6 +131,11 @@
   });
 
   function iso(ms) { return new Date(ms).toISOString().replace(".000", ""); }
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
 
   function chunkHit(iid, ms) {
     var list = chunksByInput[iid] || [];
@@ -375,17 +383,82 @@
     });
   }
 
+  function inputLabel(job) {
+    var ids = job.input_ids;
+    if (typeof ids === "string") {
+      try { ids = JSON.parse(ids); } catch (e) { ids = [ids]; }
+    }
+    return (ids || []).join(", ");
+  }
+  function statusText(job) {
+    if (job.status === "running") {
+      var pct = job.progress_pct == null || job.progress_pct === "" ? "" : " " + Number(job.progress_pct).toFixed(0) + "%";
+      if (Number(job.cancel_requested) === 1) return "cancelling" + pct;
+      return "running" + pct;
+    }
+    if (job.status === "error" && job.error) return "error";
+    return job.status || "";
+  }
   function paintJobs(jobs) {
     var tb = document.getElementById("jobs");
-    tb.innerHTML = "";
-    jobs.forEach(function (j) {
-      var tr = document.createElement("tr");
-      var dl = (j.status === "done" && j.path)
-        ? '<a href="/api/exports/' + j.id + '/file">download</a>' : "";
-      tr.innerHTML = "<td>" + j.id + "</td><td>" + station(j.t_in) + " → " + station(j.t_out) + "</td><td>" + j.status + "</td><td>" + dl + "</td>";
-      tb.appendChild(tr);
-    });
+    var me = (NexRecAuth.currentUser && NexRecAuth.currentUser()) || {};
+    var can = me.role === "admin" || me.role === "operator";
+    var focus = (location.hash || "").replace(/^#/, "");
+    if (!jobs.length) {
+      tb.innerHTML = '<tr><td colspan="7">Queue is empty.</td></tr>';
+      return;
+    }
+    var now = Date.now();
+    tb.innerHTML = jobs.map(function (j) {
+      var eta = (j.status === "queued" || j.status === "running")
+        ? NexRecUI.formatEta(NexRecUI.exportQueueEta(jobs, j, now)) : "—";
+      var bits = [];
+      if (j.status === "done") bits.push('<a href="/api/exports/' + encodeURIComponent(j.id) + '/file">download</a>');
+      if (can && (j.status === "queued" || j.status === "running") && Number(j.cancel_requested) !== 1) {
+        bits.push('<button type="button" data-act="export_cancel" data-id="' + esc(j.id) + '">Cancel</button>');
+      }
+      if (can && (j.status === "error" || j.status === "cancelled")) {
+        bits.push('<button type="button" data-act="export_retry" data-id="' + esc(j.id) + '">Retry</button>');
+      }
+      if (can && j.status !== "running") {
+        bits.push('<button type="button" data-act="export_remove" data-id="' + esc(j.id) + '">Remove</button>');
+      }
+      var who = j.created_by ? '<div class="sub">' + esc(j.created_by) + "</div>" : "";
+      var err = j.status === "error" && j.error ? '<div class="sub">' + esc(j.error) + "</div>" : "";
+      return '<tr id="job-' + esc(j.id) + '"' + (j.id === focus ? ' class="job-focus"' : "") + ">" +
+        "<td>" + esc(j.id) + who + "</td>" +
+        "<td>" + esc(station(j.t_in) + " → " + station(j.t_out)) + "</td>" +
+        "<td>" + esc(inputLabel(j)) + "</td>" +
+        "<td>" + esc(j.quality || "") + "</td>" +
+        "<td>" + esc(statusText(j)) + err + "</td>" +
+        "<td>" + esc(eta) + "</td>" +
+        "<td>" + bits.join(" ") + "</td></tr>";
+    }).join("");
+    if (focus && scrolledJob !== focus) {
+      var row = document.getElementById("job-" + focus);
+      if (row) {
+        row.scrollIntoView({ block: "center" });
+        scrolledJob = focus;
+      }
+    }
   }
+  document.getElementById("jobs").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-act]");
+    if (!btn) return;
+    var act = btn.getAttribute("data-act");
+    var id = btn.getAttribute("data-id");
+    if (act === "export_remove" && !window.confirm("Remove this export?")) return;
+    NexRecAuth.recApi(act, { id: id }).then(function () {
+      return NexRecAuth.refreshExports();
+    }).catch(function (e) {
+      var msg = document.getElementById("msg");
+      msg.style.color = "var(--bad)";
+      msg.textContent = e.message;
+    });
+  });
+  window.addEventListener("nexrec-exports", function (ev) {
+    paintJobs(ev.detail || []);
+  });
 
   document.getElementById("layout-seg").addEventListener("click", function (ev) {
     var btn = ev.target.closest("button[data-n]");
@@ -446,9 +519,10 @@
       scope: scope,
     }).then(function (d) {
       msg.style.color = "var(--ok)";
-      msg.textContent = "queued " + d.export_id + " — run python3 worker/nexrec-export.py --once";
-      return NexRecAuth.recApi("exports_list");
-    }).then(function (d) { paintJobs(d.exports || []); })
+      msg.textContent = "Export received.";
+      if (NexRecAuth.noteExportReceived) NexRecAuth.noteExportReceived(d.export_id);
+      return NexRecAuth.refreshExports();
+    }).then(function (d) { paintJobs((d && d.exports) || []); })
       .catch(function (e) { msg.style.color = "var(--bad)"; msg.textContent = e.message; });
   };
   document.getElementById("measure-lkfs").onclick = function () {

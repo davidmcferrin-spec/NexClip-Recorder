@@ -82,5 +82,16 @@ assert.ok(Math.abs(spans[0].width - (5 / 60) * 100) < 0.01);
 assert.ok(Math.abs(spans[1].left) < 0.01);
 assert.strictEqual(exportSrc.includes("coverageSpans"), true);
 assert.strictEqual(exportSrc.includes("paintCoverage"), true);
+assert.strictEqual(exportSrc.includes("export_cancel"), true);
+assert.strictEqual(exportSrc.includes("exportQueueEta"), true);
+
+const now = Date.parse("2026-09-29T04:00:10Z");
+const jobs = [
+  { id: "run", status: "running", started_at: "2026-09-29T04:00:00Z", progress_pct: 50, t_in: "2026-09-29T03:00:00Z", t_out: "2026-09-29T03:01:00Z", created_at: "2026-09-29T03:59:00Z", encode_mode: "encode" },
+  { id: "wait", status: "queued", t_in: "2026-09-29T03:00:00Z", t_out: "2026-09-29T03:00:08Z", created_at: "2026-09-29T03:59:30Z", quality: "full" },
+];
+assert.strictEqual(UI.exportRemainingMs(jobs[0], now), 10000);
+assert.strictEqual(UI.exportQueueEta(jobs, jobs[1], now), 11000);
+assert.strictEqual(UI.formatEta(11000), "11s");
 
 console.log("pane assignment ok");

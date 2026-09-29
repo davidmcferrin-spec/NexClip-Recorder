@@ -24,7 +24,24 @@ body {
 nav.topnav {
   display: flex; flex-wrap: wrap; align-items: center; gap: 4px;
   padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--edge);
+  position: relative;
 }
+.nav-bell { position: relative; }
+.notice-badge {
+  margin-left: 6px; background: var(--acc); color: var(--on-acc);
+  border-radius: 9px; padding: 0 6px; font-size: 11px;
+}
+.notice-panel {
+  position: absolute; right: 12px; top: 46px; width: min(360px, calc(100vw - 24px));
+  background: var(--panel); border: 1px solid var(--edge); border-radius: 6px;
+  z-index: 30; padding: 8px 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+.notice-panel[hidden] { display: none; }
+.notice-panel p { margin: 8px 0; }
+.notice-panel a.notice-link {
+  display: inline; padding: 0 4px 0 0; color: var(--acc); border: 0; font-weight: 600;
+}
+tr.job-focus { outline: 2px solid var(--acc); }
 nav.topnav .brand {
   color: var(--acc); font-weight: 600; text-decoration: none; font-size: 15px;
   padding: 6px 12px 6px 0; margin-right: 4px;

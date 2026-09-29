@@ -286,8 +286,17 @@ def ensure_input_feature_columns(conn: PgConn) -> None:
         if name not in have:
             conn.execute(f"ALTER TABLE inputs ADD COLUMN {name} {decl}")
     exp_cols = table_columns(conn, "exports")
-    if "nexclip_capture_id" not in exp_cols:
-        conn.execute("ALTER TABLE exports ADD COLUMN nexclip_capture_id TEXT")
+    for name, decl in (
+        ("nexclip_capture_id", "TEXT"),
+        ("started_at", "TEXT"),
+        ("finished_at", "TEXT"),
+        ("progress_pct", "DOUBLE PRECISION"),
+        ("progress_at", "TEXT"),
+        ("encode_mode", "TEXT NOT NULL DEFAULT ''"),
+        ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+    ):
+        if name not in exp_cols:
+            conn.execute(f"ALTER TABLE exports ADD COLUMN {name} {decl}")
 
 
 def ensure_fts(conn: PgConn) -> bool:

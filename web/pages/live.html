@@ -26,10 +26,10 @@
   <div class="bar">
     <span class="meta">Layout</span>
     <div class="seg" id="layout-seg">
-      <button type="button" data-n="1">1</button>
+      <button type="button" data-n="1" class="active">1</button>
       <button type="button" data-n="2">2</button>
       <button type="button" data-n="3">3</button>
-      <button type="button" data-n="4" class="active">4</button>
+      <button type="button" data-n="4">4</button>
       <button type="button" data-n="6">6</button>
     </div>
     <span class="meta">Monitors</span>
@@ -41,7 +41,7 @@
     <span class="meta" id="clock">—</span>
     <span class="meta" id="monitor-hint">Confidence monitors follow the selected pane (decoded preview, not the record). Stereo AAC proxy.</span>
   </div>
-  <div class="grid n4" id="grid"></div>
+  <div class="grid n1" id="grid"></div>
 </main>
 <script src="/assets/nexrec-scopes.js"></script>
 <script src="/assets/nexrec-vu.js"></script>
@@ -49,7 +49,7 @@
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
-  var n = 4;
+  var n = 1;
   var inputs = [];
   var selected = 0;
   var slotIds = null;
