@@ -42,6 +42,17 @@ class InstallMediaTests(unittest.TestCase):
     def test_script_syntax(self):
         subprocess.run(["bash", "-n", str(SCRIPT)], check=True)
 
+    def test_srt_packages_are_openssl(self):
+        text = SCRIPT.read_text(encoding="utf-8")
+        loops = [line for line in text.splitlines() if line.strip().startswith("for pkg in ")]
+        self.assertEqual(len(loops), 1)
+        loop = loops[0]
+        self.assertIn("libsrt1.5-openssl", loop)
+        self.assertIn("libsrt-openssl-dev", loop)
+        self.assertIn("srt-tools", loop)
+        self.assertNotIn("libsrt-dev", loop)
+        self.assertNotIn("gnutls", loop)
+
     def test_pins(self):
         out = bash(
             "printf '%s\\n' \"$NEXREC_FFMPEG_VERSION\" \"$NEXREC_FFMPEG_SHA256\" "

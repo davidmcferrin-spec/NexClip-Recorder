@@ -580,8 +580,11 @@ nexrec_install_build_deps() {
     apt-get update -qq
   fi
   apt-get install -y -qq build-essential pkg-config nasm libx264-dev libssl-dev
+  # Ubuntu 24.04 dropped libsrt-dev. This FFmpeg is --enable-openssl, so the
+  # OpenSSL SRT flavor is the one that supplies the srt pkg-config file.
+  # The GnuTLS packages conflict with these and are not installed.
   local pkg
-  for pkg in yasm libfdk-aac-dev libsrt-dev libzvbi-dev; do
+  for pkg in yasm libfdk-aac-dev libsrt1.5-openssl libsrt-openssl-dev srt-tools libzvbi-dev; do
     if nexrec_try_pkg "$pkg"; then
       nexrec_media_log "package $pkg"
     else
