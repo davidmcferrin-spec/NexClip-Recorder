@@ -9,9 +9,12 @@
  * Spectrum (nexrec-spectrum.js) taps getSpectrumPair() on this graph.
  * Do not open a second MediaStreamSource.
  *
- * The <video> stays muted. Listen/mute and volume live on the Live page bar
- * and drive this Web Audio master gain. Not CALM / LKFS — that stays on the
- * export editor.
+ * The <video> stays muted. Listen and volume on the Live page bar drive this
+ * Web Audio master gain only. Analysers hang off a silent bus into the
+ * destination so the meters keep moving while that gain is 0. The audio
+ * clock starts when a preview with audio is attached and on any click or
+ * key on the page, including while Listen is off. Not CALM / LKFS — that
+ * stays on the export editor.
  *
  * Per-browser prefs (VU default off, listen default muted):
  *   nexrec-vu-on          1 | 0
@@ -241,10 +244,22 @@
   function resume() {
     const ctx = ensureCtx();
     if (ctx && ctx.state === "suspended") {
-      try { return ctx.resume(); } catch (e) { /* autoplay policy */ }
+      try {
+        const pending = ctx.resume();
+        if (pending && typeof pending.catch === "function") pending.catch(function () {});
+        return pending;
+      } catch (e) { /* autoplay policy */ }
     }
     return Promise.resolve(ctx);
   }
+
+  function armMeterClock() {
+    if (typeof document === "undefined" || !document.addEventListener) return;
+    function kick() { resume(); }
+    document.addEventListener("pointerdown", kick, true);
+    document.addEventListener("keydown", kick, true);
+  }
+  armMeterClock();
 
   function ensureStyles() {
     if (document.getElementById("nexrec-vu-css")) return;
@@ -613,7 +628,7 @@
       setMutedPref(!listen);
       if (masterGain) masterGain.gain.value = effectiveMasterGain();
       video.muted = true;
-      if (listen) resume();
+      resume();
     }
 
     function rebuildMeterDom() {
@@ -658,7 +673,7 @@
       return [0, 1];
     }
 
-    function wireSpectrum() {
+    function wireSpectrum(meterBus) {
       specL = null;
       specR = null;
       if (!ctx || !splitter) return;
@@ -673,6 +688,10 @@
       const pair = listenPair();
       splitter.connect(specL, pair[0]);
       splitter.connect(specR, pair[1]);
+      if (meterBus) {
+        specL.connect(meterBus);
+        specR.connect(meterBus);
+      }
     }
 
     function teardownGraph() {
@@ -793,8 +812,12 @@
         } catch (e) { /* ignore */ }
         masterGain = ctx.createGain();
         masterGain.gain.value = effectiveMasterGain();
+        const meterBus = ctx.createGain();
+        meterBus.gain.value = 0;
+        meterBus.connect(ctx.destination);
+        outNodes.push(meterBus);
         source.connect(splitter);
-        wireSpectrum();
+        wireSpectrum(meterBus);
 
         const mode = playoutMode();
         const outN = mode === "surround" ? Math.min(6, channelInfo.count) : 2;
@@ -809,6 +832,7 @@
           const gain = ctx.createGain();
           gain.gain.value = 1;
           splitter.connect(analyser, i);
+          analyser.connect(meterBus);
           splitter.connect(gain, i);
           analysers.push(analyser);
           chGains.push(gain);
@@ -837,6 +861,7 @@
         applyRouting();
         video.muted = true;
         updateRootVisibility();
+        resume();
       } catch (err) {
         if (typeof console !== "undefined" && console.warn) {
           console.warn("nexrec-vu: graph failed", err);
@@ -988,6 +1013,7 @@
         if (id && id === connectedStreamId && analysers.length && audioCount === connectedAudioCount) {
           hasAudio = true;
           updateRootVisibility();
+          resume();
           return;
         }
         buildGraph(stream);

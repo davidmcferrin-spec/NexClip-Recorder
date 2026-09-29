@@ -40,6 +40,7 @@
     </div>
     <span class="meta">Audio</span>
     <button type="button" class="tgl" id="listen-toggle" aria-pressed="false" title="Play the selected pane's preview in this browser. The picture stays muted.">Listen</button>
+    <button type="button" class="tgl" id="cc-toggle" aria-pressed="false" title="Draw 608/708 captions on the selected pane (C). Text comes from the recording after the chunk is indexed, so live words trail the picture.">CC</button>
     <input type="range" id="listen-vol" class="listen-vol" min="0" max="1" step="0.05" value="0.2" aria-label="Preview listen volume">
     <span class="meta" id="clock">—</span>
     <span class="meta" id="monitor-hint">Confidence monitors follow the selected pane (decoded preview, not the record). Stereo Opus proxy.</span>
@@ -49,6 +50,7 @@
 <script src="/assets/nexrec-scopes.js"></script>
 <script src="/assets/nexrec-vu.js"></script>
 <script src="/assets/nexrec-spectrum.js"></script>
+<script src="/assets/nexrec-cc.js"></script>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
@@ -59,9 +61,13 @@
   var SLOT_KEY = "nexrec-live-slots";
   var monitors = null;
   var clockTimers = [];
+  var ccBox = null;
+  var ccTimer = null;
+  var ccFetch = 0;
   NexRecAuth.requirePage().then(load);
   syncToggles();
   syncListen();
+  syncCcButton();
 
   function listeningNow() {
     if (monitors && monitors.vu) return monitors.vu.isListening();
@@ -93,6 +99,78 @@
       btn.classList.toggle("active", on);
       btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
+  }
+
+  function isoSec(ms) {
+    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  function selectedLiveInput() {
+    var id = visibleIds()[selected];
+    if (!id) return null;
+    for (var i = 0; i < inputs.length; i++) {
+      if (String(inputs[i].id) === String(id)) return inputs[i];
+    }
+    return null;
+  }
+
+  function syncCcButton() {
+    var btn = document.getElementById("cc-toggle");
+    if (!btn) return;
+    var on = ccBox ? ccBox.isVisible() : (window.NexRecCc && NexRecCc.getOnPref());
+    btn.classList.toggle("active", !!on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function destroyCc() {
+    if (ccTimer) {
+      clearInterval(ccTimer);
+      ccTimer = null;
+    }
+    if (ccBox) {
+      try { ccBox.destroy(); } catch (e) {}
+      ccBox = null;
+    }
+  }
+
+  function pullCc() {
+    if (!ccBox || !ccBox.isVisible()) return;
+    var inp = selectedLiveInput();
+    if (!inp) {
+      ccBox.setCues([]);
+      return;
+    }
+    var now = Date.now();
+    var token = ++ccFetch;
+    NexRecAuth.recApi("captions_window", {
+      input_id: inp.id,
+      t_from: isoSec(now - 15 * 60 * 1000),
+      t_to: isoSec(now + 1000)
+    }).then(function (data) {
+      if (token !== ccFetch || !ccBox) return;
+      ccBox.setCues(data.cues || []);
+      ccBox.setTime(Date.now());
+    }).catch(function () {
+      if (token !== ccFetch || !ccBox) return;
+      ccBox.setCues([]);
+    });
+  }
+
+  function startCcPoll() {
+    if (ccTimer) clearInterval(ccTimer);
+    pullCc();
+    ccTimer = setInterval(pullCc, 2000);
+  }
+
+  function bindCc() {
+    destroyCc();
+    if (!window.NexRecCc) return;
+    var pane = document.querySelector("#grid .pane.selected");
+    if (!pane) return;
+    ccBox = NexRecCc.attach({ container: pane });
+    ccBox.setVisible(NexRecCc.getOnPref());
+    syncCcButton();
+    if (ccBox.isVisible()) startCcPoll();
   }
 
   function destroyMonitors() {
@@ -158,6 +236,7 @@
       p.classList.toggle("selected", idx === selected);
     });
     bindMonitors();
+    bindCc();
   }
 
   function assignPane(i, inputId) {
@@ -171,6 +250,7 @@
     if (selected >= n) selected = 0;
     clearClockTimers();
     destroyMonitors();
+    destroyCc();
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
@@ -247,6 +327,7 @@
       }, 250));
     });
     bindMonitors();
+    bindCc();
   }
 
   document.getElementById("layout-seg").addEventListener("click", function (ev) {
@@ -288,6 +369,31 @@
     }
     syncListen();
   });
+
+  document.getElementById("cc-toggle").addEventListener("click", function () {
+    if (!ccBox) bindCc();
+    if (!ccBox) return;
+    ccBox.setVisible(!ccBox.isVisible());
+    if (ccBox.isVisible()) startCcPoll();
+    else if (ccTimer) {
+      clearInterval(ccTimer);
+      ccTimer = null;
+    }
+    syncCcButton();
+  });
+
+  document.addEventListener("keydown", function (ev) {
+    if (ev.metaKey || ev.ctrlKey || ev.altKey || ev.repeat) return;
+    var el = ev.target;
+    if (el && (el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable)) return;
+    if (el && el.tagName === "INPUT") {
+      var type = (el.type || "text").toLowerCase();
+      if (type !== "range" && type !== "button" && type !== "checkbox" && type !== "radio") return;
+    }
+    if (ev.key !== "c" && ev.key !== "C") return;
+    ev.preventDefault();
+    document.getElementById("cc-toggle").click();
+  }, true);
 
   document.getElementById("listen-vol").addEventListener("input", function (ev) {
     var v = Number(ev.target.value);

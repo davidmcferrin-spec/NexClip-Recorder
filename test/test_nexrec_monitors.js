@@ -199,6 +199,10 @@ const liveSrc = fs.readFileSync(path.join(ROOT, "web", "pages", "live.html"), "u
 
 assert.strictEqual(scopesSrc.split("createMediaStreamSource").length, 1);
 assert.strictEqual(vuSrc.split("createMediaStreamSource").length, 2);
+assert.strictEqual(vuSrc.includes("if (listen) resume()"), false);
+assert.ok(vuSrc.includes("const meterBus = ctx.createGain();"));
+assert.ok(vuSrc.includes("analyser.connect(meterBus)"));
+assert.ok(vuSrc.includes('document.addEventListener("pointerdown", kick, true)'));
 assert.strictEqual(specSrc.includes("createMediaStreamSource"), false);
 assert.ok(specSrc.includes("getSpectrumPair"));
 [scopesSrc, vuSrc, specSrc].forEach((src) => {

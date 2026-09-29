@@ -785,6 +785,54 @@ try {
         nexrec_api_ok(['events' => $out]);
     }
 
+    if ($action === 'captions_window') {
+        nexrec_require_roles([]);
+        $iid = strtolower(trim((string) ($_GET['input_id'] ?? $body['input_id'] ?? '')));
+        if (!nexrec_valid_input_id($iid)) {
+            nexrec_api_fail(400, 'input_id required');
+        }
+        $fromRaw = (string) ($_GET['t_from'] ?? $body['t_from'] ?? '');
+        $toRaw = (string) ($_GET['t_to'] ?? $body['t_to'] ?? '');
+        $fromTs = strtotime($fromRaw);
+        $toTs = strtotime($toRaw);
+        if ($fromTs === false || $toTs === false || $toTs <= $fromTs) {
+            nexrec_api_fail(400, 't_from and t_to required');
+        }
+        if (($toTs - $fromTs) > 6 * 3600) {
+            nexrec_api_fail(400, 'window longer than 6 hours');
+        }
+        $fromIso = gmdate('Y-m-d\TH:i:s\Z', $fromTs);
+        $toIso = gmdate('Y-m-d\TH:i:s\Z', $toTs);
+        $st = nexrec_db()->prepare(
+            'SELECT id, t_start, t_end, text, service, kind FROM captions
+             WHERE input_id = :i AND kind = :k
+               AND t_start < :to
+               AND (t_end IS NULL OR t_end = \'\' OR t_end > :from)
+             ORDER BY t_start ASC
+             LIMIT 500'
+        );
+        $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        $st->bindValue(':k', 'caption', SQLITE3_TEXT);
+        $st->bindValue(':from', $fromIso, SQLITE3_TEXT);
+        $st->bindValue(':to', $toIso, SQLITE3_TEXT);
+        $res = $st->execute();
+        $cues = [];
+        while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+            $text = trim((string) ($row['text'] ?? ''));
+            if ($text === '') {
+                continue;
+            }
+            $cues[] = [
+                'id' => $row['id'] ?? '',
+                't_start' => $row['t_start'] ?? '',
+                't_end' => $row['t_end'] ?? '',
+                'text' => $text,
+                'service' => $row['service'] ?? '',
+            ];
+        }
+        nexrec_api_ok(['cues' => $cues, 'input_id' => $iid]);
+    }
+
     if ($action === 'search_text') {
         nexrec_require_roles([]);
         $q = trim((string) ($_GET['q'] ?? $body['q'] ?? ''));

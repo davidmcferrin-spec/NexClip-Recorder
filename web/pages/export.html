@@ -67,7 +67,8 @@
   <p class="sub" id="coverage-note">Shaded spans have a recording inside this range. Empty stretches do not.</p>
   <div class="bar">
     <button type="button" id="play-toggle" aria-pressed="false" title="Play or pause (Space). J reverse, K stop, L forward. Left and Right step one frame; Shift steps five. Home and End jump the range.">Play</button>
-    <span class="meta" id="transport-hint">I/O mark · JKL shuttle · ← → frame</span>
+    <button type="button" class="tgl" id="cc-toggle" aria-pressed="false" title="Draw 608/708 captions on the selected pane (C). Words follow the playhead from the recording’s caption cues.">CC</button>
+    <span class="meta" id="transport-hint">I/O mark · JKL shuttle · ← → frame · C captions</span>
     <span class="meta">Volume</span>
     <input type="range" id="listen-vol" class="listen-vol" min="0" max="1" step="0.05" value="0.8" aria-label="Volume for the selected pane">
     <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
@@ -100,12 +101,14 @@
   </div>
   </div>
 </main>
+<script src="/assets/nexrec-cc.js"></script>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, archive0 = 0, archive1 = 0, play = 0, markIn = null, markOut = null;
   var selected = 0, playing = false, slotIds = null, scrolledJob = "";
   var shuttle = 0, kHeld = false, shuttleTimer = null;
+  var ccBox = null, ccCues = [], ccWindow0 = 0, ccWindow1 = 0, ccInput = "", ccFetch = 0;
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -189,6 +192,78 @@
     return null;
   }
 
+  function isoSec(ms) {
+    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
+  function syncCcButton() {
+    var btn = document.getElementById("cc-toggle");
+    if (!btn) return;
+    var on = ccBox ? ccBox.isVisible() : (window.NexRecCc && NexRecCc.getOnPref());
+    btn.classList.toggle("active", !!on);
+    btn.setAttribute("aria-pressed", on ? "true" : "false");
+  }
+
+  function destroyCc() {
+    if (ccBox) {
+      try { ccBox.destroy(); } catch (e) {}
+      ccBox = null;
+    }
+  }
+
+  function resetCcWindow() {
+    ccCues = [];
+    ccWindow0 = 0;
+    ccWindow1 = 0;
+    ccInput = "";
+  }
+
+  function bindCc() {
+    destroyCc();
+    if (!window.NexRecCc) return;
+    var pane = document.querySelector("#grid .pane.selected");
+    if (!pane) return;
+    ccBox = NexRecCc.attach({ container: pane });
+    ccBox.setVisible(NexRecCc.getOnPref());
+    ccBox.setCues(ccCues);
+    ccBox.setTime(play);
+    syncCcButton();
+  }
+
+  function ensureCcWindow() {
+    if (!ccBox || !ccBox.isVisible()) return;
+    var inp = selectedInput();
+    if (!inp) {
+      resetCcWindow();
+      ccBox.setCues([]);
+      return;
+    }
+    var id = String(inp.id);
+    if (id === ccInput && play >= ccWindow0 && play < ccWindow1) return;
+    var from = play - 60 * 1000;
+    var to = play + 180 * 1000;
+    var token = ++ccFetch;
+    ccInput = id;
+    ccWindow0 = from;
+    ccWindow1 = to;
+    NexRecAuth.recApi("captions_window", {
+      input_id: id,
+      t_from: isoSec(from),
+      t_to: isoSec(to)
+    }).then(function (data) {
+      if (token !== ccFetch || !ccBox) return;
+      ccCues = data.cues || [];
+      ccBox.setCues(ccCues);
+      ccBox.setTime(play);
+    }).catch(function () {});
+  }
+
+  function syncCc() {
+    if (!ccBox) return;
+    ccBox.setTime(play);
+    if (ccBox.isVisible()) ensureCcWindow();
+  }
+
   function choosePane(i) {
     if (selected === i) return;
     selected = i;
@@ -196,6 +271,9 @@
       p.classList.toggle("selected", idx === selected);
     });
     syncMedia(false);
+    resetCcWindow();
+    bindCc();
+    syncCc();
   }
 
   function assignPane(i, inputId) {
@@ -279,6 +357,7 @@
       ". Shaded spans have a recording in this range. Loaded archive is " +
       station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
     paintCoverage();
+    syncCc();
   }
 
   function paintCoverage() {
@@ -443,6 +522,8 @@
 
   function render() {
     if (selected >= n) selected = 0;
+    destroyCc();
+    resetCcWindow();
     var grid = document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
@@ -485,6 +566,7 @@
       cell.appendChild(pane);
       grid.appendChild(cell);
     });
+    bindCc();
   }
 
   function inputLabel(job) {
@@ -697,6 +779,12 @@
       else markInAtPlay();
       return;
     }
+    if (key === "c" || key === "C") {
+      if (ev.repeat) return;
+      ev.preventDefault();
+      document.getElementById("cc-toggle").click();
+      return;
+    }
     if (key === "o" || key === "O") {
       if (ev.repeat) return;
       ev.preventDefault();
@@ -729,6 +817,18 @@
     if (ev.key === "k" || ev.key === "K") kHeld = false;
   }, true);
   document.getElementById("play-toggle").onclick = togglePlay;
+  document.getElementById("cc-toggle").addEventListener("click", function () {
+    if (!ccBox) bindCc();
+    if (!ccBox) return;
+    ccBox.setVisible(!ccBox.isVisible());
+    if (ccBox.isVisible()) {
+      resetCcWindow();
+      ensureCcWindow();
+      ccBox.setTime(play);
+    }
+    syncCcButton();
+  });
+  syncCcButton();
   document.getElementById("listen-vol").addEventListener("input", function (ev) {
     volume = Math.max(0, Math.min(1, Number(ev.target.value)));
     if (!Number.isFinite(volume)) volume = 0.8;
