@@ -252,17 +252,47 @@ class InstallMediaTests(unittest.TestCase):
                 ),
                 "no",
             )
-        devices = """== /sys/devices/pci0000:00/0000:01:00.0 ==
+        devices = """== /sys/devices/pci0000:46/0000:46:01.0/0000:47:00.0 ==
 vendor   : NVIDIA Corporation
-driver   : nvidia-driver-550-server - distro non-free
-driver   : nvidia-driver-550 - distro non-free recommended
-driver   : nvidia-driver-550-open - distro non-free
+driver   : nvidia-driver-595-open - distro non-free recommended
+driver   : nvidia-driver-610 - distro non-free
+driver   : nvidia-driver-610-open - distro non-free
 driver   : xserver-xorg-video-nouveau - distro free builtin
 """
         quoted = devices.replace("'", "'\\''")
         self.assertEqual(
-            bash(f"nexrec_nvidia_driver_package_from_devices '{quoted}'"),
-            "nvidia-driver-550",
+            bash(f"nexrec_nvidia_driver_select_package '{quoted}'"),
+            "nvidia-driver-610-open",
+        )
+        proprietary = devices.replace("driver   : nvidia-driver-610-open - distro non-free\n", "")
+        quoted_prop = proprietary.replace("'", "'\\''")
+        self.assertEqual(
+            bash(f"nexrec_nvidia_driver_select_package '{quoted_prop}'"),
+            "nvidia-driver-610",
+        )
+        only_old = """driver   : nvidia-driver-595-open - distro non-free recommended
+"""
+        self.assertEqual(
+            bash(f"nexrec_nvidia_driver_select_package '{only_old}' || echo missing"),
+            "missing",
+        )
+        self.assertEqual(bash("nexrec_nvidia_driver_select_package ''"), "nvidia-driver-610-open")
+        self.assertEqual(bash("nexrec_nvidia_driver_major '595.91.07'"), "595")
+        self.assertEqual(
+            bash("nexrec_nvidia_driver_major 'NVIDIA RTX 2000 Ada Generation, 595.91.07'"),
+            "595",
+        )
+        self.assertEqual(
+            bash("nexrec_nvidia_driver_is_current '595.91.07' && echo yes || echo no"),
+            "no",
+        )
+        self.assertEqual(
+            bash("nexrec_nvidia_driver_is_current '610.57.01' && echo yes || echo no"),
+            "yes",
+        )
+        self.assertEqual(
+            bash("nexrec_nvidia_driver_is_current '580.95.05' && echo yes || echo no"),
+            "no",
         )
         self.assertEqual(
             bash('nexrec_nvidia_install_wanted && echo yes || echo no'),

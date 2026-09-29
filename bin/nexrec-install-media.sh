@@ -25,11 +25,12 @@
 # /usr/include, /usr/local/include, /opt/decklink-sdk, /usr/src/decklink-sdk,
 # and "Blackmagic DeckLink SDK *" under /opt, /usr/src, and /usr/local/src.
 # NVENC/NVDEC: an NVIDIA display-class PCI device (vendor 10de) causes this
-# script to install Ubuntu's recommended nvidia-driver package (encode and
-# decode libraries included) and to compile FFmpeg with ffnvcodec, nvenc,
-# nvdec, and cuvid. nvidia-smi, /usr/local/cuda, CUDA_HOME, or existing ffnvcodec headers
-# also turn the compile on. NEXREC_ENABLE_NVENC=1 forces the compile; =0 leaves
-# it off. NEXREC_INSTALL_NVIDIA=0 skips the driver package. A missing GPU, or a
+# script to install nvidia-driver-610-open (or nvidia-driver-610) before the
+# FFmpeg compile. nv-codec-headers 13.1 needs driver 610. An older loaded
+# driver is replaced; Ubuntu's "recommended" package is not used. nvidia-smi,
+# /usr/local/cuda, CUDA_HOME, or existing ffnvcodec headers also turn the
+# compile on. NEXREC_ENABLE_NVENC=1 forces the compile; =0 leaves it off.
+# NEXREC_INSTALL_NVIDIA=0 skips the driver package. A missing GPU, or a
 # driver that still needs a reboot, does not fail the build.
 
 NEXREC_FFMPEG_VERSION=9.0.2
@@ -41,6 +42,10 @@ NEXREC_MEDIAMTX_VERSION=v1.21.1
 NEXREC_NVCODEC_VERSION=13.1.15.0
 NEXREC_NVCODEC_URL=https://github.com/FFmpeg/nv-codec-headers/releases/download/n13.1.15.0/nv-codec-headers-13.1.15.0.tar.gz
 NEXREC_NVCODEC_SHA256=52532ceade3d5c1af62624986f13cf01b63c910576b08c0c278756c5e4b41ad0
+# Headers 13.1 speak NVENC API 13.1. FFmpeg refuses older drivers (595 is API 13.0).
+NEXREC_NVIDIA_DRIVER_MIN=610
+NEXREC_NVIDIA_DRIVER_PKG=nvidia-driver-610-open
+NEXREC_NVIDIA_DRIVER_PKG_FALLBACK=nvidia-driver-610
 
 nexrec_media_log() { printf '[nexrec-media] %s\n' "$*"; }
 nexrec_media_warn() { printf '[nexrec-media] WARN %s\n' "$*" >&2; }
@@ -286,19 +291,43 @@ nexrec_nvidia_gpu_present() {
   return 1
 }
 
-# ubuntu-drivers devices lines look like:
-#   driver   : nvidia-driver-550 - distro non-free recommended
-# Prefer the recommended nvidia-driver package. Ignore nouveau.
-nexrec_nvidia_driver_package_from_devices() {
-  local text="$1" line pkg
-  line="$(printf '%s\n' "$text" | grep -E '^[[:space:]]*driver[[:space:]]*:' | grep -i 'nvidia-driver-' | grep -i recommended | head -n 1 || true)"
-  if [[ -z "$line" ]]; then
-    line="$(printf '%s\n' "$text" | grep -E '^[[:space:]]*driver[[:space:]]*:' | grep -i 'nvidia-driver-' | head -n 1 || true)"
+# Major version from "595.91.07" or "NVIDIA RTX 2000 Ada Generation, 595.91.07".
+nexrec_nvidia_driver_major() {
+  local ver="$1"
+  ver="${ver##*,}"
+  ver="${ver//[[:space:]]/}"
+  [[ "$ver" =~ ^([0-9]+) ]] || return 1
+  printf '%s\n' "${BASH_REMATCH[1]}"
+}
+
+# True when the running driver is new enough for the pinned nv-codec-headers.
+nexrec_nvidia_driver_is_current() {
+  local ver="$1" min="${2:-$NEXREC_NVIDIA_DRIVER_MIN}" major
+  major="$(nexrec_nvidia_driver_major "$ver")" || return 1
+  [[ "$major" -ge "$min" ]]
+}
+
+# Prefer the tested open package when ubuntu-drivers lists it, else the
+# proprietary package of the same branch. An empty device list means the
+# probe failed; the caller still tries the tested package. A list that has
+# other NVIDIA drivers but not this branch is a miss.
+nexrec_nvidia_driver_select_package() {
+  local text="$1"
+  local prefer="${NEXREC_NVIDIA_DRIVER_PKG}"
+  local fallback="${NEXREC_NVIDIA_DRIVER_PKG_FALLBACK}"
+  if [[ -z "${text//[[:space:]]/}" ]]; then
+    printf '%s\n' "$prefer"
+    return 0
   fi
-  [[ -n "$line" ]] || return 1
-  pkg="$(printf '%s\n' "$line" | sed -E 's/^[[:space:]]*driver[[:space:]]*:[[:space:]]*([^[:space:]]+).*/\1/')"
-  [[ "$pkg" == nvidia-driver-* ]] || return 1
-  printf '%s\n' "$pkg"
+  if printf '%s\n' "$text" | grep -Eq "^[[:space:]]*driver[[:space:]]*:[[:space:]]*${prefer}[[:space:]]"; then
+    printf '%s\n' "$prefer"
+    return 0
+  fi
+  if printf '%s\n' "$text" | grep -Eq "^[[:space:]]*driver[[:space:]]*:[[:space:]]*${fallback}[[:space:]]"; then
+    printf '%s\n' "$fallback"
+    return 0
+  fi
+  return 1
 }
 
 nexrec_nvidia_install_wanted() {
@@ -314,9 +343,12 @@ nexrec_nvidia_driver_loaded() {
   nvidia-smi -L >/dev/null 2>&1
 }
 
-nexrec_nvidia_driver_packaged() {
-  dpkg-query -W -f '${Package} ${Status}\n' 'nvidia-driver-[0-9]*' 2>/dev/null \
-    | grep -q 'install ok installed'
+nexrec_nvidia_pkg_installed() {
+  dpkg-query -W -f '${Status}' "$1" 2>/dev/null | grep -q 'install ok installed'
+}
+
+nexrec_nvidia_running_version() {
+  nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null | head -n 1 || true
 }
 
 nexrec_install_nvidia_driver() {
@@ -328,14 +360,14 @@ nexrec_install_nvidia_driver() {
   if ! nexrec_nvidia_gpu_present; then
     return 0
   fi
+  ver=""
   if nexrec_nvidia_driver_loaded; then
-    ver="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
-    nexrec_media_log "NVIDIA driver already loaded${ver:+: $ver}"
-    return 0
-  fi
-  if nexrec_nvidia_driver_packaged; then
-    nexrec_media_warn "NVIDIA driver package is installed but the kernel module is not loaded. Reboot before NVENC/NVDEC. Secure Boot must trust the module."
-    return 0
+    ver="$(nexrec_nvidia_running_version)"
+    if nexrec_nvidia_driver_is_current "$ver"; then
+      nexrec_media_log "NVIDIA driver ${ver} meets ${NEXREC_NVIDIA_DRIVER_MIN} (nv-codec-headers ${NEXREC_NVCODEC_VERSION})"
+      return 0
+    fi
+    nexrec_media_warn "NVIDIA driver ${ver:-unknown} is older than ${NEXREC_NVIDIA_DRIVER_MIN}; nv-codec-headers ${NEXREC_NVCODEC_VERSION} needs NVENC API 13.1"
   fi
   export DEBIAN_FRONTEND=noninteractive
   if ! apt-get install -y -qq ubuntu-drivers-common pciutils; then
@@ -343,29 +375,28 @@ nexrec_install_nvidia_driver() {
     return 0
   fi
   devices="$(ubuntu-drivers devices 2>/dev/null || true)"
-  pkg=""
-  if [[ -n "$devices" ]]; then
-    pkg="$(nexrec_nvidia_driver_package_from_devices "$devices" || true)"
+  pkg="$(nexrec_nvidia_driver_select_package "$devices" || true)"
+  if [[ -z "$pkg" ]]; then
+    nexrec_media_warn "this GPU's driver list has neither ${NEXREC_NVIDIA_DRIVER_PKG} nor ${NEXREC_NVIDIA_DRIVER_PKG_FALLBACK}; FFmpeg will still be built with NVENC headers"
+    return 0
   fi
-  if [[ -n "$pkg" ]]; then
-    nexrec_media_log "installing $pkg (Ubuntu recommended; includes libnvidia-encode and libnvidia-decode)"
-    if ! apt-get install -y -qq "$pkg"; then
-      nexrec_media_warn "apt install $pkg failed; trying ubuntu-drivers install"
-      if ! ubuntu-drivers install; then
-        nexrec_media_warn "ubuntu-drivers install failed; FFmpeg will still be built with NVENC/NVDEC headers"
-      fi
-    fi
-  else
-    nexrec_media_log "installing the Ubuntu-recommended NVIDIA driver"
-    if ! ubuntu-drivers install; then
-      nexrec_media_warn "ubuntu-drivers install failed; FFmpeg will still be built with NVENC/NVDEC headers"
-    fi
+  if nexrec_nvidia_pkg_installed "$pkg"; then
+    nexrec_media_warn "${pkg} is installed but the running driver is ${ver:-not loaded}. Reboot before NVENC. Secure Boot must trust the module."
+    return 0
   fi
+  nexrec_media_log "installing ${pkg} before the FFmpeg compile (libnvidia-encode and libnvidia-decode)"
+  if ! apt-get install -y -qq "$pkg"; then
+    nexrec_media_warn "apt install $pkg failed; FFmpeg will still be built with NVENC/NVDEC headers"
+    return 0
+  fi
+  ver=""
   if nexrec_nvidia_driver_loaded; then
-    ver="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
-    nexrec_media_log "NVIDIA driver loaded${ver:+: $ver}"
+    ver="$(nexrec_nvidia_running_version)"
+  fi
+  if nexrec_nvidia_driver_is_current "$ver"; then
+    nexrec_media_log "NVIDIA driver ${ver} meets ${NEXREC_NVIDIA_DRIVER_MIN}"
   else
-    nexrec_media_warn "NVIDIA driver is not active yet. Reboot so NVENC/NVDEC can open the GPU. Secure Boot must trust the module."
+    nexrec_media_warn "reboot so driver ${NEXREC_NVIDIA_DRIVER_MIN} replaces ${ver:-the unloaded module}. Secure Boot must trust it. NVENC stays unavailable until then."
   fi
   return 0
 }
