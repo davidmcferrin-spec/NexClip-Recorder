@@ -49,6 +49,8 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("-f", args)
         self.assertIn("decklink", args)
         self.assertIn("DeckLink Duo (1)", args)
+        self.assertEqual(args[args.index("-audio_input") + 1], "embedded")
+        self.assertLess(args.index("-audio_input"), args.index("-i"))
 
     def test_copy_native_no_upconvert(self):
         args = encode_args({"copy_native": 1, "live_transcode": 0, "upconvert_1080i": 0})

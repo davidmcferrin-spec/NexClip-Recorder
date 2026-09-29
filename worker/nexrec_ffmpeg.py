@@ -84,7 +84,10 @@ def input_args(source: dict[str, Any]) -> list[str]:
     elif t == "decklink":
         device = source.get("decklink_device") or source.get("DECKLINK_DEVICE") or "DeckLink Quad 2 (1)"
         fmt = source.get("decklink_format") or source.get("DECKLINK_FORMAT") or ""
-        args += ["-f", "decklink"]
+        # Unset audio input follows Desktop Video, which is often analog.
+        # SDI program audio is the embedded pairs. Channel count stays at
+        # FFmpeg's default of 2 (pair 1) until multi-pair metering exists.
+        args += ["-f", "decklink", "-audio_input", "embedded"]
         if fmt:
             args += ["-format_code", fmt]
         args += ["-i", device]

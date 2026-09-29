@@ -362,6 +362,16 @@ scopes.destroy();
 
 const vu = Vu.attach({ container: pane, video: video, floatable: true });
 assert.ok(vu);
+function collect(el, hits) {
+  (el.children || []).forEach(function (child) {
+    if (child.tagName === "INPUT") hits.push(child);
+    if (child.attrs && child.attrs["data-vu"] === "mute") hits.push(child);
+    collect(child, hits);
+  });
+}
+const listenHits = [];
+collect(vu.root, listenHits);
+assert.strictEqual(listenHits.length, 0);
 assert.strictEqual(vu.getVisible(), false);
 assert.strictEqual(vu.getChannels(), 2);
 assert.ok(vu.getMonitorNote().includes("stereo AAC proxy"));

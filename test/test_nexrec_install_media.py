@@ -168,6 +168,86 @@ class InstallMediaTests(unittest.TestCase):
                 "",
             )
 
+    def test_sdk_is_staged_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            vendor = root / "Blackmagic DeckLink SDK 14.4" / "Linux" / "include"
+            vendor.mkdir(parents=True)
+            (vendor / "DeckLinkAPI.h").write_text("/* from vendor */\n", encoding="utf-8")
+            (vendor / "DeckLinkAPIDispatch.cpp").write_text("// from vendor\n", encoding="utf-8")
+            (vendor / "DeckLinkAPIVersion.h").write_text("/* ver */\n", encoding="utf-8")
+            (vendor / "DeckLinkAPIModes.h").write_text("/* modes */\n", encoding="utf-8")
+            stage = root / "decklink-sdk"
+            found = bash(
+                "nexrec_prepare_decklink_sdk",
+                env={
+                    "NEXREC_DECKLINK_SDK": str(root),
+                    "NEXREC_DECKLINK_SCAN_SYSTEM": "0",
+                    "NEXREC_DECKLINK_SDK_DIR": str(stage),
+                },
+            )
+            self.assertEqual(found, str(stage))
+            self.assertEqual((stage / "DeckLinkAPI.h").read_text(encoding="utf-8"), "/* from vendor */\n")
+            self.assertEqual((stage / "DeckLinkAPIModes.h").read_text(encoding="utf-8"), "/* modes */\n")
+            self.assertFalse(" " in found)
+            other = root / "other-sdk"
+            other.mkdir()
+            (other / "DeckLinkAPI.h").write_text("/* other */\n", encoding="utf-8")
+            (other / "DeckLinkAPIDispatch.cpp").write_text("// other\n", encoding="utf-8")
+            (other / "DeckLinkAPIVersion.h").write_text("/* other */\n", encoding="utf-8")
+            again = bash(
+                "nexrec_prepare_decklink_sdk",
+                env={
+                    "NEXREC_DECKLINK_SDK": str(other),
+                    "NEXREC_DECKLINK_SCAN_SYSTEM": "0",
+                    "NEXREC_DECKLINK_SDK_DIR": str(stage),
+                },
+            )
+            self.assertEqual(again, str(stage))
+            self.assertEqual((stage / "DeckLinkAPI.h").read_text(encoding="utf-8"), "/* from vendor */\n")
+
+    def test_sdk_16_zip_installs_full_include(self):
+        import zipfile
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            home = root / "home"
+            home.mkdir()
+            prefix = "Blackmagic DeckLink SDK 16.0/Linux/include/"
+            zpath = home / "Blackmagic_DeckLink_SDK_16.0.zip"
+            with zipfile.ZipFile(zpath, "w") as zf:
+                zf.writestr(prefix + "DeckLinkAPI.h", "/* zip */\n")
+                zf.writestr(prefix + "DeckLinkAPIDispatch.cpp", "// zip\n")
+                zf.writestr(prefix + "DeckLinkAPIVersion.h", "/* 16.0 */\n")
+                zf.writestr(prefix + "DeckLinkAPIModes.h", "/* modes */\n")
+            stage = root / "opt-decklink-sdk"
+            found = bash(
+                "nexrec_prepare_decklink_sdk",
+                env={
+                    "NEXREC_DECKLINK_SDK_HOME": str(home),
+                    "NEXREC_DECKLINK_SDK_DIR": str(stage),
+                    "NEXREC_DECKLINK_UNZIP_DIR": str(root / "unzip"),
+                    "NEXREC_DECKLINK_SCAN_SYSTEM": "0",
+                },
+            )
+            self.assertEqual(found, str(stage))
+            self.assertEqual((stage / "DeckLinkAPI.h").read_text(encoding="utf-8"), "/* zip */\n")
+            self.assertEqual((stage / "DeckLinkAPIModes.h").read_text(encoding="utf-8"), "/* modes */\n")
+            with zipfile.ZipFile(zpath, "w") as zf:
+                zf.writestr(prefix + "DeckLinkAPI.h", "/* replaced */\n")
+                zf.writestr(prefix + "DeckLinkAPIDispatch.cpp", "// zip\n")
+                zf.writestr(prefix + "DeckLinkAPIVersion.h", "/* 16.0 */\n")
+            again = bash(
+                "nexrec_prepare_decklink_sdk",
+                env={
+                    "NEXREC_DECKLINK_SDK_HOME": str(home),
+                    "NEXREC_DECKLINK_SDK_DIR": str(stage),
+                    "NEXREC_DECKLINK_UNZIP_DIR": str(root / "unzip"),
+                    "NEXREC_DECKLINK_SCAN_SYSTEM": "0",
+                },
+            )
+            self.assertEqual(again, str(stage))
+            self.assertEqual((stage / "DeckLinkAPI.h").read_text(encoding="utf-8"), "/* zip */\n")
+
     def test_nvenc_switch(self):
         self.assertEqual(
             bash('nexrec_nvenc_wanted && echo yes || echo no', env={"NEXREC_ENABLE_NVENC": "0"}),

@@ -20,10 +20,12 @@
 # Replace an existing MediaMTX binary with NEXREC_FORCE_MEDIAMTX=1.
 # Replace /etc/nexrec/mediamtx.yml with NEXREC_FORCE_MEDIAMTX_CONFIG=1.
 #
-# SDK headers: NEXREC_DECKLINK_SDK or DECKLINK_SDK (SDK root or the directory
-# that contains DeckLinkAPI.h and DeckLinkAPIDispatch.cpp). Also checks
-# /usr/include, /usr/local/include, /opt/decklink-sdk, /usr/src/decklink-sdk,
-# and "Blackmagic DeckLink SDK *" under /opt, /usr/src, and /usr/local/src.
+# DeckLink SDK ${NEXREC_DECKLINK_SDK_VERSION} headers live in
+# ${NEXREC_DECKLINK_SDK_DIR:-/opt/decklink-sdk}. When that directory already
+# has the headers, later runs compile only against it. When it is empty,
+# setup unzips Blackmagic_DeckLink_SDK_16.0.zip from /home/nexstar (or uses
+# the unpacked "Blackmagic DeckLink SDK 16.0" tree beside it) and copies the
+# whole Linux/include directory there. Desktop Video is a separate package.
 # NVENC/NVDEC: an NVIDIA display-class PCI device (vendor 10de) causes this
 # script to install nvidia-driver-610-open (or nvidia-driver-610) before the
 # FFmpeg compile. nv-codec-headers 13.1 needs driver 610. An older loaded
@@ -44,6 +46,9 @@ NEXREC_NVCODEC_URL=https://github.com/FFmpeg/nv-codec-headers/releases/download/
 NEXREC_NVCODEC_SHA256=52532ceade3d5c1af62624986f13cf01b63c910576b08c0c278756c5e4b41ad0
 # Headers 13.1 speak NVENC API 13.1. FFmpeg refuses older drivers (595 is API 13.0).
 NEXREC_NVIDIA_DRIVER_MIN=610
+
+# Blackmagic DeckLink SDK. Headers install to /opt/decklink-sdk.
+NEXREC_DECKLINK_SDK_VERSION=16.0
 NEXREC_NVIDIA_DRIVER_PKG=nvidia-driver-610-open
 NEXREC_NVIDIA_DRIVER_PKG_FALLBACK=nvidia-driver-610
 
@@ -255,6 +260,111 @@ nexrec_find_decklink_include() {
     done
   done
   return 1
+}
+
+# Compile-time include dir. setup.sh owns this path.
+nexrec_decklink_sdk_dir() {
+  printf '%s\n' "${NEXREC_DECKLINK_SDK_DIR:-/opt/decklink-sdk}"
+}
+
+nexrec_decklink_zip_name() {
+  printf '%s\n' "Blackmagic_DeckLink_SDK_${NEXREC_DECKLINK_SDK_VERSION}.zip"
+}
+
+nexrec_decklink_tree_name() {
+  printf '%s\n' "Blackmagic DeckLink SDK ${NEXREC_DECKLINK_SDK_VERSION}"
+}
+
+# Every header next to DeckLinkAPI.h. The main header includes its siblings.
+nexrec_install_decklink_include() {
+  local src="$1" dest="$2"
+  mkdir -p "$dest"
+  cp -a "$src"/. "$dest"/
+}
+
+nexrec_unzip_to() {
+  local zip="$1" dest="$2"
+  mkdir -p "$dest"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q -o "$zip" -d "$dest"
+    return 0
+  fi
+  python3 - "$zip" "$dest" <<'PY'
+import sys, zipfile
+zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])
+PY
+}
+
+nexrec_decklink_pin_roots() {
+  if [[ -n "${NEXREC_DECKLINK_SDK_HOME:-}" ]]; then
+    printf '%s\n' "$NEXREC_DECKLINK_SDK_HOME"
+  fi
+  if [[ "${NEXREC_DECKLINK_SCAN_SYSTEM:-1}" == "0" ]]; then
+    return 0
+  fi
+  printf '%s\n' /home/nexstar
+}
+
+# Print an include dir from the pinned zip or the unpacked tree. Unzips into $1.
+nexrec_materialize_decklink_pin() {
+  local work="$1" root zipname treename zip src
+  zipname="$(nexrec_decklink_zip_name)"
+  treename="$(nexrec_decklink_tree_name)"
+  if [[ -n "${NEXREC_DECKLINK_SDK_ZIP:-}" && -f "${NEXREC_DECKLINK_SDK_ZIP}" ]]; then
+    rm -rf "$work"
+    nexrec_unzip_to "$NEXREC_DECKLINK_SDK_ZIP" "$work"
+    nexrec_decklink_include_dir "$work"
+    return
+  fi
+  while IFS= read -r root; do
+    [[ -n "$root" ]] || continue
+    zip="$root/$zipname"
+    if [[ -f "$zip" ]]; then
+      rm -rf "$work"
+      nexrec_unzip_to "$zip" "$work"
+      if src="$(nexrec_decklink_include_dir "$work")"; then
+        printf '%s\n' "$src"
+        return 0
+      fi
+    fi
+    if [[ -d "$root/$treename" ]]; then
+      if src="$(nexrec_decklink_include_dir "$root/$treename")"; then
+        printf '%s\n' "$src"
+        return 0
+      fi
+    fi
+  done < <(nexrec_decklink_pin_roots)
+  return 1
+}
+
+# Print /opt/decklink-sdk once the full include tree is there.
+# An existing tree is kept. An empty tree is filled from SDK 16.0.
+nexrec_prepare_decklink_sdk() {
+  local dest src work
+  dest="$(nexrec_decklink_sdk_dir)"
+  if nexrec_decklink_headers_ok "$dest"; then
+    printf '%s\n' "$dest"
+    return 0
+  fi
+  work="${NEXREC_DECKLINK_UNZIP_DIR:-/tmp/nexrec-decklink-sdk-${NEXREC_DECKLINK_SDK_VERSION}}"
+  if src="$(nexrec_materialize_decklink_pin "$work")"; then
+    nexrec_install_decklink_include "$src" "$dest"
+    rm -rf "$work"
+    nexrec_decklink_headers_ok "$dest" || return 1
+    printf '[nexrec-media] DeckLink SDK %s headers installed to %s\n' "$NEXREC_DECKLINK_SDK_VERSION" "$dest" >&2
+    printf '%s\n' "$dest"
+    return 0
+  fi
+  rm -rf "$work"
+  if ! src="$(nexrec_find_decklink_include)"; then
+    return 1
+  fi
+  if [[ "$src" != "$dest" ]]; then
+    nexrec_install_decklink_include "$src" "$dest"
+    printf '[nexrec-media] DeckLink SDK headers installed to %s\n' "$dest" >&2
+  fi
+  nexrec_decklink_headers_ok "$dest" || return 1
+  printf '%s\n' "$dest"
 }
 
 # VGA 0300, 3D 0302, display 0380. Audio and other 10de functions do not count.
@@ -515,12 +625,12 @@ nexrec_install_ffmpeg() {
   nexrec_install_build_deps
   mkdir -p "$work" "$stamp_dir" "$prefix/bin"
 
-  if sdk="$(nexrec_find_decklink_include)"; then
+  if sdk="$(nexrec_prepare_decklink_sdk)"; then
     want_deck=1
     nexrec_media_log "DeckLink SDK headers: $sdk (--enable-decklink)"
   else
-    nexrec_media_warn "DeckLink SDK headers not found. Building IP-capable FFmpeg without --enable-decklink."
-    nexrec_media_warn "Set DECKLINK_SDK or NEXREC_DECKLINK_SDK to the SDK include dir (DeckLinkAPI.h, DeckLinkAPIVersion.h, DeckLinkAPIDispatch.cpp)."
+    nexrec_media_warn "DeckLink SDK headers are not in $(nexrec_decklink_sdk_dir). Building IP-capable FFmpeg without --enable-decklink."
+    nexrec_media_warn "Place Blackmagic_DeckLink_SDK_${NEXREC_DECKLINK_SDK_VERSION}.zip in /home/nexstar. setup.sh unzips it into $(nexrec_decklink_sdk_dir)."
     nexrec_media_warn "Desktop Video drivers (/dev/blackmagic) are separate from those SDK headers and are not installed here."
   fi
 
@@ -586,14 +696,8 @@ nexrec_install_ffmpeg() {
   [[ "$want_zvbi" == "1" ]] && args+=(--enable-libzvbi)
   [[ "$want_nvenc" == "1" ]] && args+=(--enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid)
   if [[ "$want_deck" == "1" ]]; then
-    if [[ "$sdk" == *" "* ]]; then
-      nexrec_media_warn "DeckLink SDK path contains spaces ($sdk). Rename the folder and re-run; building without DeckLink."
-      want_deck=0
-      desired="$(nexrec_ffmpeg_desired_stamp "$want_deck" "$want_nvenc" "$want_fdk" "$want_srt" "$want_zvbi" "$prefix")"
-    else
-      # decklink_*.cpp is compiled with g++. --extra-cflags does not reach CXXFLAGS.
-      args+=(--enable-decklink --extra-cflags="-I${sdk}" --extra-cxxflags="-I${sdk}")
-    fi
+    # decklink_*.cpp is compiled with g++. --extra-cflags does not reach CXXFLAGS.
+    args+=(--enable-decklink --extra-cflags="-I${sdk}" --extra-cxxflags="-I${sdk}")
   fi
 
   nexrec_media_log "configure FFmpeg ${NEXREC_FFMPEG_VERSION}: ${args[*]}"
@@ -710,12 +814,8 @@ nexrec_install_decklink_status() {
   local prefix="${NEXREC_FFMPEG_PREFIX:-/usr/local}"
   local root sdk
   root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-  if ! sdk="$(nexrec_find_decklink_include)"; then
-    nexrec_media_warn "skipped nexrec-decklink-status (no DeckLink SDK headers). Capture still needs those headers at FFmpeg build time."
-    return 0
-  fi
-  if [[ "$sdk" == *" "* ]]; then
-    nexrec_media_warn "skipped nexrec-decklink-status; SDK path contains spaces: $sdk"
+  if ! sdk="$(nexrec_prepare_decklink_sdk)"; then
+    nexrec_media_warn "skipped nexrec-decklink-status (no DeckLink SDK headers in $(nexrec_decklink_sdk_dir))."
     return 0
   fi
   make -C "$root/tools/decklink-status" SDK="$sdk"

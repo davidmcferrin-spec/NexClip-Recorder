@@ -9,8 +9,9 @@
  * Spectrum (nexrec-spectrum.js) taps getSpectrumPair() on this graph.
  * Do not open a second MediaStreamSource.
  *
- * The <video> stays muted. Listen/mute and volume are this browser only
- * (Web Audio master gain). Not CALM / LKFS — that stays on the export editor.
+ * The <video> stays muted. Listen/mute and volume live on the Live page bar
+ * and drive this Web Audio master gain. Not CALM / LKFS — that stays on the
+ * export editor.
  *
  * Per-browser prefs (VU default off, listen default muted):
  *   nexrec-vu-on          1 | 0
@@ -288,10 +289,6 @@
 }
 .nexrec-vu-toolbar button:disabled { opacity: .35; cursor: not-allowed; }
 .nexrec-vu-toolbar button[hidden] { display: none !important; }
-.nexrec-vu-vol {
-  width: 64px; height: 14px; margin: 0; padding: 0;
-  accent-color: var(--acc, #3ecf8e); cursor: pointer;
-}
 .nexrec-vu-note {
   color: #98a6b5; font-size: 9px; letter-spacing: .02em; text-align: right;
 }
@@ -384,16 +381,6 @@
     const root = el("div", "nexrec-vu");
     root.hidden = true;
     const toolbar = el("div", "nexrec-vu-toolbar");
-    const btnMute = el("button", "", "Listen");
-    btnMute.type = "button";
-    btnMute.setAttribute("data-vu", "mute");
-    const vol = document.createElement("input");
-    vol.type = "range";
-    vol.className = "nexrec-vu-vol";
-    vol.min = "0";
-    vol.max = "1";
-    vol.step = "0.05";
-    vol.setAttribute("aria-label", "Preview listen volume");
     const btnStereo = el("button", "", "St");
     btnStereo.type = "button";
     btnStereo.hidden = true;
@@ -408,8 +395,6 @@
     const allBtn = el("button", "", "ALL");
     allBtn.type = "button";
     allBtn.title = "Clear engineering solo";
-    toolbar.appendChild(btnMute);
-    toolbar.appendChild(vol);
     toolbar.appendChild(btnStereo);
     toolbar.appendChild(btnSurround);
     toolbar.appendChild(btnScale);
@@ -442,7 +427,6 @@
     let playout = getPlayoutPref();
     let solo = getSoloPref();
     let hasAudio = false;
-    vol.value = String(volume);
 
     let ctx = null;
     let source = null;
@@ -572,15 +556,6 @@
       return scaleOn;
     }
 
-    function paintMute() {
-      btnMute.textContent = listen ? "Mute" : "Listen";
-      btnMute.classList.toggle("active", listen);
-      btnMute.title = listen
-        ? "Mute preview audio (this browser only)"
-        : "Listen to preview audio (this browser only)";
-      btnMute.setAttribute("aria-pressed", listen ? "true" : "false");
-    }
-
     function paintToolbar() {
       const mode = playoutMode();
       btnStereo.hidden = !channelInfo.has51;
@@ -594,7 +569,6 @@
         btn.classList.toggle("dimmed", solo >= 0 && !isSolo);
         btn.setAttribute("aria-pressed", isSolo ? "true" : "false");
       });
-      paintMute();
       paintNote();
     }
 
@@ -616,7 +590,6 @@
       volume = Math.max(0, Math.min(1, Number(v)));
       if (!Number.isFinite(volume)) volume = 0.2;
       setVolumePref(volume);
-      vol.value = String(volume);
       if (masterGain) masterGain.gain.value = effectiveMasterGain();
       return volume;
     }
@@ -640,7 +613,6 @@
       if (masterGain) masterGain.gain.value = effectiveMasterGain();
       video.muted = true;
       if (listen) resume();
-      paintMute();
     }
 
     function rebuildMeterDom() {
@@ -876,18 +848,6 @@
       ev.stopPropagation();
     }
 
-    btnMute.addEventListener("click", function (ev) {
-      stop(ev);
-      ev.preventDefault();
-      resume();
-      setListen(!listen);
-    });
-    vol.addEventListener("input", function (ev) {
-      stop(ev);
-      setVolume(vol.value);
-    });
-    vol.addEventListener("click", stop);
-    vol.addEventListener("pointerdown", stop);
     btnStereo.addEventListener("click", function (ev) {
       stop(ev);
       resume();
