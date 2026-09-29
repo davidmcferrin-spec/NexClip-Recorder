@@ -129,14 +129,19 @@
     });
     var allc = all[1].chunks || [];
     if (allc.length) {
-      t0 = Date.parse(allc[allc.length - 1].start_at);
-      t1 = Date.parse(allc[0].end_at || allc[0].start_at);
-      if (!isFinite(t0) || !isFinite(t1) || t1 <= t0) { t0 = Date.now() - 3600000; t1 = Date.now(); }
+      archive0 = Date.parse(allc[allc.length - 1].start_at);
+      archive1 = Date.parse(allc[0].end_at || allc[0].start_at);
+      if (!isFinite(archive0) || !isFinite(archive1) || archive1 <= archive0) {
+        archive1 = Date.now();
+        archive0 = archive1 - 3600000;
+      }
     } else {
-      t1 = Date.now(); t0 = t1 - 3600000;
+      archive1 = Date.now();
+      archive0 = archive1 - 3600000;
     }
-    archive0 = t0;
-    archive1 = t1;
+    t1 = archive1;
+    t0 = Math.max(archive0, t1 - 3600000);
+    if (t1 <= t0) t0 = archive0;
     play = t0;
     fillRangeFields();
     var vol = document.getElementById("listen-vol");

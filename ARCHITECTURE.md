@@ -94,7 +94,7 @@ preview encode are all FFmpeg.** We do not invent a muxer.
 | IP ingest + MP4 segments | FFmpeg `segment` muxer, `segment_atclocktime=1` | Wall-clock 5-minute files, NTP-aligned names/timecode |
 | Concat + trim export | FFmpeg concat demuxer + `-ss`/`-t`, then `+faststart` | Premiere / FCPX |
 | DeckLink | FFmpeg `-f decklink` when FFmpeg is built `--enable-decklink` | `setup.sh` compiles FFmpeg 9.0.2 into `/usr/local` and passes `--enable-decklink` when SDK headers are present. One process per sub-device. Preview is a tee in that process. The SDK binary is status-only (`tools/decklink-status`), not a capture path. |
-| WebRTC preview | FFmpeg publishes **proxy** H.264+AAC to MediaMTX RTSP; browsers use **WHEP** | Same egress idea as NexVUE. MediaMTX does **not** transcode. `setup.sh` installs pinned MediaMTX v1.21.1. |
+| WebRTC preview | FFmpeg publishes **proxy** H.264+Opus to MediaMTX RTSP; browsers use **WHEP** | Same egress idea as NexVUE. MediaMTX does **not** transcode, and WHEP cannot carry AAC. `setup.sh` installs pinned MediaMTX v1.21.1. |
 
 NexVUE uses GStreamer + Quick Sync because it is a live return-feed with a
 sub-250 ms budget and exclusive DeckLink opens. Recorder priorities are
@@ -187,7 +187,7 @@ ffmpeg -hide_banner -nostdin -use_wallclock_as_timestamps 1 \
   -filter_complex "[0:v]split=2[vrec][vp0];[vp0]yadif=...,scale=960x540,fps=30[vprev];[0:a]asplit=2[arec][aprev]" \
   -map "[vrec]" -map "[arec]" ...H.264 High + AAC, +ildct+ilme unless upconvert... \
   -f segment -segment_time 300 -segment_atclocktime 1 ...mp4 \
-  -map "[vprev]" -map "[aprev]" ...proxy... -f rtsp rtsp://127.0.0.1:8554/in0
+  -map "[vprev]" -map "[aprev]" ...proxy H.264 + Opus... -f rtsp rtsp://127.0.0.1:8554/in0
 ```
 
 `-format_code` is optional. 1080i stays 1080i unless that input has
@@ -225,7 +225,7 @@ Every recordable input has a MediaMTX path `in0`…`in9`:
 
 1. `nexrec-preview@id` (IP) or the DeckLink tee inside `nexrec-record@id` publishes
    `rtsp://127.0.0.1:8554/{preview_path}` at **proxy** size (default 960×540,
-   ~1.5 Mbps H.264 + AAC).
+   ~1.5 Mbps H.264 + Opus).
 2. MediaMTX restamps to WHEP at `https://{host}:8889/{preview_path}/whep`.
 3. The live UI requests `/api/auth?action=whep_jwt` then POSTs SDP (NexVUE
    player pattern).
@@ -331,7 +331,7 @@ See `docs/FEATURES.md`. Summary:
 - Live WFM, vectorscope, VU, and 64-band RTA are confidence overlays on the
   **selected** pane. They sample the decoded WHEP `<video>` (canvas + one
   Web Audio graph). They do not modify `record_argv`. The proxy is stereo
-  AAC, so this is not 64-channel SDI/AES embed metering.
+  Opus, so this is not 64-channel SDI/AES embed metering.
 
 ## 12. Configuration surface
 

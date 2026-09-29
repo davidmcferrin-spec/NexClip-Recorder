@@ -4,7 +4,7 @@
  * 64 log-spaced bars, 10 Hz–22 kHz, per side (L over R), −60…0 dBFS.
  * Taps NexRecVu.getSpectrumPair() — never opens a second MediaStreamSource.
  *
- * This is the listen pair of the decoded WHEP preview (stereo AAC today).
+ * This is the listen pair of the decoded WHEP preview (stereo Opus).
  * It is not 64-channel SDI/AES embed metering; that remains NEXT.
  *
  * Click the strip to pop a ~2× page-level panel. Esc or click again docks.
@@ -32,7 +32,7 @@
   const POS_PAD = 8;
   const LIMIT =
     "64 log-spaced bands, 10 Hz–22 kHz, from the preview listen pair. " +
-    "Not 64-channel SDI/AES embed metering — that is NEXT; the WHEP proxy is stereo AAC.";
+    "Not 64-channel SDI/AES embed metering — that is NEXT; the WHEP proxy is stereo Opus.";
 
   function layoutFor(pop) {
     const w = pop ? 880 : 520;

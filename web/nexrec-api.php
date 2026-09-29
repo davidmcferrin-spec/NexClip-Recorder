@@ -143,6 +143,132 @@ function nexrec_export_file_allowed(string $path): bool {
     return $realFile === $realRoot || str_starts_with($realFile, $prefix);
 }
 
+function nexrec_release_session(): void {
+    if (session_status() === PHP_SESSION_ACTIVE) {
+        session_write_close();
+    }
+}
+
+/**
+ * One bytes range. null means 416. An empty header is the whole file (not partial).
+ * A satisfiable Range header is partial even when it covers every byte.
+ *
+ * @return array{0:int,1:int,2:bool}|null
+ */
+function nexrec_parse_byte_range(string $header, int $size): ?array {
+    $header = trim($header);
+    if ($header === '') {
+        return [0, $size > 0 ? $size - 1 : -1, false];
+    }
+    if (preg_match('/^bytes=\s*(\d*)-(\d*)$/i', $header, $m) !== 1 || str_contains($header, ',')) {
+        return [0, $size > 0 ? $size - 1 : -1, false];
+    }
+    $startRaw = $m[1];
+    $endRaw = $m[2];
+    if ($startRaw === '' && $endRaw === '') {
+        return [0, $size > 0 ? $size - 1 : -1, false];
+    }
+    if ($size <= 0) {
+        return null;
+    }
+    if ($startRaw === '') {
+        $suffix = (int) $endRaw;
+        if ($suffix <= 0) {
+            return null;
+        }
+        $start = max(0, $size - $suffix);
+        return [$start, $size - 1, true];
+    }
+    $start = (int) $startRaw;
+    if ($start >= $size) {
+        return null;
+    }
+    $end = $endRaw === '' ? $size - 1 : min((int) $endRaw, $size - 1);
+    if ($end < $start) {
+        return null;
+    }
+    return [$start, $end, true];
+}
+
+/**
+ * @return array{status:int,start:int,length:int,headers:array<string,string>}
+ */
+function nexrec_media_plan(string $rangeHeader, int $size, string $contentType, string $downloadName = '', string $cacheControl = 'private, max-age=60'): array {
+    $headers = [
+        'Content-Type' => $contentType,
+        'Accept-Ranges' => 'bytes',
+        'Cache-Control' => $cacheControl,
+    ];
+    if ($downloadName !== '') {
+        $safe = str_replace(["\r", "\n", '"'], '', $downloadName);
+        $headers['Content-Disposition'] = 'attachment; filename="' . $safe . '"';
+    }
+    $range = nexrec_parse_byte_range($rangeHeader, $size);
+    if ($range === null) {
+        $headers['Content-Range'] = 'bytes */' . $size;
+        return ['status' => 416, 'start' => 0, 'length' => 0, 'headers' => $headers];
+    }
+    $start = $range[0];
+    $end = $range[1];
+    $length = $end >= $start ? ($end - $start + 1) : 0;
+    if ($range[2]) {
+        $headers['Content-Range'] = 'bytes ' . $start . '-' . $end . '/' . $size;
+        $status = 206;
+    } else {
+        $status = 200;
+    }
+    $headers['Content-Length'] = (string) $length;
+    return ['status' => $status, 'start' => $start, 'length' => $length, 'headers' => $headers];
+}
+
+function nexrec_send_media_file(string $path, string $contentType, string $downloadName = '', string $cacheControl = 'private, max-age=60'): never {
+    nexrec_release_session();
+    $size = is_file($path) ? filesize($path) : false;
+    if ($size === false || !is_readable($path)) {
+        nexrec_api_fail(404, 'not found');
+    }
+    $rangeHeader = $_SERVER['HTTP_RANGE'] ?? '';
+    if (!is_string($rangeHeader)) {
+        $rangeHeader = '';
+    }
+    $plan = nexrec_media_plan($rangeHeader, $size, $contentType, $downloadName, $cacheControl);
+    ini_set('zlib.output_compression', '0');
+    while (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    if (function_exists('apache_setenv')) {
+        apache_setenv('no-gzip', '1');
+    }
+    set_time_limit(0);
+    http_response_code($plan['status']);
+    foreach ($plan['headers'] as $name => $value) {
+        header($name . ': ' . $value);
+    }
+    if ($plan['status'] === 416 || $plan['length'] === 0) {
+        exit;
+    }
+    $fh = fopen($path, 'rb');
+    if ($fh === false) {
+        exit;
+    }
+    if ($plan['start'] > 0 && fseek($fh, $plan['start']) !== 0) {
+        fclose($fh);
+        exit;
+    }
+    $left = $plan['length'];
+    while ($left > 0 && !feof($fh) && connection_status() === CONNECTION_NORMAL) {
+        $buf = fread($fh, (int) min(262144, $left));
+        if (!is_string($buf) || $buf === '') {
+            break;
+        }
+        echo $buf;
+        $left -= strlen($buf);
+        flush();
+    }
+    fclose($fh);
+    exit;
+}
+
 function nexrec_valid_input_id(string $id): bool {
     return (bool) preg_match('/^[a-z0-9][a-z0-9-]{0,31}$/', $id);
 }
@@ -540,34 +666,36 @@ try {
     }
 
     if ($action === 'chunk_media') {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_cache_limiter('');
+        }
         nexrec_require_roles([]);
         $id = (string) ($_GET['id'] ?? '');
         $st = nexrec_db()->prepare('SELECT path FROM chunks WHERE id=:i AND ready=1');
         $st->bindValue(':i', $id, SQLITE3_TEXT);
         $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
         if (!$row || !is_file($row['path'])) {
+            nexrec_release_session();
             nexrec_api_fail(404, 'not found');
         }
-        header('Content-Type: video/mp4');
-        header('Accept-Ranges: bytes');
-        header('Cache-Control: private, max-age=60');
-        readfile($row['path']);
-        exit;
+        nexrec_send_media_file($row['path'], 'video/mp4');
     }
 
     if ($action === 'export_file') {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_cache_limiter('');
+        }
         nexrec_require_roles([]);
         $id = (string) ($_GET['id'] ?? '');
         $st = nexrec_db()->prepare("SELECT path FROM exports WHERE id=:i AND status='done'");
         $st->bindValue(':i', $id, SQLITE3_TEXT);
         $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
-        if (!$row || !is_file((string) $row['path'])) {
+        $path = (string) ($row['path'] ?? '');
+        if (!$row || !is_file($path) || !nexrec_export_file_allowed($path)) {
+            nexrec_release_session();
             nexrec_api_fail(404, 'not found');
         }
-        header('Content-Type: video/mp4');
-        header('Content-Disposition: attachment; filename="' . basename((string) $row['path']) . '"');
-        readfile((string) $row['path']);
-        exit;
+        nexrec_send_media_file($path, 'video/mp4', basename($path), 'private, no-store');
     }
 
     if ($action === 'settings_get') {

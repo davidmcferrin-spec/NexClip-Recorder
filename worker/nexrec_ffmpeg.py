@@ -532,15 +532,26 @@ def _proxy_video_args(env: dict[str, str]) -> list[str]:
     )
 
 
+def _preview_audio_args() -> list[str]:
+    """Opus for WHEP. MediaMTX does not transcode, and browsers cannot play AAC over WebRTC.
+
+    Recordings stay AAC. This is only the proxy publish.
+    """
+    return [
+        "-c:a", "libopus",
+        "-b:a", PREVIEW_ABITRATE,
+        "-ar", "48000",
+        "-ac", "2",
+        "-application", "lowdelay",
+    ]
+
+
 def _preview_output_args(rtsp_url: str, env: dict[str, str] | None = None) -> list[str]:
     return [
         "-map", "[vprev]",
         "-map", "[aprev]",
         *_proxy_video_args(env or {}),
-        "-c:a", "aac",
-        "-b:a", PREVIEW_ABITRATE,
-        "-ar", "48000",
-        "-ac", "2",
+        *_preview_audio_args(),
         "-f", "rtsp",
         "-rtsp_transport", "tcp",
         rtsp_url,
@@ -614,10 +625,7 @@ def preview_argv(
     argv += [
         "-vf", f"scale={PREVIEW_SIZE}:force_original_aspect_ratio=decrease,fps=30",
         *_proxy_video_args(env),
-        "-c:a", "aac",
-        "-b:a", PREVIEW_ABITRATE,
-        "-ar", "48000",
-        "-ac", "2",
+        *_preview_audio_args(),
         "-f", "rtsp",
         "-rtsp_transport", "tcp",
         rtsp_url,

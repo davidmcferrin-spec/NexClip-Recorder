@@ -77,8 +77,8 @@ class InstallMediaTests(unittest.TestCase):
         )
         conf = " ".join([
             "--enable-gpl", "--enable-nonfree", "--enable-libx264",
-            "--enable-openssl", "--enable-decklink", "--enable-libfdk-aac",
-            "--enable-libsrt", "--enable-libzvbi",
+            "--enable-openssl", "--enable-libopus", "--enable-decklink",
+            "--enable-libfdk-aac", "--enable-libsrt", "--enable-libzvbi",
         ])
         ver = "ffmpeg version 9.0.2 Copyright"
         self.assertEqual(
@@ -278,7 +278,7 @@ class InstallMediaTests(unittest.TestCase):
         ver = "ffmpeg version 9.0.2 Copyright"
         enc_only = " ".join([
             "--enable-gpl", "--enable-nonfree", "--enable-libx264",
-            "--enable-openssl", "--enable-ffnvcodec", "--enable-nvenc",
+            "--enable-openssl", "--enable-libopus", "--enable-ffnvcodec", "--enable-nvenc",
         ])
         both = enc_only + " --enable-nvdec --enable-cuvid"
         self.assertEqual(

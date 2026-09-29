@@ -38,7 +38,7 @@ until a frame arrives, and the VU reads “waiting” until preview audio does.
    `nexrec-record@<id>` only for DeckLink — the tee is the preview).
 3. Open **Live**, click the pane, then **Scopes**, **VU**, and **RTA**.
 4. Picture in the waveform/vectorscope tracks the preview. VU shows **L/R**
-   (stereo AAC proxy), not 8 or 64 channels. RTA is 64 bands, 10 Hz–22 kHz.
+   (stereo Opus proxy), not 8 or 64 channels. RTA is 64 bands, 10 Hz–22 kHz.
 5. Click a strip to pop it, drag the popped panel, press Esc to dock.
    Reload: the toggles and pop/position stick (`localStorage`, `nexrec-` keys).
 6. **Listen** / volume / solo affect this browser only. The `<video>` stays

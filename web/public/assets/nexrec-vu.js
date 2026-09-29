@@ -1,10 +1,10 @@
 /**
  * nexrec-vu.js — Web Audio VU for the Live preview.
  *
- * Meters the decoded WHEP MediaStream (typically stereo AAC). Channel count
+ * Meters the decoded WHEP MediaStream (typically stereo Opus). Channel count
  * comes from the audio track / MediaStreamSource — never invented 8ch embeds.
  * 6ch uses 5.1 labels and an optional fold; anything else is L/R plus numbers.
- * 64-channel SDI/AES embed metering is NEXT (the proxy is stereo AAC, -ac 2).
+ * 64-channel SDI/AES embed metering is NEXT (the proxy is stereo Opus, -ac 2).
  *
  * Spectrum (nexrec-spectrum.js) taps getSpectrumPair() on this graph.
  * Do not open a second MediaStreamSource.
@@ -41,7 +41,7 @@
   const ALIGN_DB = -20;
   const PROXY_LIMIT =
     "Meters follow the decoded preview channel count. " +
-    "64-channel SDI/AES embed metering is NEXT; the WHEP proxy is stereo AAC.";
+    "64-channel SDI/AES embed metering is NEXT; the WHEP proxy is stereo Opus.";
 
   const FFT = 2048;
   const SPEC_FFT = 8192;
@@ -106,7 +106,7 @@
 
   function monitorNote(info, hasAudio) {
     const base = !info || info.proxyStereo
-      ? "stereo AAC proxy"
+      ? "stereo Opus proxy"
       : (info.count + " ch" + (info.limited ? " (first " + MAX_CH + ")" : ""));
     return hasAudio ? base : base + " · waiting";
   }

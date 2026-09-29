@@ -15,7 +15,7 @@ Canonical host sizing remains README **Hardware recommendations**.
 | Captions 608/708 | `FEAT_CAPTIONS` | Presence log + SRT extract (`0:s` then lavfi `subcc`) into `captions` + **Postgres full-text** (`tsvector`) | Full 708 service map, burn-in optional |
 | Transcription + diarization | `FEAT_TRANSCRIBE` | Off unless `NEXREC_TRANSCRIBE_ENGINE` + `NEXREC_TRANSCRIBE_CMD`. Pluggable JSON ingest | whisper.cpp / faster-whisper + diarization on GPU |
 | Nielsen watermark presence | `FEAT_NIELSEN` | Best-effort **presence** log (appears present or absent) on the chunk timeline. **Not** audit-grade decode. No SID, watermark time, or layer | Swap the stub (`NEXREC_NIELSEN_PRESENCE_CMD` or `NielsenPresenceDetector`). Decoder SDK is **not** integrated |
-| Live monitors | `FEAT_MONITORS` | Confidence WFM, vectorscope, VU, and 64-band RTA on the **selected** Live pane, from the decoded WHEP `<video>` (default off, per-browser `nexrec-*` prefs). Preview is stereo AAC, so VU/RTA meter that listen pair | 64-channel SDI/AES embed metering; DeckLink SDK / Blackmagic scopes |
+| Live monitors | `FEAT_MONITORS` | Confidence WFM, vectorscope, VU, and 64-band RTA on the **selected** Live pane, from the decoded WHEP `<video>` (default off, per-browser `nexrec-*` prefs). Preview is stereo Opus, so VU/RTA meter that listen pair | 64-channel SDI/AES embed metering; DeckLink SDK / Blackmagic scopes |
 | CALM / LKFS | (export editor) | Line chart + ebur128 job on marked I/O. ITU-R BS.1770 / ATSC A/85 **−24 LKFS** | Faster framed logs, true-peak alerts |
 
 Duration thresholds (seconds, per input):
@@ -48,7 +48,7 @@ record@input  →  native MP4 segments (unchanged, H.264+AAC faststart)
                                                      ffprobe SCTE, optional CC/ASR,
                                                      Nielsen presence stub — not a decode)
 
-preview@input →  proxy 960×540 stereo AAC → MediaMTX WHEP   (IP sources)
+preview@input →  proxy 960×540 stereo Opus → MediaMTX WHEP  (IP sources)
 record@input  →  DeckLink tee of the same proxy                 (exclusive-open; no preview@ unit)
               →  Live page, selected pane only
                  WFM + vectorscope   requestVideoFrameCallback on <video>
@@ -64,7 +64,7 @@ export editor →  mark I/O → loudness_enqueue → ebur128 on concat+trim wind
 Drawn in the browser from the **decoded preview**, the same `<video>` the
 Live pane already uses for WHEP. They are not SDI QC and they are not
 Blackmagic SDK scopes. `record_argv` and the DeckLink tee’s native mezzanine
-are unchanged. The proxy (IP preview and the DeckLink tee) is stereo AAC
+are unchanged. The proxy (IP preview and the DeckLink tee) is stereo Opus
 (`-ac 2`).
 
 Live is a 1–6 multiview, so the stack follows **NexVUE Player** rather than
@@ -142,6 +142,6 @@ DeckLink **capture**, the in-process preview tee, and SDI lock/format via
 - DeckLink-side waveform/vector/audio meters and SCTE-104 VANC (Blackmagic SDK — separate from the browser confidence scopes)
 - Live MPEG-TS SCTE-35 tap (MP4 remux drops data PIDs)
 - Real SMPTE bars detector (histogram / template); duration gate already stored
-- 64-channel SDI embed / AES67 metering (the live RTA is 64 bands on the stereo AAC proxy, not 64 channels)
+- 64-channel SDI embed / AES67 metering (the live RTA is 64 bands on the stereo Opus proxy, not 64 channels)
 - Transcription GPU pool separate from NVENC record/preview
 - UI filter/search for SCTE events (API + table exist; timeline overlay later)

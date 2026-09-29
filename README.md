@@ -54,7 +54,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - WAN redeem round-trip verified on a live hub box
 - Proxy rendition written alongside native (export “proxy” currently transcodes on demand)
 - Apache/mod_php production hardening, Let’s Encrypt, ufw (copy from NexVUE `setup.sh` as needed)
-- DeckLink SDK scopes, 64-channel SDI/AES embed metering (the live RTA is 64 bands on stereo AAC), transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
+- DeckLink SDK scopes, 64-channel SDI/AES embed metering (the live RTA is 64 bands on stereo Opus), transcription GPU, live SCTE-35 tap — `docs/FEATURES.md`
 
 ## NexAPP: one `service_id` per host (shared convention)
 
@@ -171,7 +171,7 @@ sudo ./setup.sh
 `setup.sh` is the turnkey path. On a fresh host it:
 
 1. Installs PHP, Apache, Python, and local PostgreSQL. It creates a dedicated role and database. The password is written only into `/etc/nexrec/nexrec.env`.
-2. Downloads **FFmpeg 9.0.2** source, installs codec/protocol build dependencies, compiles, and installs `ffmpeg` and `ffprobe` to `/usr/local` (`--enable-gpl --enable-nonfree --enable-libx264 --enable-openssl`, plus fdk-aac, libsrt, and libzvbi when those packages exist).
+2. Downloads **FFmpeg 9.0.2** source, installs codec/protocol build dependencies, compiles, and installs `ffmpeg` and `ffprobe` to `/usr/local` (`--enable-gpl --enable-nonfree --enable-libx264 --enable-openssl --enable-libopus`, plus fdk-aac, libsrt, and libzvbi when those packages exist).
 3. Adds `--enable-decklink` when Blackmagic SDK headers are found (`DECKLINK_SDK` or `NEXREC_DECKLINK_SDK`, or a conventional path such as `/opt/decklink-sdk`). If the headers are missing, it still installs an IP-capable FFmpeg and prints that DeckLink was skipped. **Desktop Video drivers are not the SDK headers** — install the driver package separately so `/dev/blackmagic` exists.
 4. When an NVIDIA GPU is on the PCI bus, installs `nvidia-driver-610-open` (or `nvidia-driver-610` if the open package is not offered) before compiling FFmpeg. Those headers are nv-codec-headers 13.1, which need driver 610; an already-loaded older driver such as 595 is upgraded rather than kept. The compile still uses `--enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid`. `nvidia-smi`, a CUDA toolkit, or `NEXREC_ENABLE_NVENC=1` also turn the compile on. `NEXREC_INSTALL_NVIDIA=0` skips the driver package. `NEXREC_ENABLE_NVENC=0` leaves NVENC/NVDEC out of FFmpeg. A missing GPU does not fail setup. The new kernel module is not usable until reboot, and Secure Boot must trust it. `setup.sh` adds `www-data` to the `render` group when that group exists, then restarts `nexrec-export` and any active `nexrec-record@` / `nexrec-preview@` units so they pick up the group and the encoder. Record, preview, and export re-encodes then use `h264_nvenc` automatically (Setup → Video encoder = `auto`). `libx264` is used when the device is not writable or the binary has no NVENC encoder.
 5. Downloads **MediaMTX v1.21.1** (official Linux binary), installs `/usr/local/bin/mediamtx`, writes `/etc/nexrec/mediamtx.yml` (RTSP `127.0.0.1:8554`, WHEP `:8889`, paths `in0`–`in9`), and enables `mediamtx.service`.

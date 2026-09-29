@@ -178,7 +178,14 @@ class TestFfmpeg(unittest.TestCase):
         self.assertNotIn("+ildct+ilme", cmd)
         self.assertIn("4.2", cmd)
         self.assertIn(rtsp, cmd)
-        self.assertLess(cmd.index("/data/in_%Y%m%dT%H%M%SZ.mp4"), cmd.index(rtsp))
+        mp4 = cmd.index("/data/in_%Y%m%dT%H%M%SZ.mp4")
+        self.assertLess(mp4, cmd.index(rtsp))
+        record_out = cmd[:mp4]
+        preview_out = cmd[mp4:]
+        self.assertIn("aac", record_out)
+        self.assertNotIn("libopus", record_out)
+        self.assertIn("libopus", preview_out)
+        self.assertNotIn("aac", preview_out)
         self.assertNotIn("-vf", cmd)
         self.assertFalse(preview_unit_allowed({"source_type": "decklink"}))
         self.assertTrue(preview_unit_allowed({"source_type": "rtsp"}))
@@ -261,6 +268,8 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("ull", preview)
         self.assertIn("p1", preview)
         self.assertNotIn("zerolatency", preview)
+        self.assertIn("libopus", preview)
+        self.assertNotIn("aac", preview)
         tee = record_argv(
             {"source_type": "decklink", "decklink_device": "DeckLink Quad (1)", "signal_mode": "1080p60"},
             "/data/out.mp4",
@@ -283,6 +292,8 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("ultrafast", preview)
         self.assertIn("zerolatency", preview)
         self.assertNotIn("h264_nvenc", preview)
+        self.assertIn("libopus", preview)
+        self.assertNotIn("aac", preview)
 
     def test_pin_video_encoder(self):
         cpu, note = pin_video_encoder({}, probe=lambda _ff: "no NVIDIA device")

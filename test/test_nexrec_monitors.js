@@ -288,7 +288,7 @@ assert.strictEqual(many.limited, true);
 assert.strictEqual(Vu.resolveChannelCount(0, 2).labels.join(","), "L,R");
 assert.strictEqual(Vu.resolveChannelCount(0, 2).assumed, false);
 assert.ok(Vu.monitorNote(stereo, false).includes("waiting"));
-assert.ok(Vu.monitorNote(stereo, true).includes("stereo AAC proxy"));
+assert.ok(Vu.monitorNote(stereo, true).includes("stereo Opus proxy"));
 assert.ok(Vu.PROXY_LIMIT.includes("NEXT"));
 
 assert.strictEqual(Vu.heightFromDb(-60), 0);
@@ -374,7 +374,7 @@ collect(vu.root, listenHits);
 assert.strictEqual(listenHits.length, 0);
 assert.strictEqual(vu.getVisible(), false);
 assert.strictEqual(vu.getChannels(), 2);
-assert.ok(vu.getMonitorNote().includes("stereo AAC proxy"));
+assert.ok(vu.getMonitorNote().includes("stereo Opus proxy"));
 vu.setVisible(true);
 assert.strictEqual(Vu.getVisiblePref(), true);
 assert.strictEqual(vu.root.hidden, false);

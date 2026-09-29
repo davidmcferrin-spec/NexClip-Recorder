@@ -119,7 +119,7 @@ nexrec_ffmpeg_decide() {
     printf '%s\n' build
     return 0
   fi
-  for flag in --enable-gpl --enable-nonfree --enable-libx264 --enable-openssl; do
+  for flag in --enable-gpl --enable-nonfree --enable-libx264 --enable-openssl --enable-libopus; do
     if [[ "$conf" != *"$flag"* ]]; then
       printf '%s\n' build
       return 0
@@ -579,7 +579,7 @@ nexrec_install_build_deps() {
     add-apt-repository -y multiverse
     apt-get update -qq
   fi
-  apt-get install -y -qq build-essential pkg-config nasm libx264-dev libssl-dev
+  apt-get install -y -qq build-essential pkg-config nasm libx264-dev libssl-dev libopus-dev
   # Ubuntu 24.04 dropped libsrt-dev. This FFmpeg is --enable-openssl, so the
   # OpenSSL SRT flavor is the one that supplies the srt pkg-config file.
   # The GnuTLS packages conflict with these and are not installed.
@@ -597,6 +597,10 @@ nexrec_install_build_deps() {
   }
   pkg-config --exists openssl || {
     nexrec_media_warn "OpenSSL development files are required (--enable-openssl)"
+    return 1
+  }
+  pkg-config --exists opus || {
+    nexrec_media_warn "libopus development files are required (--enable-libopus). WHEP preview audio is Opus."
     return 1
   }
 }
@@ -693,6 +697,7 @@ nexrec_install_ffmpeg() {
     --enable-nonfree
     --enable-libx264
     --enable-openssl
+    --enable-libopus
   )
   [[ "$want_fdk" == "1" ]] && args+=(--enable-libfdk-aac)
   [[ "$want_srt" == "1" ]] && args+=(--enable-libsrt)

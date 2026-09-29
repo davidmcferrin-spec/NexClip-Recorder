@@ -200,7 +200,7 @@ function nexrec_settings_catalog(): array {
         ],
         'defaults.feat_monitors' => [
             'section' => 'defaults', 'label' => 'Live confidence monitors', 'type' => 'bool', 'default' => '0',
-            'help' => 'Default for new inputs. Live WFM, vectorscope, VU, and 64-band RTA still default off in each browser and read the WHEP preview only. Does not change the record. 64-channel SDI/AES metering is not on the stereo AAC proxy.',
+            'help' => 'Default for new inputs. Live WFM, vectorscope, VU, and 64-band RTA still default off in each browser and read the WHEP preview only. Does not change the record. 64-channel SDI/AES metering is not on the stereo Opus proxy.',
         ],
 
         'nexapp.enabled' => [
