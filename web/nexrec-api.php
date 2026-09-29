@@ -681,6 +681,26 @@ try {
         nexrec_send_media_file($row['path'], 'video/mp4');
     }
 
+    if ($action === 'chunk_thumb') {
+        if (session_status() !== PHP_SESSION_ACTIVE) {
+            session_cache_limiter('');
+        }
+        nexrec_require_roles([]);
+        $id = (string) ($_GET['id'] ?? '');
+        $st = nexrec_db()->prepare('SELECT path FROM chunks WHERE id=:i AND ready=1 AND orphan=0');
+        $st->bindValue(':i', $id, SQLITE3_TEXT);
+        $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
+        $src = (string) ($row['path'] ?? '');
+        $thumb = $src !== '' ? $src . '.jpg' : '';
+        $realSrc = $src !== '' ? realpath($src) : false;
+        $realThumb = $thumb !== '' ? realpath($thumb) : false;
+        if (!$row || $realSrc === false || $realThumb === false || $realThumb !== $realSrc . '.jpg' || !is_file($realThumb)) {
+            nexrec_release_session();
+            nexrec_api_fail(404, 'not found');
+        }
+        nexrec_send_media_file($realThumb, 'image/jpeg', '', 'private, max-age=86400');
+    }
+
     if ($action === 'export_file') {
         if (session_status() !== PHP_SESSION_ACTIVE) {
             session_cache_limiter('');

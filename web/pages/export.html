@@ -55,7 +55,8 @@
     <button type="button" id="range-hour">Last hour</button>
     <button type="button" id="range-all">All loaded</button>
   </div>
-  <div class="timeline" id="timeline" title="Scrub the selected station-time range. Shaded spans have a recording.">
+  <div class="timeline" id="timeline" title="Scrub the range. Each colored line is one input. Pictures are the selected input.">
+    <div class="playhead range" id="playhead-range" hidden></div>
     <div class="playhead" id="playhead"></div>
     <div class="mark in" id="mark-in-el" hidden></div>
     <div class="mark out" id="mark-out-el" hidden></div>
@@ -64,7 +65,7 @@
     <span id="scale-start">—</span>
     <span id="scale-end">—</span>
   </div>
-  <p class="sub" id="coverage-note">Shaded spans have a recording inside this range. Empty stretches do not.</p>
+  <p class="sub" id="coverage-note">Colored lines show where each input has video. Pictures follow the selected input.</p>
   <div class="bar">
     <button type="button" id="play-toggle" aria-pressed="false" title="Play or pause (Space). J reverse, K stop, L forward. Left and Right step one frame; Shift steps five. Home and End jump the range.">Play</button>
     <button type="button" class="tgl" id="cc-toggle" aria-pressed="false" title="Draw 608/708 captions on the selected pane (C). Words follow the playhead from the recording’s caption cues.">CC</button>
@@ -108,6 +109,7 @@
   var n = 1, inputs = [], chunksByInput = {}, t0 = 0, t1 = 0, archive0 = 0, archive1 = 0, play = 0, markIn = null, markOut = null;
   var selected = 0, playing = false, slotIds = null, scrolledJob = "";
   var shuttle = 0, kHeld = false, shuttleTimer = null;
+  var tlRows = 1, tlLanes = 0, tlSig = "";
   var ccBox = null, ccCues = [], ccWindow0 = 0, ccWindow1 = 0, ccInput = "", ccFetch = 0;
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
@@ -274,6 +276,7 @@
     resetCcWindow();
     bindCc();
     syncCc();
+    if (t1 > t0) paintChrome();
   }
 
   function assignPane(i, inputId) {
@@ -331,52 +334,131 @@
     document.getElementById("range-end").value = NexRecUI.stationStamp(t1);
   }
 
-  function placeMark(id, ms) {
-    var el = document.getElementById(id);
+  function chunkBounds(c) {
+    var a = Date.parse(c.start_at);
+    var b = Date.parse(c.end_at || "");
+    if (!isFinite(b) && c.duration_s != null && isFinite(a)) b = a + Number(c.duration_s) * 1000;
+    if (!isFinite(a) || !isFinite(b) || b <= a) return null;
+    return { a: a, b: b };
+  }
+
+  function placeOnTimeline(el, ms) {
     if (ms == null || ms < t0 || ms > t1) {
       el.hidden = true;
       return;
     }
     el.hidden = false;
-    el.style.left = ((ms - t0) / Math.max(1, t1 - t0) * 100) + "%";
+    var span = Math.max(1, t1 - t0);
+    var strip = tlLanes * 2;
+    if (tlRows <= 1) {
+      el.style.top = "0";
+      el.style.bottom = "0";
+      el.style.height = "";
+      el.style.left = ((ms - t0) / span * 100) + "%";
+      return;
+    }
+    var rowSpan = span / tlRows;
+    var row = Math.floor((ms - t0) / rowSpan);
+    if (row >= tlRows) row = tlRows - 1;
+    if (row < 0) row = 0;
+    el.style.top = (strip + row * 55) + "px";
+    el.style.bottom = "auto";
+    el.style.height = "55px";
+    el.style.left = (((ms - t0) - row * rowSpan) / rowSpan * 100) + "%";
+  }
+
+  function placePlayhead() {
+    var head = document.getElementById("playhead");
+    var range = document.getElementById("playhead-range");
+    var span = Math.max(1, t1 - t0);
+    var pct = ((play - t0) / span * 100) + "%";
+    placeOnTimeline(head, play);
+    if (!range) return;
+    if (tlRows <= 1 || tlLanes < 1) {
+      range.hidden = true;
+      return;
+    }
+    range.hidden = false;
+    range.style.top = "0";
+    range.style.bottom = "auto";
+    range.style.height = (tlLanes * 2) + "px";
+    range.style.left = pct;
   }
 
   function paintChrome() {
     document.getElementById("tlabel").textContent = station(play);
     document.getElementById("scale-start").textContent = station(t0);
     document.getElementById("scale-end").textContent = station(t1);
-    var pct = (play - t0) / Math.max(1, t1 - t0);
-    document.getElementById("playhead").style.left = (pct * 100) + "%";
-    document.getElementById("scrub").value = String(Math.round(pct * 1000));
+    document.getElementById("scrub").value = String(Math.round(((play - t0) / Math.max(1, t1 - t0)) * 1000));
     document.getElementById("io").textContent =
       "I " + (markIn ? station(markIn) : "—") + " / O " + (markOut ? station(markOut) : "—");
-    placeMark("mark-in-el", markIn);
-    placeMark("mark-out-el", markOut);
-    document.getElementById("coverage-note").textContent =
-      "Scrubbing " + station(t0) + " → " + station(t1) +
-      ". Shaded spans have a recording in this range. Loaded archive is " +
-      station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
     paintCoverage();
+    placePlayhead();
+    placeOnTimeline(document.getElementById("mark-in-el"), markIn);
+    placeOnTimeline(document.getElementById("mark-out-el"), markOut);
+    var note = "Scrubbing " + station(t0) + " → " + station(t1) +
+      ". Colored lines are each input. Pictures follow the selected input.";
+    if (tlRows > 1) note += " Pictures wrap across " + tlRows + " rows.";
+    note += " Loaded archive is " + station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
+    document.getElementById("coverage-note").textContent = note;
     syncCc();
   }
 
   function paintCoverage() {
     var bar = document.getElementById("timeline");
-    bar.querySelectorAll(".coverage").forEach(function (el) { el.remove(); });
-    var lanes = NexRecUI.paneInputs(inputs, visibleIds(), n).filter(Boolean);
-    var laneH = lanes.length ? (100 / lanes.length) : 100;
-    bar.style.height = Math.max(48, lanes.length * 18) + "px";
-    lanes.forEach(function (inp, lane) {
-      var hot = selectedInput() && inp.id === selectedInput().id;
-      NexRecUI.coverageSpans(chunksByInput[inp.id] || [], t0, t1).forEach(function (sp) {
-        var el = document.createElement("div");
-        el.className = hot ? "coverage hot" : "coverage";
-        el.style.left = sp.left + "%";
-        el.style.width = Math.max(sp.width, 0.15) + "%";
-        el.style.top = (lane * laneH) + "%";
-        el.style.height = laneH + "%";
-        el.title = inp.name + " has a recording here";
-        bar.appendChild(el);
+    var lanes = [];
+    NexRecUI.paneInputs(inputs, visibleIds(), n).forEach(function (inp, slot) {
+      if (inp) lanes.push({ inp: inp, slot: slot });
+    });
+    var width = bar.clientWidth || 1;
+    var sel = selectedInput();
+    var sig = [selected, t0, t1, width, lanes.map(function (lane) { return lane.slot + ":" + lane.inp.id; }).join(",")];
+    lanes.forEach(function (lane) {
+      (chunksByInput[lane.inp.id] || []).forEach(function (c) {
+        sig.push(c.id, c.start_at, c.end_at);
+      });
+    });
+    sig = sig.join("|");
+    tlLanes = lanes.length;
+    tlRows = NexRecUI.thumbRows(t1 - t0, width);
+    if (sig === tlSig) return;
+    tlSig = sig;
+    bar.querySelectorAll(".tl-avail, .tl-thumb").forEach(function (el) { el.remove(); });
+    var strip = lanes.length * 2;
+    bar.style.height = Math.max(55, strip + tlRows * 55) + "px";
+    lanes.forEach(function (lane, i) {
+      var color = NexRecUI.laneColor(lane.slot);
+      (chunksByInput[lane.inp.id] || []).forEach(function (c) {
+        var bounds = chunkBounds(c);
+        if (!bounds || bounds.b <= t0 || bounds.a >= t1) return;
+        var left = ((Math.max(bounds.a, t0) - t0) / Math.max(1, t1 - t0)) * 100;
+        var widthPct = ((Math.min(bounds.b, t1) - Math.max(bounds.a, t0)) / Math.max(1, t1 - t0)) * 100;
+        if (widthPct <= 0) return;
+        var line = document.createElement("div");
+        line.className = "tl-avail";
+        line.style.left = left + "%";
+        line.style.width = Math.max(widthPct, 0.15) + "%";
+        line.style.top = (i * 2) + "px";
+        line.style.height = "2px";
+        line.style.background = color;
+        line.title = (lane.inp.name || lane.inp.id) + " has video here";
+        bar.appendChild(line);
+      });
+    });
+    if (!sel) return;
+    (chunksByInput[sel.id] || []).forEach(function (c) {
+      var bounds = chunkBounds(c);
+      if (!bounds) return;
+      NexRecUI.spansOnRows(bounds.a, bounds.b, t0, t1, tlRows).forEach(function (part) {
+        var thumb = document.createElement("div");
+        thumb.className = "tl-thumb";
+        thumb.style.left = part.left + "%";
+        thumb.style.width = Math.max(part.width, 0.15) + "%";
+        thumb.style.top = (strip + part.row * 55) + "px";
+        thumb.style.height = "55px";
+        if (c.id) thumb.style.backgroundImage = "url(/api/chunks/" + encodeURIComponent(c.id) + "/thumb)";
+        thumb.title = (sel.name || sel.id) + " " + station(bounds.a);
+        bar.appendChild(thumb);
       });
     });
   }
@@ -533,6 +615,7 @@
       var pane = document.createElement("div");
       pane.className = "pane" + (i === selected ? " selected" : "");
       pane.setAttribute("data-slot", String(i));
+      pane.style.setProperty("--lane", NexRecUI.laneColor(i));
       var pick = document.createElement("div");
       pick.className = "pick";
       var sel = document.createElement("select");
@@ -881,7 +964,26 @@
   });
   document.getElementById("timeline").addEventListener("click", function (ev) {
     var r = ev.currentTarget.getBoundingClientRect();
-    seekTo(t0 + ((ev.clientX - r.left) / r.width) * (t1 - t0));
+    var x = (ev.clientX - r.left) / Math.max(1, r.width);
+    if (x < 0) x = 0;
+    if (x > 1) x = 1;
+    var y = ev.clientY - r.top;
+    var strip = tlLanes * 2;
+    var ms;
+    if (tlRows <= 1 || y < strip) {
+      ms = t0 + x * (t1 - t0);
+    } else {
+      var row = Math.floor((y - strip) / 55);
+      if (row < 0) row = 0;
+      if (row >= tlRows) row = tlRows - 1;
+      var rowSpan = (t1 - t0) / tlRows;
+      ms = t0 + row * rowSpan + x * rowSpan;
+    }
+    seekTo(ms);
+  });
+  window.addEventListener("resize", function () {
+    tlSig = "";
+    if (t1 > t0) paintChrome();
   });
   document.getElementById("mark-in").onclick = markInAtPlay;
   document.getElementById("mark-out").onclick = markOutAtPlay;

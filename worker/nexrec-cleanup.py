@@ -13,6 +13,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
+from nexrec_index import backfill_thumbs, thumb_path_for  # noqa: E402
 from nexrec_util import (  # noqa: E402
     data_paths,
     iso_z,
@@ -46,6 +47,14 @@ def needs_space_purge(free: int, total: int, floor: int, max_used_pct: float) ->
         if used_pct >= max_used_pct:
             return True
     return False
+
+
+def unlink_chunk(path: str) -> None:
+    """Remove the recording and the timeline still beside it."""
+    if not path:
+        return
+    unlink_quiet(path)
+    unlink_quiet(thumb_path_for(path))
 
 
 def unlink_quiet(path: str) -> bool:
@@ -93,7 +102,7 @@ def expire_chunks(conn, now) -> int:
             (inp["id"], cutoff),
         )
         for row in rows:
-            unlink_quiet(row["path"])
+            unlink_chunk(row["path"])
             delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
             n += 1
@@ -109,6 +118,7 @@ def orphans(conn, storage: str) -> int:
     for row in rows:
         seen.add(os.path.abspath(row["path"]))
         if not os.path.isfile(row["path"]):
+            unlink_quiet(thumb_path_for(row["path"]))
             conn.execute("UPDATE chunks SET orphan=1 WHERE id=?", (row["id"],))
             delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
@@ -117,11 +127,17 @@ def orphans(conn, storage: str) -> int:
     if os.path.isdir(native_root):
         for dirpath, _d, files in os.walk(native_root):
             for name in files:
+                path = os.path.abspath(os.path.join(dirpath, name))
+                if name.endswith(".mp4.jpg"):
+                    if path[:-4] not in seen:
+                        unlink_quiet(path)
+                        n += 1
+                    continue
                 if not name.endswith(".mp4"):
                     continue
-                path = os.path.abspath(os.path.join(dirpath, name))
                 if path not in seen:
                     unlink_quiet(path)
+                    unlink_quiet(thumb_path_for(path))
                     n += 1
     conn.commit()
     return n
@@ -147,7 +163,7 @@ def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> 
             """
         ).fetchone()
         if crow:
-            unlink_quiet(crow["path"])
+            unlink_chunk(crow["path"])
             delete_chunk_side_data(conn, crow["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (crow["id"],))
             conn.commit()
@@ -184,6 +200,7 @@ def run(env: dict) -> dict:
         "orphans": orphans(conn, paths["storage"]),
         "freed_for_floor": 0,
         "free_bytes": fs_free(paths["storage"]),
+        "thumbs": 0,
     }
     floor = parse_bytes(env.get("NEXREC_FREE_SPACE_FLOOR") or "0")
     raw_pct = str(env.get("NEXREC_MAX_USED_PERCENT") or "").strip()
@@ -195,6 +212,10 @@ def run(env: dict) -> dict:
     if floor > 0 or max_pct > 0:
         stats["freed_for_floor"] = free_space_pass(conn, paths["storage"], floor, max_pct)
         stats["free_bytes"] = fs_free(paths["storage"])
+    try:
+        stats["thumbs"] = backfill_thumbs(conn, paths["ffmpeg"], limit=40)
+    except Exception as exc:  # noqa: BLE001 — stills must not stop retention
+        print(f"thumb skip: {exc}", file=sys.stderr)
     return stats
 
 

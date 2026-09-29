@@ -219,6 +219,50 @@
     try { storage.setItem(key, JSON.stringify(ids)); } catch (e) {}
   }
 
+  var LANE_COLORS = ["#3ecf8e", "#4c9aff", "#f5a524", "#e35d6a", "#c084fc", "#2dd4bf"];
+  var THUMB_MIN_PX = 96;
+  var THUMB_SLICE_MS = 5 * 60 * 1000;
+
+  function laneColor(index) {
+    var i = index | 0;
+    if (i < 0) i = 0;
+    return LANE_COLORS[i % LANE_COLORS.length];
+  }
+
+  function thumbRows(spanMs, widthPx) {
+    var span = Number(spanMs);
+    var width = Number(widthPx);
+    if (!isFinite(span) || span <= 0 || !isFinite(width) || width < 1) return 1;
+    var slicePx = (THUMB_SLICE_MS / span) * width;
+    if (slicePx >= THUMB_MIN_PX) return 1;
+    var rows = Math.ceil(THUMB_MIN_PX / Math.max(slicePx, 0.01));
+    if (rows < 1) return 1;
+    if (rows > 3) return 3;
+    return rows;
+  }
+
+  function spansOnRows(startMs, endMs, t0, t1, rows) {
+    var n = rows > 0 ? rows : 1;
+    if (n > 3) n = 3;
+    var span = Math.max(1, t1 - t0);
+    var rowSpan = span / n;
+    var out = [];
+    var r;
+    for (r = 0; r < n; r++) {
+      var rs = t0 + r * rowSpan;
+      var re = r === n - 1 ? t1 : rs + rowSpan;
+      var leftT = Math.max(startMs, rs);
+      var rightT = Math.min(endMs, re);
+      if (!(rightT > leftT)) continue;
+      out.push({
+        row: r,
+        left: ((leftT - rs) / rowSpan) * 100,
+        width: ((rightT - leftT) / rowSpan) * 100
+      });
+    }
+    return out;
+  }
+
   function coverageSpans(chunks, t0, t1) {
     var span = Math.max(1, t1 - t0);
     var out = [];
@@ -309,6 +353,9 @@
     readPaneSlots: readPaneSlots,
     writePaneSlots: writePaneSlots,
     coverageSpans: coverageSpans,
+    laneColor: laneColor,
+    thumbRows: thumbRows,
+    spansOnRows: spansOnRows,
     exportDurationMs: exportDurationMs,
     exportRemainingMs: exportRemainingMs,
     exportQueueEta: exportQueueEta,

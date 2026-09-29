@@ -28,7 +28,7 @@ from nexrec_decklink import (  # noqa: E402
 from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import pin_video_encoder, preview_publish_url, record_argv  # noqa: E402
 from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
-from nexrec_index import open_segment_basename, scan_dir  # noqa: E402
+from nexrec_index import backfill_thumbs, open_segment_basename, scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
     chunk_dir,
     data_paths,
@@ -249,6 +249,7 @@ def main(argv: list[str] | None = None) -> int:
                     ffprobe=paths["ffprobe"],
                     skip_basename=skip,
                     pending=pending,
+                    ffmpeg=paths["ffmpeg"],
                 )
             except Exception as exc:  # noqa: BLE001 — never fail ingest
                 print(f"index skip: {exc}", file=sys.stderr, flush=True)
@@ -271,6 +272,10 @@ def main(argv: list[str] | None = None) -> int:
                             print(f"analyze {rec['path']} {st}", flush=True)
                     except Exception as exc:  # noqa: BLE001 — never fail ingest
                         print(f"analyze skip: {exc}", file=sys.stderr, flush=True)
+            try:
+                backfill_thumbs(conn, paths["ffmpeg"], limit=1, input_id=args.input_id)
+            except Exception as exc:  # noqa: BLE001 — a still must not stop ingest
+                print(f"thumb skip: {exc}", file=sys.stderr, flush=True)
             try:
                 write_heartbeat(
                     conn,
@@ -306,6 +311,7 @@ def main(argv: list[str] | None = None) -> int:
                 kind="native",
                 ffprobe=paths["ffprobe"],
                 pending=pending,
+                ffmpeg=paths["ffmpeg"],
             )
         except Exception as exc:  # noqa: BLE001
             print(f"index skip: {exc}", file=sys.stderr, flush=True)

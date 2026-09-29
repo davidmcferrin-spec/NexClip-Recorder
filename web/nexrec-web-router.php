@@ -140,6 +140,12 @@ function nexrec_web_dispatch(): void {
         require nexrec_app_root() . '/nexrec-api.php';
         exit;
     }
+    if (preg_match('#^/api/chunks/([A-Za-z0-9_]+)/thumb$#', $path, $m)) {
+        $_GET['action'] = 'chunk_thumb';
+        $_GET['id'] = $m[1];
+        require nexrec_app_root() . '/nexrec-api.php';
+        exit;
+    }
     $pages = nexrec_web_pages();
     if (isset($pages[$path])) {
         $page = $pages[$path];

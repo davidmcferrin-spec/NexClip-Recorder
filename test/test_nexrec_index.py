@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
 
 import nexrec_index  # noqa: E402
 from nexrec_db import connect, insert_chunk, migrate, upsert_input  # noqa: E402
-from nexrec_index import open_segment_basename, scan_dir, start_from_filename  # noqa: E402
+from nexrec_index import open_segment_basename, scan_dir, start_from_filename, thumb_path_for, write_chunk_thumb  # noqa: E402
 from nexrec_util import iso_z, utcnow, valid_input_id  # noqa: E402
 
 
@@ -274,6 +274,66 @@ class TestIndex(unittest.TestCase):
             second = fh.read()
         self.assertNotIn(broken_abs, second)
         self.assertIn(os.path.abspath(good), second)
+
+
+class TestThumbs(unittest.TestCase):
+    def test_still_is_written_beside_the_mp4(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mp4 = os.path.join(tmp.name, "demo_20260921T150000Z.mp4")
+        with open(mp4, "wb") as fh:
+            fh.write(b"x" * 80)
+        calls = []
+
+        def fake_run(cmd, **_kwargs):
+            calls.append(cmd)
+            with open(cmd[-1], "wb") as fh:
+                fh.write(b"j" * 80)
+
+            class Result:
+                returncode = 0
+
+            return Result()
+
+        orig = nexrec_index.subprocess.run
+        nexrec_index.subprocess.run = fake_run
+        nexrec_index._thumb_failed.discard(mp4)
+        try:
+            self.assertEqual(thumb_path_for(mp4), mp4 + ".jpg")
+            self.assertTrue(write_chunk_thumb(mp4, "ffmpeg"))
+            self.assertTrue(os.path.isfile(mp4 + ".jpg"))
+            self.assertTrue(write_chunk_thumb(mp4, "ffmpeg"))
+            self.assertEqual(len(calls), 1)
+        finally:
+            nexrec_index.subprocess.run = orig
+
+    def test_failed_still_is_not_retried(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mp4 = os.path.join(tmp.name, "demo_20260921T150500Z.mp4")
+        with open(mp4, "wb") as fh:
+            fh.write(b"x" * 80)
+        calls = []
+
+        def fake_run(cmd, **_kwargs):
+            calls.append(cmd)
+
+            class Result:
+                returncode = 1
+
+            return Result()
+
+        orig = nexrec_index.subprocess.run
+        nexrec_index.subprocess.run = fake_run
+        nexrec_index._thumb_failed.discard(mp4)
+        try:
+            self.assertFalse(write_chunk_thumb(mp4, "ffmpeg"))
+            self.assertFalse(os.path.isfile(mp4 + ".jpg"))
+            self.assertFalse(write_chunk_thumb(mp4, "ffmpeg"))
+            self.assertEqual(len(calls), 1)
+        finally:
+            nexrec_index.subprocess.run = orig
+            nexrec_index._thumb_failed.discard(mp4)
 
 
 if __name__ == "__main__":

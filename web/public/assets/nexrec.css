@@ -165,6 +165,7 @@ body.stage-page .stage-rest {
   background: #000; border: 1px solid var(--edge); border-radius: 6px;
   position: relative; overflow: hidden; min-width: 0; min-height: 0;
   container-type: size;
+  box-shadow: inset 4px 0 0 var(--lane, transparent);
 }
 body.stage-page .pane {
   width: min(100cqw, calc(100cqh * 16 / 9));
@@ -226,22 +227,25 @@ body.stage-page .pane {
 }
 @keyframes pulse { 50% { opacity: .35; } }
 .timeline {
-  height: 48px; background: var(--bg); border: 1px solid var(--edge); border-radius: 6px;
+  height: 57px; background: var(--bg); border: 1px solid var(--edge); border-radius: 6px;
   position: relative; cursor: pointer; margin: 8px 0;
 }
 .timeline .playhead {
   position: absolute; top: 0; bottom: 0; width: 2px; background: var(--acc);
 }
+.timeline .playhead.range { bottom: auto; }
 .timeline .mark {
   position: absolute; top: 0; bottom: 0; width: 3px;
 }
 .timeline .mark.in { background: var(--ok); }
 .timeline .mark.out { background: var(--warn); }
-.timeline .coverage {
-  position: absolute; background: rgba(62, 207, 142, 0.28);
-  box-shadow: inset 0 -2px 0 var(--ok); pointer-events: none; z-index: 0;
+.timeline .tl-avail {
+  position: absolute; pointer-events: none; z-index: 1;
 }
-.timeline .coverage.hot { background: rgba(62, 207, 142, 0.5); }
+.timeline .tl-thumb {
+  position: absolute; pointer-events: none; z-index: 0;
+  background: #111 center / cover no-repeat;
+}
 .timeline .playhead, .timeline .mark { z-index: 2; }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .metric-card { background: var(--bg); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px; }
@@ -264,7 +268,7 @@ body.stage-page .pane {
 .lkfs-wrap { position: relative; height: 150px; background: #05080c; border-radius: 6px; border: 1px solid var(--edge); }
 .lkfs-wrap svg { width: 100%; height: 100%; display: block; }
 .pane.selected { outline: 2px solid var(--acc); outline-offset: -2px; }
-.pane.norec { box-shadow: inset 0 0 0 2px var(--warn); }
+.pane.norec { box-shadow: inset 4px 0 0 var(--lane, transparent), inset 0 0 0 2px var(--warn); }
 .pane .ph.gap { color: var(--warn); text-align: center; padding: 16px; }
 .search-hits { font-size: 12px; max-height: 180px; overflow: auto; }
 .search-hits li { margin: 0 0 6px; color: var(--text); }

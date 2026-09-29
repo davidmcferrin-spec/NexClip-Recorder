@@ -89,6 +89,83 @@ def probe(path: str, ffprobe: str = "ffprobe") -> dict[str, Any]:
     }
 
 
+def thumb_path_for(mp4: str) -> str:
+    """JPEG still stored beside the recording. Removed with the MP4."""
+    return mp4 + ".jpg"
+
+
+_thumb_failed: set[str] = set()
+
+
+def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
+    """One frame from the start of a closed chunk. Safe to call again."""
+    dest = thumb_path_for(mp4)
+    if os.path.isfile(dest) and os.path.getsize(dest) > 64:
+        return True
+    if mp4 in _thumb_failed or not os.path.isfile(mp4):
+        return False
+    tmp = dest + ".part"
+    cmd = [
+        ffmpeg,
+        "-hide_banner",
+        "-loglevel",
+        "error",
+        "-ss",
+        "1",
+        "-i",
+        mp4,
+        "-frames:v",
+        "1",
+        "-vf",
+        "scale=320:-2",
+        "-q:v",
+        "5",
+        "-y",
+        tmp,
+    ]
+    try:
+        subprocess.run(cmd, check=False, timeout=30, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired):
+        _thumb_failed.add(mp4)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    if not os.path.isfile(tmp) or os.path.getsize(tmp) < 64:
+        _thumb_failed.add(mp4)
+        try:
+            os.remove(tmp)
+        except OSError:
+            pass
+        return False
+    os.replace(tmp, dest)
+    return True
+
+
+def backfill_thumbs(conn, ffmpeg: str, limit: int = 40, input_id: str | None = None) -> int:
+    """Write stills for closed chunks that do not have one yet. Newest first."""
+    sql = "SELECT path FROM chunks WHERE ready=1 AND orphan=0"
+    args: tuple[Any, ...] = ()
+    if input_id:
+        sql += " AND input_id=?"
+        args = (input_id,)
+    sql += " ORDER BY start_at DESC LIMIT 500"
+    n = 0
+    for row in conn.execute(sql, args).fetchall():
+        path = str(row["path"] or "")
+        if not path or not os.path.isfile(path):
+            continue
+        dest = thumb_path_for(path)
+        if os.path.isfile(dest) and os.path.getsize(dest) > 64:
+            continue
+        if write_chunk_thumb(path, ffmpeg):
+            n += 1
+        if n >= limit:
+            break
+    return n
+
+
 def index_file(
     conn,
     path: str,
@@ -179,6 +256,7 @@ def scan_dir(
     ffprobe: str = "ffprobe",
     skip_basename: str | None = None,
     pending: dict[str, tuple[int, int]] | None = None,
+    ffmpeg: str | None = None,
 ) -> list[dict[str, Any]]:
     found: list[dict[str, Any]] = []
     if not os.path.isdir(root):
@@ -214,4 +292,9 @@ def scan_dir(
                 found.append(rec)
                 ready.add(path)
                 ready.add(os.path.abspath(rec["path"]))
+                if ffmpeg:
+                    try:
+                        write_chunk_thumb(rec["path"], ffmpeg)
+                    except OSError as exc:
+                        print(f"thumb skip {rec['path']}: {exc}", file=sys.stderr, flush=True)
     return found
