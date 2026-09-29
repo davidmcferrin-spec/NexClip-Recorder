@@ -26,6 +26,14 @@ nav.topnav {
   padding: 10px 16px; background: var(--panel); border-bottom: 1px solid var(--edge);
   position: relative;
 }
+.space-warn {
+  flex: 0 0 auto;
+  background: #6b2a12;
+  color: #fff8f3;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--warn);
+}
+.space-warn[hidden] { display: none; }
 .nav-bell { position: relative; }
 .notice-badge {
   margin-left: 6px; background: var(--acc); color: var(--on-acc);

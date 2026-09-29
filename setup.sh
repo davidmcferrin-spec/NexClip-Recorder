@@ -26,6 +26,26 @@ nexrec_open_parents() {
   done
 }
 
+# Already-running workers keep the groups they had at start. usermod -aG
+# does not update them; a restart does, and it also loads a new encoder.
+nexrec_restart_encoders() {
+  local unit listed
+  if systemctl is-active --quiet nexrec-export.service; then
+    log "restart nexrec-export.service"
+    systemctl restart nexrec-export.service || warn "could not restart nexrec-export.service"
+  fi
+  listed="$(systemctl list-units --type=service --state=active --no-legend --plain \
+    'nexrec-record@*' 'nexrec-preview@*' 2>/dev/null || true)"
+  if [[ -z "${listed//[[:space:]]/}" ]]; then
+    return 0
+  fi
+  while read -r unit _; do
+    [[ -n "$unit" ]] || continue
+    log "restart $unit"
+    systemctl restart "$unit" || warn "could not restart $unit"
+  done <<<"$listed"
+}
+
 nexrec_grant_www_data() {
   nexrec_open_parents "$ROOT"
   nexrec_open_parents "$ROOT/web/public"
@@ -127,6 +147,9 @@ mkdir -p "$ETC/inputs" "$VAR/storage" "$VAR/auth" "$VAR/sessions"
 chown -R www-data:www-data "$VAR"
 if getent group video >/dev/null 2>&1; then
   usermod -aG video www-data || warn "could not add www-data to group video (DeckLink device nodes)"
+fi
+if getent group render >/dev/null 2>&1; then
+  usermod -aG render www-data || warn "could not add www-data to group render (NVIDIA device nodes)"
 fi
 chmod 750 "$VAR" "$VAR/auth"
 
@@ -292,6 +315,11 @@ if apache2ctl configtest >/dev/null 2>&1; then
 else
   warn "apache2ctl configtest failed — DocumentRoot should be $PUBLIC"
 fi
+
+# After FFmpeg is installed and www-data is in render/video. Restarts only
+# units that are already active, so a first boot with no inputs is a no-op
+# for recorders.
+nexrec_restart_encoders
 
 echo "$ROOT" > "$ETC/repo.path"
 log "Local PostgreSQL role and database are configured. The password is only in $ETC/nexrec.env."

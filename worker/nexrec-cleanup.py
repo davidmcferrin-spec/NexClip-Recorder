@@ -23,10 +23,29 @@ from nexrec_util import (  # noqa: E402
 )
 
 
-def fs_free(path: str) -> int:
+def fs_space(path: str) -> tuple[int, int]:
+    """Available bytes for this user, and filesystem size."""
     os.makedirs(path, exist_ok=True)
     st = os.statvfs(path)
-    return int(st.f_bavail * st.f_frsize)
+    total = int(st.f_blocks * st.f_frsize)
+    free = int(st.f_bavail * st.f_frsize)
+    return free, total
+
+
+def fs_free(path: str) -> int:
+    free, _total = fs_space(path)
+    return free
+
+
+def needs_space_purge(free: int, total: int, floor: int, max_used_pct: float) -> bool:
+    """True when free space is under the floor or used percent has reached the cap."""
+    if floor > 0 and free < floor:
+        return True
+    if max_used_pct > 0 and total > 0:
+        used_pct = ((total - free) / total) * 100.0
+        if used_pct >= max_used_pct:
+            return True
+    return False
 
 
 def unlink_quiet(path: str) -> bool:
@@ -108,9 +127,12 @@ def orphans(conn, storage: str) -> int:
     return n
 
 
-def free_space_pass(conn, storage: str, floor: int) -> int:
+def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> int:
     n = 0
-    while fs_free(storage) < floor:
+    while True:
+        free, total = fs_space(storage)
+        if not needs_space_purge(free, total, floor, max_used_pct):
+            break
         # Oldest unprotected export first.
         row = conn.execute(
             """
@@ -158,8 +180,14 @@ def run(env: dict) -> dict:
         "free_bytes": fs_free(paths["storage"]),
     }
     floor = parse_bytes(env.get("NEXREC_FREE_SPACE_FLOOR") or "0")
-    if floor > 0:
-        stats["freed_for_floor"] = free_space_pass(conn, paths["storage"], floor)
+    raw_pct = str(env.get("NEXREC_MAX_USED_PERCENT") or "").strip()
+    try:
+        max_pct = float(raw_pct) if raw_pct else 0.0
+    except ValueError:
+        max_pct = 0.0
+    stats["max_used_percent"] = max_pct
+    if floor > 0 or max_pct > 0:
+        stats["freed_for_floor"] = free_space_pass(conn, paths["storage"], floor, max_pct)
         stats["free_bytes"] = fs_free(paths["storage"])
     return stats
 

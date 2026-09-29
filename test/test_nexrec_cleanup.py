@@ -165,6 +165,51 @@ class TestCleanup(unittest.TestCase):
         self.assertGreaterEqual(stats["chunks_expired"], 1)
         self.assertFalse(os.path.isfile(path))
 
+    def test_purge_when_used_percent_reaches_cap(self) -> None:
+        self.assertFalse(mod.needs_space_purge(800, 1000, 0, 90))
+        self.assertTrue(mod.needs_space_purge(100, 1000, 0, 90))
+        self.assertTrue(mod.needs_space_purge(100, 1000, 0, 90.0))
+        self.assertTrue(mod.needs_space_purge(40, 1000, 50, 0))
+        self.assertFalse(mod.needs_space_purge(50, 1000, 50, 0))
+        self.assertFalse(mod.needs_space_purge(800, 1000, 0, 0))
+
+    def test_unset_max_percent_does_not_purge(self) -> None:
+        path = os.path.join(self.storage, "inputs", "cam", "native", "cam_keep.mp4")
+        open(path, "wb").write(b"k" * 16)
+        now = utcnow()
+        insert_chunk(
+            self.conn,
+            {
+                "id": "chk_keep",
+                "input_id": "cam",
+                "path": path,
+                "kind": "native",
+                "start_at": iso_z(now),
+                "end_at": iso_z(now + timedelta(seconds=300)),
+                "duration_s": 300,
+                "size_bytes": 16,
+                "width": 1280,
+                "height": 720,
+                "fps": 30,
+                "interlaced": 0,
+                "codec": "h264",
+                "timecode_start": None,
+                "ready": 1,
+                "orphan": 0,
+                "created_at": iso_z(now),
+            },
+        )
+        env = {
+            "NEXREC_DATA_DIR": self.tmp.name,
+            "NEXREC_STORAGE_DIR": self.storage,
+            "NEXREC_DB": self.db,
+            "NEXREC_FREE_SPACE_FLOOR": "0",
+        }
+        stats = mod.run(env)
+        self.assertEqual(stats["max_used_percent"], 0)
+        self.assertEqual(stats["freed_for_floor"], 0)
+        self.assertTrue(os.path.isfile(path))
+
 
 if __name__ == "__main__":
     unittest.main()

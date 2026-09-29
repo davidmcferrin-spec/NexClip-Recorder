@@ -47,6 +47,14 @@
       </thead>
       <tbody id="drive"></tbody>
     </table>
+    <h2>Days left</h2>
+    <p class="sub" id="runway-summary">Each input’s days left is how long that input alone would take to fill the space remaining before purge. The system line is all enabled inputs writing together.</p>
+    <table>
+      <thead>
+        <tr><th>Input</th><th>Rate</th><th>On disk</th><th>Retention</th><th>Days left alone</th></tr>
+      </thead>
+      <tbody id="runway"></tbody>
+    </table>
   </div>
   <div class="panel">
     <h2>SDI lock</h2>
@@ -219,7 +227,54 @@ function paint(data) {
   if (data.pending) hint += " The metrics timer has not created the log tables yet.";
   document.getElementById("hint").textContent = hint;
 }
+function daysLabel(v) {
+  if (v == null || v === "") return "—";
+  var n = Number(v);
+  if (!isFinite(n)) return "—";
+  if (n < 0.05) return "under 0.1";
+  return n.toFixed(1);
+}
+function rateLabel(bps, source) {
+  var n = Number(bps);
+  if (!isFinite(n) || n <= 0) return "—";
+  var mbps = (n * 8) / 1000000;
+  var shown = mbps >= 10 ? mbps.toFixed(1) : mbps.toFixed(2);
+  var kind = source === "measured" ? " measured" : (source === "bitrate" ? " target" : "");
+  return shown + " Mb/s" + kind;
+}
+function paintRunway(data) {
+  var summary = document.getElementById("runway-summary");
+  var body = document.getElementById("runway");
+  if (!summary || !body) return;
+  var rows = data.inputs || [];
+  var sys = daysLabel(data.system_days);
+  var usable = gib(data.usable_bytes);
+  summary.textContent = "Space left before purge is " + usable +
+    ". All enabled inputs together: " + (data.system_days == null ? "not projected yet" : sys + " days") +
+    ". A row’s days left is that input alone. Purge starts at " + (data.max_used_percent || "—") +
+    "% used, and the warning bar appears " + (data.warn_points || "—") + " points sooner.";
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="5">No inputs yet.</td></tr>';
+    return;
+  }
+  var html = rows.map(function (r) {
+    return "<tr><td>" + esc(r.name || r.id) + "</td><td>" + esc(rateLabel(r.rate_bps, r.rate_source)) +
+      "</td><td>" + esc(daysLabel(r.days_on_disk)) + "</td><td>" + esc(r.retention_days) +
+      "</td><td>" + esc(daysLabel(r.days_left)) + "</td></tr>";
+  }).join("");
+  html += "<tr><td>All inputs</td><td>" + esc(rateLabel(data.system_rate_bps, "")) +
+    "</td><td>—</td><td>—</td><td>" + esc(sys) + "</td></tr>";
+  body.innerHTML = html;
+}
+function loadForecast() {
+  if (!window.NexRecAuth || !NexRecAuth.recApi) return;
+  NexRecAuth.recApi("storage_forecast").then(paintRunway).catch(function () {
+    var body = document.getElementById("runway");
+    if (body) body.innerHTML = '<tr><td colspan="5">Days left unavailable.</td></tr>';
+  });
+}
 function load() {
+  loadForecast();
   var hours = document.getElementById("hours").value;
   return fetch("/api/recorder?action=metrics_list&hours=" + encodeURIComponent(hours), { credentials: "same-origin" })
     .then(function (r) { return r.json(); })

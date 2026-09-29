@@ -16,7 +16,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate, overlay_app_settings  # noqa: E402
-from nexrec_ffmpeg import export_concat_argv, parse_export_progress  # noqa: E402
+from nexrec_ffmpeg import export_concat_argv, parse_export_progress, pin_video_encoder  # noqa: E402
 from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, pin_process_utc, utcnow  # noqa: E402
 
 
@@ -242,6 +242,8 @@ def main(argv: list[str] | None = None) -> int:
     migrate(conn)
     env = overlay_app_settings(conn, env)
     paths = data_paths(env)
+    env, encoder = pin_video_encoder(env, paths["ffmpeg"])
+    print(f"video encoder {encoder}", flush=True)
     if args.once or args.job_id:
         process_one(conn, env, args.job_id or None)
         return 0

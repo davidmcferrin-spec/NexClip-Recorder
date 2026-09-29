@@ -18,6 +18,8 @@ from nexrec_ffmpeg import (  # noqa: E402
     input_args,
     metadata_args,
     parse_export_progress,
+    pin_video_encoder,
+    preview_argv,
     preview_unit_allowed,
     record_argv,
     segment_args,
@@ -234,6 +236,73 @@ class TestFfmpeg(unittest.TestCase):
         self.assertAlmostEqual(parse_export_progress("out_time=00:01:02.500000"), 62.5)
         self.assertAlmostEqual(parse_export_progress("frame=1 fps=30 time=00:00:03.00 bitrate=1k"), 3.0)
         self.assertIsNone(parse_export_progress("progress=continue"))
+
+    def test_nvenc_record_and_preview(self):
+        env = {"NEXREC_VIDEO_ENCODER": "nvenc"}
+        args = encode_args({
+            "source_type": "decklink",
+            "signal_mode": "1080i59.94",
+        }, env)
+        self.assertIn("h264_nvenc", args)
+        self.assertNotIn("libx264", args)
+        self.assertNotIn("tff=1", args)
+        self.assertIn("+ildct", args)
+        self.assertIn("tt", args)
+        self.assertIn("p3", args)
+        self.assertIn("cbr", args)
+        preview = preview_argv(
+            {"source_type": "rtsp", "url": "rtsp://cam/stream"},
+            "rtsp://127.0.0.1:8554/in0",
+            env=env,
+        )
+        self.assertIn("h264_nvenc", preview)
+        self.assertIn("ull", preview)
+        self.assertIn("p1", preview)
+        self.assertNotIn("zerolatency", preview)
+        tee = record_argv(
+            {"source_type": "decklink", "decklink_device": "DeckLink Quad (1)", "signal_mode": "1080p60"},
+            "/data/out.mp4",
+            env=env,
+            preview_rtsp="rtsp://127.0.0.1:8554/in1",
+        )
+        self.assertEqual(tee.count("h264_nvenc"), 2)
+        self.assertNotIn("libx264", tee)
+        exported = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=False, env=env)
+        self.assertIn("h264_nvenc", exported)
+        copied = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=True, env=env)
+        self.assertNotIn("h264_nvenc", copied)
+
+    def test_cpu_preview_stays_zerolatency(self):
+        preview = preview_argv(
+            {"source_type": "rtsp", "url": "rtsp://cam/stream"},
+            "rtsp://127.0.0.1:8554/in0",
+        )
+        self.assertIn("libx264", preview)
+        self.assertIn("ultrafast", preview)
+        self.assertIn("zerolatency", preview)
+        self.assertNotIn("h264_nvenc", preview)
+
+    def test_pin_video_encoder(self):
+        cpu, note = pin_video_encoder({}, probe=lambda _ff: "no NVIDIA device")
+        self.assertEqual(cpu["NEXREC_VIDEO_ENCODER"], "libx264")
+        self.assertEqual(note, "libx264")
+        blocked, why = pin_video_encoder({}, probe=lambda _ff: "/dev/nvidiactl is not writable by this user")
+        self.assertEqual(blocked["NEXREC_VIDEO_ENCODER"], "libx264")
+        self.assertIn("not writable", why)
+        gpu, using = pin_video_encoder({}, probe=lambda _ff: None)
+        self.assertEqual(gpu["NEXREC_VIDEO_ENCODER"], "nvenc")
+        self.assertEqual(using, "h264_nvenc")
+        forced, _ = pin_video_encoder(
+            {"NEXREC_VIDEO_ENCODER": "libx264"},
+            probe=lambda _ff: None,
+        )
+        self.assertEqual(forced["NEXREC_VIDEO_ENCODER"], "libx264")
+        off, off_note = pin_video_encoder(
+            {"NEXREC_ENABLE_NVENC": "0"},
+            probe=lambda _ff: None,
+        )
+        self.assertEqual(off["NEXREC_VIDEO_ENCODER"], "libx264")
+        self.assertIn("NEXREC_ENABLE_NVENC=0", off_note)
 
     def test_export_has_faststart(self):
         cmd = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.5, 10.0, copy=True)

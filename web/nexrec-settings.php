@@ -74,7 +74,17 @@ function nexrec_settings_catalog(): array {
         'storage.free_space_floor' => [
             'section' => 'storage', 'label' => 'Free-space floor', 'type' => 'size',
             'env' => 'NEXREC_FREE_SPACE_FLOOR', 'default' => '50G',
-            'help' => 'Cleanup stops deleting once the recordings filesystem has this much free. Example: 50G, 512M.',
+            'help' => 'Hard reserve. Cleanup deletes oldest video while free space is below this. Example: 50G, 512M.',
+        ],
+        'storage.max_used_percent' => [
+            'section' => 'storage', 'label' => 'Max drive used (%)', 'type' => 'int',
+            'min' => 1, 'max' => 99, 'env' => 'NEXREC_MAX_USED_PERCENT', 'default' => '90',
+            'help' => 'Cleanup also deletes oldest video once the recordings filesystem reaches this percent full. The free-space floor still applies. Changing this does not move files.',
+        ],
+        'storage.purge_warn_points' => [
+            'section' => 'storage', 'label' => 'Purge warning (points before max)', 'type' => 'int',
+            'min' => 1, 'max' => 40, 'env' => 'NEXREC_PURGE_WARN_POINTS', 'default' => '5',
+            'help' => 'Show the drive warning bar this many percentage points before Max drive used. At 90% with 5 points, the bar appears at 85%.',
         ],
 
         'retention.raw_days' => [
@@ -106,11 +116,17 @@ function nexrec_settings_catalog(): array {
             'section' => 'ffmpeg', 'label' => 'Broadcast audio bitrate', 'type' => 'bitrate',
             'env' => 'NEXREC_BROADCAST_AUDIO_BITRATE', 'default' => '192k',
         ],
+        'ffmpeg.encoder' => [
+            'section' => 'ffmpeg', 'label' => 'Video encoder', 'type' => 'enum',
+            'options' => ['auto', 'nvenc', 'libx264'],
+            'env' => 'NEXREC_VIDEO_ENCODER', 'default' => 'auto',
+            'help' => 'auto uses h264_nvenc when this user can open the NVIDIA device and ffmpeg lists that encoder. nvenc forces the GPU. libx264 stays on the CPU. Restart record, preview, and export after changing this.',
+        ],
         'ffmpeg.preset' => [
-            'section' => 'ffmpeg', 'label' => 'x264 preset', 'type' => 'enum',
+            'section' => 'ffmpeg', 'label' => 'Encode preset', 'type' => 'enum',
             'options' => ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium', 'slow'],
             'env' => 'NEXREC_X264_PRESET', 'default' => 'veryfast',
-            'help' => 'Broadcast profile is H.264 High@L4.1, yuv420p, AAC-LC. Preset trades CPU for encode speed.',
+            'help' => 'Broadcast profile is H.264 High, yuv420p, AAC-LC. On the CPU these are x264 presets. On NVENC they map to p1–p7 (veryfast is p3).',
         ],
         'ffmpeg.segment_seconds' => [
             'section' => 'ffmpeg', 'label' => 'Segment length (minutes)', 'type' => 'int',

@@ -1,11 +1,17 @@
 #!/usr/bin/env python3
-"""Assemble FFmpeg argv for ingest, preview, and export. No subprocess here."""
+"""Assemble FFmpeg argv for ingest, preview, and export.
+
+Argv builders do not spawn FFmpeg. ``pin_video_encoder`` is the one place
+that probes the GPU and the encoder list, and only the workers call it.
+"""
 
 from __future__ import annotations
 
+import os
 import re
+import subprocess
 from datetime import datetime
-from typing import Any, NamedTuple
+from typing import Any, Callable, NamedTuple
 
 from nexrec_util import as_utc, iso_z, wallclock_timecode
 
@@ -15,6 +21,23 @@ SOURCE_TYPES = ("rtsp", "srt", "udp", "tcp", "rtp", "decklink", "testsrc")
 PREVIEW_SIZE = "960x540"
 PREVIEW_VBITRATE = "1500k"
 PREVIEW_ABITRATE = "96k"
+
+# x264 speed names from Setup map onto NVENC p1 (fast) … p7 (slow).
+_X264_TO_NVENC = {
+    "ultrafast": "p1",
+    "superfast": "p1",
+    "veryfast": "p3",
+    "faster": "p4",
+    "fast": "p5",
+    "medium": "p6",
+    "slow": "p7",
+    "slower": "p7",
+    "veryslow": "p7",
+}
+_NVENC_PRESETS = {f"p{i}" for i in range(1, 8)}
+_CPU_ENCODER = {"libx264", "x264", "cpu", "off", "0"}
+_GPU_ENCODER = {"nvenc", "h264_nvenc", "nvidia", "gpu", "on", "1"}
+_OFF = {"0", "false", "no", "off"}
 
 # Broadcast floor. 1080p60 and upconverted 1080i step up from here.
 _H264_LEVELS = (
@@ -255,6 +278,148 @@ def decklink_filter_complex(source: dict[str, Any]) -> str:
     )
 
 
+def _encoder_choice(env: dict[str, str] | None) -> str:
+    return str((env or {}).get("NEXREC_VIDEO_ENCODER") or "").strip().lower()
+
+
+def use_nvenc(env: dict[str, str] | None = None) -> bool:
+    """True only after a worker has pinned the encoder to NVENC."""
+    return _encoder_choice(env) in _GPU_ENCODER
+
+
+def nvenc_preset(name: str) -> str:
+    preset = (name or "veryfast").strip().lower()
+    if preset in _NVENC_PRESETS:
+        return preset
+    return _X264_TO_NVENC.get(preset, "p3")
+
+
+def nvidia_device() -> str | None:
+    for node in ("/dev/nvidiactl", "/dev/nvidia0"):
+        if os.path.exists(node):
+            return node
+    return None
+
+
+def nvenc_blocked(ffmpeg: str = "ffmpeg") -> str | None:
+    """None when this process can encode with h264_nvenc."""
+    node = nvidia_device()
+    if node is None:
+        return "no NVIDIA device"
+    if not os.access(node, os.R_OK | os.W_OK):
+        return f"{node} is not writable by this user"
+    try:
+        proc = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return f"could not list ffmpeg encoders ({exc})"
+    blob = (proc.stdout or "") + "\n" + (proc.stderr or "")
+    if "h264_nvenc" not in blob:
+        return "ffmpeg has no h264_nvenc encoder"
+    return None
+
+
+def pin_video_encoder(
+    env: dict[str, str],
+    ffmpeg: str = "ffmpeg",
+    probe: Callable[[str], str | None] | None = None,
+) -> tuple[dict[str, str], str]:
+    """Choose libx264 or nvenc for this process.
+
+    Unset or ``auto`` uses the GPU when the device is writable and FFmpeg
+    lists ``h264_nvenc``. ``libx264`` and ``nvenc`` are explicit.
+    ``NEXREC_ENABLE_NVENC=0`` keeps the CPU encoder unless NVENC is explicit.
+    """
+    out = dict(env)
+    choice = _encoder_choice(out) or "auto"
+    if choice in _CPU_ENCODER:
+        out["NEXREC_VIDEO_ENCODER"] = "libx264"
+        return out, "libx264"
+    if choice in _GPU_ENCODER:
+        out["NEXREC_VIDEO_ENCODER"] = "nvenc"
+        return out, "h264_nvenc"
+    if str(out.get("NEXREC_ENABLE_NVENC") or "").strip().lower() in _OFF:
+        out["NEXREC_VIDEO_ENCODER"] = "libx264"
+        return out, "libx264 (NEXREC_ENABLE_NVENC=0)"
+    reason = (probe or nvenc_blocked)(ffmpeg)
+    if reason:
+        out["NEXREC_VIDEO_ENCODER"] = "libx264"
+        if reason == "no NVIDIA device":
+            return out, "libx264"
+        return out, f"libx264 ({reason})"
+    out["NEXREC_VIDEO_ENCODER"] = "nvenc"
+    return out, "h264_nvenc"
+
+
+def _h264_video_args(
+    env: dict[str, str],
+    *,
+    preset: str,
+    profile: str,
+    level: str,
+    gop: str,
+    bitrate: str,
+    maxrate: str | None = None,
+    bufsize: str | None = None,
+    bf: str = "2",
+    interlaced: str | None = None,
+    low_latency: bool = False,
+) -> list[str]:
+    if use_nvenc(env):
+        args = ["-c:v", "h264_nvenc", "-preset", "p1" if low_latency else nvenc_preset(preset)]
+        if low_latency:
+            args += ["-tune", "ull", "-rc", "cbr", "-bf", "0"]
+        else:
+            args += ["-rc", "cbr", "-bf", bf]
+        args += ["-profile:v", profile]
+        if level:
+            args += ["-level", level]
+        args += [
+            "-pix_fmt", "yuv420p",
+            "-g", gop,
+            "-b:v", bitrate,
+        ]
+        if maxrate:
+            args += ["-maxrate", maxrate]
+        if bufsize:
+            args += ["-bufsize", bufsize]
+        # +ildct is honored by h264_nvenc. x264-params and +ilme are not.
+        if interlaced == "tff":
+            args += ["-flags", "+ildct", "-field_order", "tt"]
+        elif interlaced == "bff":
+            args += ["-flags", "+ildct", "-field_order", "bb"]
+        return args
+    args = [
+        "-c:v", "libx264",
+        "-preset", "ultrafast" if low_latency else preset,
+    ]
+    if low_latency:
+        args += ["-tune", "zerolatency"]
+    args += ["-profile:v", profile]
+    if level:
+        args += ["-level", level]
+    args += ["-pix_fmt", "yuv420p"]
+    if not low_latency:
+        args += ["-g", gop, "-bf", bf]
+    else:
+        args += ["-g", gop]
+    args += ["-b:v", bitrate]
+    if maxrate and not low_latency:
+        args += ["-maxrate", maxrate]
+    if bufsize and not low_latency:
+        args += ["-bufsize", bufsize]
+    if not low_latency and interlaced == "tff":
+        args += ["-flags", "+ildct+ilme", "-x264-params", "tff=1"]
+    elif not low_latency and interlaced == "bff":
+        args += ["-flags", "+ildct+ilme", "-x264-params", "bff=1"]
+    return args
+
+
 def encode_args(
     source: dict[str, Any],
     env: dict[str, str] | None = None,
@@ -294,22 +459,22 @@ def encode_args(
         level = "4.2"
     else:
         level = "4.1"
-    args += [
-        "-c:v", "libx264",
-        "-preset", preset,
-        "-profile:v", "high",
-        "-level", level,
-        "-pix_fmt", "yuv420p",
-        "-g", gop,
-        "-bf", "2",
-        "-b:v", vbr,
-        "-maxrate", vbr,
-        "-bufsize", "24M",
-    ]
+    field = None
     # Field flags only for a locked interlaced raster. Progressive 1080p must
     # stay progressive; keep_interlace does not override a known mode.
     if raster is not None and raster.interlaced and raster.field and not up:
-        args += ["-flags", "+ildct+ilme", "-x264-params", f"{raster.field}=1"]
+        field = raster.field
+    args += _h264_video_args(
+        env,
+        preset=preset,
+        profile="high",
+        level=level,
+        gop=gop,
+        bitrate=vbr,
+        maxrate=vbr,
+        bufsize="24M",
+        interlaced=field,
+    )
     args += ["-c:a", "aac", "-b:a", abr, "-ar", "48000", "-ac", "2"]
     return args
 
@@ -352,17 +517,23 @@ def segment_args(
     return args
 
 
-def _preview_output_args(rtsp_url: str) -> list[str]:
+def _proxy_video_args(env: dict[str, str]) -> list[str]:
+    return _h264_video_args(
+        env,
+        preset="ultrafast",
+        profile="baseline",
+        level="",
+        gop="30",
+        bitrate=PREVIEW_VBITRATE,
+        low_latency=True,
+    )
+
+
+def _preview_output_args(rtsp_url: str, env: dict[str, str] | None = None) -> list[str]:
     return [
         "-map", "[vprev]",
         "-map", "[aprev]",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-profile:v", "baseline",
-        "-pix_fmt", "yuv420p",
-        "-b:v", PREVIEW_VBITRATE,
-        "-g", "30",
+        *_proxy_video_args(env or {}),
         "-c:a", "aac",
         "-b:a", PREVIEW_ABITRATE,
         "-ar", "48000",
@@ -392,7 +563,7 @@ def _decklink_tee_argv(
     # yadif for upconvert lives in the filter graph, not a second -vf.
     argv += encode_args(source, env, include_vf=False)
     argv += segment_args(out_pattern, segment_seconds=segment_seconds, at_clock=at_clock)
-    argv += _preview_output_args(preview_rtsp)
+    argv += _preview_output_args(preview_rtsp, env)
     return argv
 
 
@@ -439,13 +610,7 @@ def preview_argv(
         argv += ["-map", "0:v:0?", "-map", "0:a:0?"]
     argv += [
         "-vf", f"scale={PREVIEW_SIZE}:force_original_aspect_ratio=decrease,fps=30",
-        "-c:v", "libx264",
-        "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-profile:v", "baseline",
-        "-pix_fmt", "yuv420p",
-        "-b:v", PREVIEW_VBITRATE,
-        "-g", "30",
+        *_proxy_video_args(env),
         "-c:a", "aac",
         "-b:a", PREVIEW_ABITRATE,
         "-ar", "48000",
@@ -506,11 +671,17 @@ def export_concat_argv(
     else:
         vbr = env.get("NEXREC_BROADCAST_VIDEO_BITRATE") or "12M"
         abr = env.get("NEXREC_BROADCAST_AUDIO_BITRATE") or "192k"
-        argv += [
-            "-c:v", "libx264", "-preset", env.get("NEXREC_X264_PRESET") or "veryfast",
-            "-profile:v", "high", "-level", "4.1", "-pix_fmt", "yuv420p",
-            "-b:v", vbr, "-c:a", "aac", "-b:a", abr, "-ar", "48000",
-        ]
+        argv += _h264_video_args(
+            env,
+            preset=env.get("NEXREC_X264_PRESET") or "veryfast",
+            profile="high",
+            level="4.1",
+            gop=str(env.get("NEXREC_GOP_FRAMES") or "60"),
+            bitrate=vbr,
+            maxrate=vbr,
+            bufsize="24M",
+        )
+        argv += ["-c:a", "aac", "-b:a", abr, "-ar", "48000"]
     argv += ["-movflags", "+faststart", dest_path]
     return argv
 

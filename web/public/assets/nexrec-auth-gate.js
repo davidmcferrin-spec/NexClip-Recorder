@@ -80,6 +80,7 @@
       }
       applyNav(user);
       startExportWatch(user);
+      startSpaceWarn();
       return user;
     });
   }
@@ -224,6 +225,40 @@
       return job.status === "queued" || job.status === "running";
     });
     return busy;
+  }
+
+  var spaceWarnStarted = false;
+
+  function startSpaceWarn() {
+    if (spaceWarnStarted) return;
+    spaceWarnStarted = true;
+    function paint(data) {
+      var bar = document.getElementById("space-warn");
+      if (!data || !data.warn || !data.message) {
+        if (bar) bar.hidden = true;
+        return;
+      }
+      if (!bar) {
+        bar = document.createElement("div");
+        bar.id = "space-warn";
+        bar.className = "space-warn";
+        bar.setAttribute("role", "status");
+        var nav = document.querySelector("nav.topnav");
+        if (nav && nav.parentNode) nav.parentNode.insertBefore(bar, nav.nextSibling);
+        else document.body.insertBefore(bar, document.body.firstChild);
+      }
+      bar.hidden = false;
+      bar.textContent = data.message;
+    }
+    function tick() {
+      recApi("storage_forecast").then(function (data) {
+        paint(data);
+        global.setTimeout(tick, 60000);
+      }).catch(function () {
+        global.setTimeout(tick, 60000);
+      });
+    }
+    tick();
   }
 
   function startExportWatch(user) {

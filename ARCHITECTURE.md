@@ -193,6 +193,15 @@ ffmpeg -hide_banner -nostdin -use_wallclock_as_timestamps 1 \
 `-format_code` is optional. 1080i stays 1080i unless that input has
 `upconvert_1080i`. SDI is never `-c copy`.
 
+Record, preview, and export re-encodes use `h264_nvenc` when Setup → Video
+encoder is `auto` (the default) and this user can open `/dev/nvidiactl` and
+`ffmpeg -encoders` lists `h264_nvenc`. `libx264` remains the fallback. The
+x264 preset names map to NVENC `p1`–`p7` (`veryfast` is `p3`). The preview
+uses `-preset p1 -tune ull`. `yadif` and the proxy scale stay on the CPU.
+`setup.sh` adds `www-data` to `render` when that group exists and restarts
+active record, preview, and export units. Without that group the device
+check fails closed back to `libx264`.
+
 DeckLink sub-devices are **exclusive-open**. Do not start `nexrec-preview@id`
 for a DeckLink input — that unit’s `ExecCondition` skips it, and Services
 refuses start/enable. IP sources still use a second FFmpeg for preview.

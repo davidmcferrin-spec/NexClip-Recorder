@@ -26,7 +26,7 @@ from nexrec_decklink import (  # noqa: E402
     resolve_status_bin,
 )
 from nexrec_features import analyze_chunk  # noqa: E402
-from nexrec_ffmpeg import preview_publish_url, record_argv  # noqa: E402
+from nexrec_ffmpeg import pin_video_encoder, preview_publish_url, record_argv  # noqa: E402
 from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
 from nexrec_index import open_segment_basename, scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
@@ -214,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
             preview_rtsp = preview_publish_url(str(source.get("preview_path") or "in0"), env)
             print(f"decklink preview tee {preview_rtsp}", flush=True)
 
+    env, encoder = pin_video_encoder(env, paths["ffmpeg"])
+    print(f"video encoder {encoder}", flush=True)
     cmd = record_argv(
         source,
         out_pattern,

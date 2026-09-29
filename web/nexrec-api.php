@@ -6,6 +6,7 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/nexrec-auth-lib.php';
 require_once __DIR__ . '/nexrec-decklink.php';
+require_once __DIR__ . '/nexrec-forecast.php';
 
 function nexrec_api_fail(int $status, string $message): never {
     if (!headers_sent()) {
@@ -33,6 +34,78 @@ function nexrec_api_body(): array {
     }
     $j = json_decode($raw, true);
     return is_array($j) ? $j : [];
+}
+
+function nexrec_forecast_span(?string $first, ?string $last, float $duration): float {
+    $a = is_string($first) && $first !== '' ? strtotime($first) : false;
+    $b = is_string($last) && $last !== '' ? strtotime($last) : false;
+    $span = ($a !== false && $b !== false && $b > $a) ? (float) ($b - $a) : 0.0;
+    if ($duration > $span) {
+        $span = $duration;
+    }
+    return $span;
+}
+
+function nexrec_storage_forecast_now(): array {
+    $storage = nexrec_storage_dir();
+    $total = 0;
+    $free = 0;
+    if ($storage !== '' && is_dir($storage)) {
+        $t = @disk_total_space($storage);
+        $f = @disk_free_space($storage);
+        if (is_int($t) || is_float($t)) {
+            $total = (int) $t;
+        }
+        if (is_int($f) || is_float($f)) {
+            $free = (int) $f;
+        }
+    }
+    $usage = [];
+    $res = nexrec_db()->query(
+        'SELECT input_id, COALESCE(SUM(size_bytes), 0) AS stored, MIN(start_at) AS first_at,
+                MAX(COALESCE(end_at, start_at)) AS last_at, COALESCE(SUM(duration_s), 0) AS duration_s
+         FROM chunks WHERE ready = 1 AND orphan = 0 GROUP BY input_id'
+    );
+    if ($res !== false) {
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $usage[(string) $row['input_id']] = $row;
+        }
+    }
+    $inputs = [];
+    $res2 = nexrec_db()->query(
+        'SELECT id, name, enabled, retention_days, video_bitrate, audio_bitrate FROM inputs ORDER BY name'
+    );
+    if ($res2 !== false) {
+        while ($row = $res2->fetchArray(SQLITE3_ASSOC)) {
+            $id = (string) $row['id'];
+            $u = $usage[$id] ?? null;
+            $inputs[] = [
+                'id' => $id,
+                'name' => (string) ($row['name'] ?? $id),
+                'enabled' => (int) ($row['enabled'] ?? 0) === 1,
+                'retention_days' => (int) ($row['retention_days'] ?? 0),
+                'video_bitrate' => $row['video_bitrate'] ?? '',
+                'audio_bitrate' => $row['audio_bitrate'] ?? '',
+                'stored_bytes' => $u ? (int) $u['stored'] : 0,
+                'span_seconds' => $u ? nexrec_forecast_span(
+                    isset($u['first_at']) ? (string) $u['first_at'] : null,
+                    isset($u['last_at']) ? (string) $u['last_at'] : null,
+                    (float) ($u['duration_s'] ?? 0)
+                ) : 0.0,
+            ];
+        }
+    }
+    return nexrec_storage_forecast(
+        ['free_bytes' => $free, 'total_bytes' => $total],
+        $inputs,
+        [
+            'max_used_percent' => nexrec_setting_int('storage.max_used_percent', 90),
+            'warn_points' => nexrec_setting_int('storage.purge_warn_points', 5),
+            'floor_bytes' => nexrec_parse_size_bytes(nexrec_setting('storage.free_space_floor')),
+            'default_video' => nexrec_setting('ffmpeg.video_bitrate') ?: '12M',
+            'default_audio' => nexrec_setting('ffmpeg.audio_bitrate') ?: '192k',
+        ]
+    );
 }
 
 function nexrec_storage_dir(): string {
@@ -127,6 +200,11 @@ try {
             'segment_seconds' => nexrec_setting_int('ffmpeg.segment_seconds', 300),
             'max_inputs' => nexrec_setting_int('defaults.max_inputs', 10),
         ]);
+    }
+
+    if ($action === 'storage_forecast') {
+        nexrec_require_roles([]);
+        nexrec_api_ok(nexrec_storage_forecast_now());
     }
 
     if ($action === 'inputs_list') {
