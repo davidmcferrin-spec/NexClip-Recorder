@@ -336,5 +336,42 @@ class TestThumbs(unittest.TestCase):
             nexrec_index._thumb_failed.discard(mp4)
 
 
+class _Rows:
+    def __init__(self, rows, sql, args):
+        self._rows = rows
+        self.sql = sql
+        self.args = args
+
+    def fetchall(self):
+        return self._rows
+
+
+class _Conn:
+    def __init__(self, rows):
+        self.rows = rows
+        self.sql = ""
+        self.args = ()
+
+    def execute(self, sql, args=()):
+        self.sql = sql
+        self.args = args
+        return _Rows(self.rows, sql, args)
+
+
+class TestBackfill(unittest.TestCase):
+    def test_archive_pass_has_no_row_cap(self):
+        conn = _Conn([])
+        n = nexrec_index.backfill_thumbs(conn, "ffmpeg", limit=None, scan_limit=None)
+        self.assertEqual(n, 0)
+        self.assertNotIn("LIMIT", conn.sql)
+        self.assertEqual(conn.args, ())
+
+    def test_steady_pass_keeps_the_newest_window(self):
+        conn = _Conn([])
+        nexrec_index.backfill_thumbs(conn, "ffmpeg", limit=40, input_id="studio-a")
+        self.assertIn("LIMIT ?", conn.sql)
+        self.assertEqual(conn.args, ("studio-a", 500))
+
+
 if __name__ == "__main__":
     unittest.main()

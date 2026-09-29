@@ -143,25 +143,43 @@ def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
     return True
 
 
-def backfill_thumbs(conn, ffmpeg: str, limit: int = 40, input_id: str | None = None) -> int:
-    """Write stills for closed chunks that do not have one yet. Newest first."""
+def backfill_thumbs(
+    conn,
+    ffmpeg: str,
+    limit: int | None = 40,
+    input_id: str | None = None,
+    scan_limit: int | None = 500,
+    on_result=None,
+) -> int:
+    """Write stills for closed chunks that do not have one yet. Newest first.
+
+    ``limit`` is how many new stills to write. ``scan_limit`` is how many
+    chunk rows to consider. None on either means no cap, which is the
+    archive pass.
+    """
     sql = "SELECT path FROM chunks WHERE ready=1 AND orphan=0"
-    args: tuple[Any, ...] = ()
+    args: list[Any] = []
     if input_id:
         sql += " AND input_id=?"
-        args = (input_id,)
-    sql += " ORDER BY start_at DESC LIMIT 500"
+        args.append(input_id)
+    sql += " ORDER BY start_at DESC"
+    if scan_limit is not None:
+        sql += " LIMIT ?"
+        args.append(int(scan_limit))
     n = 0
-    for row in conn.execute(sql, args).fetchall():
+    for row in conn.execute(sql, tuple(args)).fetchall():
         path = str(row["path"] or "")
         if not path or not os.path.isfile(path):
             continue
         dest = thumb_path_for(path)
         if os.path.isfile(dest) and os.path.getsize(dest) > 64:
             continue
-        if write_chunk_thumb(path, ffmpeg):
+        ok = write_chunk_thumb(path, ffmpeg)
+        if on_result is not None:
+            on_result(path, ok)
+        if ok:
             n += 1
-        if n >= limit:
+        if limit is not None and n >= limit:
             break
     return n
 
