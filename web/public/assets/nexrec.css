@@ -86,17 +86,64 @@ th { color: var(--dim); font-weight: 500; }
 .grid.n3 { grid-template-columns: 1fr 1fr 1fr; }
 .grid.n4 { grid-template-columns: 1fr 1fr; grid-template-rows: 1fr 1fr; }
 .grid.n6 { grid-template-columns: 1fr 1fr 1fr; grid-template-rows: 1fr 1fr; }
+/* Live and Export: the multiview stays inside the viewport. Each pane is 16:9
+   and its width shrinks when the cell is too short for that height. */
+body.stage-page {
+  height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
+}
+body.stage-page main {
+  overflow: hidden;
+  min-height: 0;
+}
+body.stage-page .grid {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  min-width: 0;
+  min-height: 0;
+  max-height: 100%;
+}
+body.stage-page .grid.n1,
+body.stage-page .grid.n2,
+body.stage-page .grid.n3 {
+  grid-template-rows: minmax(0, 1fr);
+}
+body.stage-page .grid.n4,
+body.stage-page .grid.n6 {
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+}
+body.stage-page .stage-rest {
+  flex: 0 1 auto;
+  min-height: 0;
+  max-height: 46%;
+  overflow: auto;
+}
+.slot {
+  min-width: 0;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+  container-type: size;
+}
 .pane {
   background: #000; border: 1px solid var(--edge); border-radius: 6px;
-  position: relative; overflow: hidden; min-height: 140px;
+  position: relative; overflow: hidden; min-width: 0; min-height: 0;
+}
+body.stage-page .pane {
+  width: min(100cqw, calc(100cqh * 16 / 9));
+  height: min(100cqh, calc(100cqw * 9 / 16));
 }
 .pane video, .pane .ph {
+  position: absolute; inset: 0;
   width: 100%; height: 100%; object-fit: contain; display: block;
 }
 .pane .ph {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   color: var(--dim); font-family: var(--nx-mono); font-size: 12px; gap: 6px;
-  height: 100%;
 }
 .pane .tag {
   position: absolute; top: 8px; left: 8px; z-index: 5; background: rgba(0,0,0,.65);
@@ -139,6 +186,20 @@ th { color: var(--dim); font-weight: 500; }
 }
 .timeline .mark.in { background: var(--ok); }
 .timeline .mark.out { background: var(--warn); }
+.timeline .coverage {
+  position: absolute; background: rgba(62, 207, 142, 0.28);
+  box-shadow: inset 0 -2px 0 var(--ok); pointer-events: none; z-index: 0;
+}
+.timeline .coverage.hot { background: rgba(62, 207, 142, 0.5); }
+.timeline .playhead, .timeline .mark { z-index: 2; }
+.metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
+.metric-card { background: var(--bg); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px; }
+.metric-card .val { font-size: 22px; font-variant-numeric: tabular-nums; }
+.metric-card .spark { width: 100%; height: 36px; color: var(--acc); display: block; margin-top: 6px; }
+.lock-strip { display: flex; gap: 2px; align-items: center; min-height: 14px; }
+.lock-strip i { display: inline-block; width: 6px; height: 14px; background: var(--edge); }
+.lock-strip i.on { background: var(--ok); }
+.lock-strip i.off { background: var(--bad, #e35d5d); }
 .form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 16px; max-width: 1100px; }
 .feat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 4px 24px; }
 .feat-grid label { display: flex; align-items: center; gap: 8px; margin: 4px 0; }
@@ -174,4 +235,31 @@ code { font-family: var(--nx-mono, ui-monospace, monospace); font-size: 12px; }
   .grid.n2, .grid.n3, .grid.n4, .grid.n6 { grid-template-columns: 1fr; }
   .form-grid { grid-template-columns: 1fr; }
   .feat-grid { grid-template-columns: 1fr; }
+  body.stage-page {
+    height: auto;
+    min-height: 100dvh;
+    overflow: visible;
+  }
+  body.stage-page main { overflow: visible; }
+  body.stage-page .grid {
+    flex: none;
+    max-height: none;
+    height: auto;
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+  }
+  body.stage-page .stage-rest {
+    max-height: none;
+    overflow: visible;
+  }
+  body.stage-page .slot {
+    container-type: normal;
+    height: auto;
+    display: block;
+  }
+  body.stage-page .pane {
+    width: 100%;
+    height: auto;
+    aspect-ratio: 16 / 9;
+  }
 }

@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Metrics</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a class="active" href="/metrics" data-auth-role="admin,operator">Metrics</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Setup</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="bar">
+    <h1 style="margin:0">Metrics</h1>
+    <label class="meta" style="margin:0">Range
+      <select id="hours">
+        <option value="6">6 hours</option>
+        <option value="24" selected>24 hours</option>
+        <option value="72">3 days</option>
+        <option value="168">7 days</option>
+      </select>
+    </label>
+    <button type="button" id="refresh">Refresh</button>
+    <span class="sub" id="hint"></span>
+  </div>
+  <div class="metric-grid" id="cards"></div>
+  <div class="panel">
+    <h2>SDI lock</h2>
+    <p class="sub">Each mark is one sample, about a minute apart. Green is locked, red is unlocked. The recorder writes the current lock on the Services page; this log is the history.</p>
+    <table>
+      <thead>
+        <tr><th>Input</th><th>Now</th><th>Format</th><th>History</th></tr>
+      </thead>
+      <tbody id="sdi"></tbody>
+    </table>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(load);
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function pct(used, total) {
+  if (used == null || total == null || !Number(total)) return null;
+  return Math.round((Number(used) / Number(total)) * 1000) / 10;
+}
+function gib(bytes) {
+  if (bytes == null || bytes === "") return "—";
+  var n = Number(bytes);
+  if (!isFinite(n)) return "—";
+  return (n / (1024 * 1024 * 1024)).toFixed(1) + " GiB";
+}
+function spark(values) {
+  var w = 240, h = 36;
+  var nums = values.filter(function (v) { return v != null && isFinite(v); });
+  if (!nums.length) return "";
+  var min = Math.min.apply(null, nums);
+  var max = Math.max.apply(null, nums);
+  if (max === min) max = min + 1;
+  var step = values.length > 1 ? w / (values.length - 1) : w;
+  var d = [];
+  values.forEach(function (v, i) {
+    if (v == null || !isFinite(Number(v))) return;
+    var x = i * step;
+    var y = h - ((Number(v) - min) / (max - min)) * (h - 4) - 2;
+    d.push((d.length ? "L" : "M") + x.toFixed(1) + " " + y.toFixed(1));
+  });
+  if (!d.length) return "";
+  return '<svg viewBox="0 0 ' + w + ' ' + h + '" class="spark" preserveAspectRatio="none"><path d="' + d.join(" ") + '" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+}
+function card(label, value, series) {
+  return '<div class="metric-card"><div class="sub">' + esc(label) + '</div><div class="val">' + esc(value) + '</div>' + spark(series) + '</div>';
+}
+function lockCell(v) {
+  if (v === 1 || v === "1") return '<i class="on" title="locked"></i>';
+  if (v === 0 || v === "0") return '<i class="off" title="unlocked"></i>';
+  return '<i title="unknown"></i>';
+}
+function paint(data) {
+  var host = data.host || [];
+  var last = host.length ? host[host.length - 1] : {};
+  var cpu = last.cpu_pct == null ? "—" : Number(last.cpu_pct).toFixed(1) + "%";
+  var memP = pct(last.mem_used_bytes, last.mem_total_bytes);
+  var diskP = pct(last.disk_used_bytes, last.disk_total_bytes);
+  var gpu = last.gpu_util_pct == null ? "—" : Number(last.gpu_util_pct).toFixed(0) + "%";
+  var enc = last.gpu_enc_pct == null ? "" : " enc " + Number(last.gpu_enc_pct).toFixed(0) + "%";
+  document.getElementById("cards").innerHTML = [
+    card("CPU", cpu, host.map(function (r) { return r.cpu_pct == null ? null : Number(r.cpu_pct); })),
+    card("Memory", memP == null ? "—" : memP + "% · " + gib(last.mem_used_bytes), host.map(function (r) { return pct(r.mem_used_bytes, r.mem_total_bytes); })),
+    card("Disk", diskP == null ? "—" : diskP + "% · " + gib(last.disk_used_bytes) + " used", host.map(function (r) { return pct(r.disk_used_bytes, r.disk_total_bytes); })),
+    card("GPU" + (last.gpu_name ? " · " + last.gpu_name : ""), gpu + enc, host.map(function (r) { return r.gpu_util_pct == null ? null : Number(r.gpu_util_pct); })),
+  ].join("");
+  var byInput = {};
+  (data.sdi || []).forEach(function (row) {
+    if (!byInput[row.input_id]) byInput[row.input_id] = [];
+    byInput[row.input_id].push(row);
+  });
+  var names = {};
+  (data.signals || []).forEach(function (row) {
+    names[row.input_id] = row;
+    if (!byInput[row.input_id]) byInput[row.input_id] = [];
+  });
+  var ids = Object.keys(byInput).sort();
+  var body = document.getElementById("sdi");
+  if (!ids.length) {
+    body.innerHTML = '<tr><td colspan="4">No SDI samples yet.</td></tr>';
+  } else {
+    body.innerHTML = ids.map(function (id) {
+      var hist = byInput[id];
+      var now = names[id] || hist[hist.length - 1] || {};
+      var recent = hist.slice(-120);
+      var strip = '<span class="lock-strip">' + recent.map(function (row) { return lockCell(row.sdi_lock); }).join("") + "</span>";
+      var state = now.sdi_lock === 1 || now.sdi_lock === "1" ? "locked" : (now.sdi_lock === 0 || now.sdi_lock === "0" ? "unlocked" : (now.signal || "unknown"));
+      return "<tr><td>" + esc(id) + "</td><td>" + esc(state) + "</td><td>" + esc(now.format || "—") + "</td><td>" + strip + "</td></tr>";
+    }).join("");
+  }
+  var hint = host.length ? (host.length + " samples · latest " + host[host.length - 1].sampled_at) : "No samples yet.";
+  if (data.pending) hint += " The metrics timer has not created the log tables yet.";
+  document.getElementById("hint").textContent = hint;
+}
+function load() {
+  var hours = document.getElementById("hours").value;
+  return fetch("/api/recorder?action=metrics_list&hours=" + encodeURIComponent(hours), { credentials: "same-origin" })
+    .then(function (r) { return r.json(); })
+    .then(function (data) {
+      if (!data.ok) throw new Error(data.error || "metrics failed");
+      paint(data);
+    })
+    .catch(function (err) {
+      document.getElementById("hint").textContent = err.message || String(err);
+    });
+}
+document.getElementById("refresh").addEventListener("click", load);
+document.getElementById("hours").addEventListener("change", load);
+setInterval(load, 60000);
+</script>
+</body>
+</html>

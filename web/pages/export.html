@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="/assets/nexrec.css">
 <script src="/assets/nexrec-ui.js"></script>
 </head>
-<body>
+<body class="stage-page">
 <nav class="topnav">
   <a class="brand" href="/live">NexCLIP Recorder</a>
   <a href="/live">Live</a>
   <a class="active" href="/export">Export</a>
+  <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
   <a href="/settings" data-auth-role="admin,operator">Setup</a>
   <a href="/users" data-auth-role="admin">Users</a>
@@ -44,11 +45,13 @@
     <span class="ok-msg" id="msg"></span>
   </div>
   <div class="grid n1" id="grid"></div>
-  <div class="timeline" id="timeline" title="Scrub wall-clock timeline">
+  <div class="stage-rest">
+  <div class="timeline" id="timeline" title="Scrub wall-clock timeline. Shaded spans have a recording.">
     <div class="playhead" id="playhead"></div>
     <div class="mark in" id="mark-in-el" hidden></div>
     <div class="mark out" id="mark-out-el" hidden></div>
   </div>
+  <p class="sub" id="coverage-note">Shaded spans have a recording for the visible inputs. Empty stretches do not.</p>
   <div class="bar">
     <button type="button" id="play-toggle" aria-pressed="false" title="Play the selected pane. Other panes stay muted.">Play</button>
     <span class="meta">Volume</span>
@@ -77,6 +80,7 @@
     <h1>Jobs</h1>
     <table><thead><tr><th>ID</th><th>Window</th><th>Status</th><th></th></tr></thead>
     <tbody id="jobs"></tbody></table>
+  </div>
   </div>
 </main>
 <script src="/assets/nexrec-auth-gate.js"></script>
@@ -210,6 +214,28 @@
       document.getElementById("mark-out-el").hidden = false;
       document.getElementById("mark-out-el").style.left = ((markOut - t0) / Math.max(1, t1 - t0) * 100) + "%";
     }
+    paintCoverage();
+  }
+
+  function paintCoverage() {
+    var bar = document.getElementById("timeline");
+    bar.querySelectorAll(".coverage").forEach(function (el) { el.remove(); });
+    var lanes = NexRecUI.paneInputs(inputs, visibleIds(), n).filter(Boolean);
+    var laneH = lanes.length ? (100 / lanes.length) : 100;
+    bar.style.height = Math.max(48, lanes.length * 18) + "px";
+    lanes.forEach(function (inp, lane) {
+      var hot = selectedInput() && inp.id === selectedInput().id;
+      NexRecUI.coverageSpans(chunksByInput[inp.id] || [], t0, t1).forEach(function (sp) {
+        var el = document.createElement("div");
+        el.className = hot ? "coverage hot" : "coverage";
+        el.style.left = sp.left + "%";
+        el.style.width = Math.max(sp.width, 0.15) + "%";
+        el.style.top = (lane * laneH) + "%";
+        el.style.height = laneH + "%";
+        el.title = inp.name + " has a recording here";
+        bar.appendChild(el);
+      });
+    });
   }
 
   function loadChunk(v, pane, hit, off) {
@@ -342,7 +368,10 @@
       ph.textContent = inp ? "time-locked chunk preview" : "no input";
       pane.appendChild(video); pane.appendChild(ph); pane.appendChild(pick);
       pane.addEventListener("click", function () { choosePane(i); });
-      grid.appendChild(pane);
+      var cell = document.createElement("div");
+      cell.className = "slot";
+      cell.appendChild(pane);
+      grid.appendChild(cell);
     });
   }
 

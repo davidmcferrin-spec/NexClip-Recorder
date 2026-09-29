@@ -208,6 +208,32 @@ CREATE TABLE IF NOT EXISTS app_settings (
   updated_by TEXT
 );
 
+CREATE TABLE IF NOT EXISTS host_metrics (
+  sampled_at TEXT PRIMARY KEY,
+  cpu_pct DOUBLE PRECISION,
+  load1 DOUBLE PRECISION,
+  mem_used_bytes BIGINT,
+  mem_total_bytes BIGINT,
+  disk_used_bytes BIGINT,
+  disk_total_bytes BIGINT,
+  disk_path TEXT NOT NULL DEFAULT '',
+  gpu_util_pct DOUBLE PRECISION,
+  gpu_enc_pct DOUBLE PRECISION,
+  gpu_dec_pct DOUBLE PRECISION,
+  gpu_mem_used_mib INTEGER,
+  gpu_mem_total_mib INTEGER,
+  gpu_name TEXT NOT NULL DEFAULT ''
+);
+
+CREATE TABLE IF NOT EXISTS sdi_lock_log (
+  sampled_at TEXT NOT NULL,
+  input_id TEXT NOT NULL,
+  sdi_lock INTEGER,
+  signal TEXT NOT NULL DEFAULT '',
+  format TEXT NOT NULL DEFAULT '',
+  PRIMARY KEY (sampled_at, input_id)
+);
+
 CREATE TABLE IF NOT EXISTS input_heartbeats (
   input_id TEXT PRIMARY KEY,
   source_type TEXT NOT NULL DEFAULT '',

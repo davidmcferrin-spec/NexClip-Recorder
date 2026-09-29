@@ -644,6 +644,17 @@ function nexrec_user_update(string $id, array $body): array {
     return $fresh;
 }
 
+function nexrec_whep_scheme(): string {
+    if (function_exists('nexrec_setting_bool')) {
+        return nexrec_setting_bool('preview.whep_tls') ? 'https' : 'http';
+    }
+    $env = getenv('NEXREC_WHEP_TLS');
+    if (is_string($env) && in_array(strtolower($env), ['1', 'true', 'yes', 'on'], true)) {
+        return 'https';
+    }
+    return 'http';
+}
+
 function nexrec_whep_url(string $path): string {
     $host = $_SERVER['HTTP_HOST'] ?? '127.0.0.1';
     $hostOnly = explode(':', $host)[0];
@@ -656,7 +667,7 @@ function nexrec_whep_url(string $path): string {
     if ($port === '') {
         $port = '8889';
     }
-    return 'https://' . $hostOnly . ':' . $port . '/' . rawurlencode($path) . '/whep';
+    return nexrec_whep_scheme() . '://' . $hostOnly . ':' . $port . '/' . rawurlencode($path) . '/whep';
 }
 
 require_once __DIR__ . '/nexrec-settings.php';

@@ -142,6 +142,11 @@ function nexrec_settings_catalog(): array {
             'section' => 'preview', 'label' => 'WHEP port', 'type' => 'int',
             'min' => 1, 'max' => 65535, 'env' => 'NEXREC_WHEP_PORT', 'default' => '8889',
         ],
+        'preview.whep_tls' => [
+            'section' => 'preview', 'label' => 'WHEP TLS', 'type' => 'bool', 'default' => '0',
+            'env' => 'NEXREC_WHEP_TLS',
+            'help' => 'Off matches MediaMTX webrtcEncryption: no. Browsers then use http://host:8889. Turn on only after MediaMTX serves WHEP with TLS.',
+        ],
 
         'defaults.live_transcode' => [
             'section' => 'defaults', 'label' => 'Live transcode', 'type' => 'bool', 'default' => '0',

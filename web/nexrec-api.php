@@ -640,6 +640,64 @@ try {
         nexrec_api_ok(['event_id' => $eid]);
     }
 
+    if ($action === 'metrics_list') {
+        nexrec_require_roles(['admin', 'operator']);
+        $hours = isset($_GET['hours']) ? (int) $_GET['hours'] : 24;
+        if ($hours < 1) {
+            $hours = 1;
+        }
+        if ($hours > 168) {
+            $hours = 168;
+        }
+        $since = gmdate('Y-m-d\TH:i:s\Z', time() - ($hours * 3600));
+        $host = [];
+        $sdi = [];
+        $pending = false;
+        $loaded = false;
+        for ($try = 0; $try < 2 && !$loaded; $try++) {
+            $host = [];
+            $sdi = [];
+            try {
+                $st = nexrec_db()->prepare('SELECT * FROM host_metrics WHERE sampled_at >= :s ORDER BY sampled_at ASC');
+                $st->bindValue(':s', $since, SQLITE3_TEXT);
+                $res = $st->execute();
+                while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+                    $host[] = $row;
+                }
+                $st2 = nexrec_db()->prepare(
+                    'SELECT sampled_at, input_id, sdi_lock, signal, format FROM sdi_lock_log WHERE sampled_at >= :s ORDER BY sampled_at ASC, input_id ASC'
+                );
+                $st2->bindValue(':s', $since, SQLITE3_TEXT);
+                $res2 = $st2->execute();
+                while ($res2 && ($row = $res2->fetchArray(SQLITE3_ASSOC))) {
+                    $sdi[] = $row;
+                }
+                $loaded = true;
+            } catch (Throwable $e) {
+                if ($try === 0) {
+                    nexrec_migrate();
+                } else {
+                    $pending = true;
+                }
+            }
+        }
+        $signals = [];
+        $res3 = nexrec_db()->query('SELECT input_id, signal, sdi_lock, format, detail, seen_at FROM input_heartbeats ORDER BY input_id');
+        if ($res3 !== false) {
+            while ($row = $res3->fetchArray(SQLITE3_ASSOC)) {
+                $signals[] = $row;
+            }
+        }
+        nexrec_api_ok([
+            'hours' => $hours,
+            'since' => $since,
+            'host' => $host,
+            'sdi' => $sdi,
+            'signals' => $signals,
+            'pending' => $pending,
+        ]);
+    }
+
     if ($action === 'analyze_jobs_list') {
         nexrec_require_roles(['admin', 'operator']);
         $out = [];

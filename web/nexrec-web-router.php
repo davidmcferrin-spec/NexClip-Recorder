@@ -52,6 +52,7 @@ function nexrec_web_pages(): array {
         '/inputs' => ['file' => 'inputs.html', 'roles' => ['admin', 'operator'], 'public' => false],
         '/settings' => ['file' => 'settings.html', 'roles' => ['admin', 'operator'], 'public' => false],
         '/users' => ['file' => 'users.html', 'roles' => ['admin'], 'public' => false],
+        '/metrics' => ['file' => 'metrics.html', 'roles' => ['admin', 'operator'], 'public' => false],
         '/services' => ['file' => 'services.html', 'roles' => ['admin'], 'public' => false],
         '/login' => ['file' => 'login.html', 'roles' => null, 'public' => true],
     ];

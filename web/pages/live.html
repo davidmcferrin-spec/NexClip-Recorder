@@ -7,11 +7,12 @@
 <link rel="stylesheet" href="/assets/nexrec.css">
 <script src="/assets/nexrec-ui.js"></script>
 </head>
-<body>
+<body class="stage-page">
 <nav class="topnav">
   <a class="brand" href="/live">NexCLIP Recorder</a>
   <a class="active" href="/live">Live</a>
   <a href="/export">Export</a>
+  <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
   <a href="/settings" data-auth-role="admin,operator">Setup</a>
   <a href="/users" data-auth-role="admin">Users</a>
@@ -192,7 +193,10 @@
       pane.appendChild(pick);
       pane.appendChild(clock);
       pane.addEventListener("click", function () { choosePane(i); });
-      grid.appendChild(pane);
+      var cell = document.createElement("div");
+      cell.className = "slot";
+      cell.appendChild(pane);
+      grid.appendChild(cell);
       if (inp && inp.preview_path) {
         NexRecAuth.whepConnect(video, inp.preview_path).then(function () {
           if (video.srcObject) ph.style.display = "none";

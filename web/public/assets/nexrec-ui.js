@@ -178,6 +178,23 @@
     try { storage.setItem(key, JSON.stringify(ids)); } catch (e) {}
   }
 
+  function coverageSpans(chunks, t0, t1) {
+    var span = Math.max(1, t1 - t0);
+    var out = [];
+    (chunks || []).forEach(function (c) {
+      var a = Date.parse(c.start_at);
+      var b = Date.parse(c.end_at || "");
+      if (!isFinite(b) && c.duration_s != null && isFinite(a)) b = a + Number(c.duration_s) * 1000;
+      if (!isFinite(a) || !isFinite(b) || b <= a) return;
+      if (b <= t0 || a >= t1) return;
+      var left = ((Math.max(a, t0) - t0) / span) * 100;
+      var width = ((Math.min(b, t1) - Math.max(a, t0)) / span) * 100;
+      if (width <= 0) return;
+      out.push({ left: left, width: width });
+    });
+    return out;
+  }
+
   global.NexRecUI = {
     getTheme: getTheme,
     setTheme: setTheme,
@@ -190,5 +207,6 @@
     paneInputs: paneInputs,
     readPaneSlots: readPaneSlots,
     writePaneSlots: writePaneSlots,
+    coverageSpans: coverageSpans,
   };
 })(typeof window !== "undefined" ? window : globalThis);

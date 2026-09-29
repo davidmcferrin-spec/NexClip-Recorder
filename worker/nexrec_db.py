@@ -625,6 +625,7 @@ APP_SETTING_ENV: dict[str, str] = {
     "preview.enabled": "NEXREC_PREVIEW_ENABLED",
     "preview.mediamtx_rtsp": "NEXREC_MEDIAMTX_RTSP",
     "preview.whep_port": "NEXREC_WHEP_PORT",
+    "preview.whep_tls": "NEXREC_WHEP_TLS",
     "defaults.max_inputs": "NEXREC_MAX_INPUTS",
     "nexapp.enabled": "NEXREC_NEXAPP_ENABLED",
     "nexapp.issuer": "NEXAPP_ISSUER",

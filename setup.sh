@@ -157,7 +157,7 @@ EOF
 fi
 
 systemctl daemon-reload
-systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer || warn "enable units failed"
+systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
 
 # Pinned FFmpeg (source build) + MediaMTX release + optional decklink-status.
 # Distro ffmpeg is not the DeckLink capture binary.

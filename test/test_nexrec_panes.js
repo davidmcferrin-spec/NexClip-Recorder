@@ -69,4 +69,18 @@ assert.ok(exportSrc.includes("paneInputs"));
 assert.strictEqual(exportSrc.includes("inputs.slice(0, n)"), false);
 assert.strictEqual(liveSrc.includes("inputs.slice(0, n)"), false);
 
+const t0 = Date.parse("2026-09-29T03:00:00Z");
+const t1 = Date.parse("2026-09-29T04:00:00Z");
+const spans = sandbox.NexRecUI.coverageSpans([
+  { start_at: "2026-09-29T03:20:00Z", end_at: "2026-09-29T03:25:00Z" },
+  { start_at: "2026-09-29T02:00:00Z", end_at: "2026-09-29T03:10:00Z" },
+  { start_at: "2026-09-29T05:00:00Z", end_at: "2026-09-29T05:05:00Z" },
+], t0, t1);
+assert.strictEqual(spans.length, 2);
+assert.ok(Math.abs(spans[0].left - (20 / 60) * 100) < 0.01);
+assert.ok(Math.abs(spans[0].width - (5 / 60) * 100) < 0.01);
+assert.ok(Math.abs(spans[1].left) < 0.01);
+assert.strictEqual(exportSrc.includes("coverageSpans"), true);
+assert.strictEqual(exportSrc.includes("paintCoverage"), true);
+
 console.log("pane assignment ok");
