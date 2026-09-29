@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Retention + free-space cleanup. Safe to run twice daily or on demand."""
+"""Retention + free-space cleanup. Safe to run hourly or on demand."""
 
 from __future__ import annotations
 
@@ -128,12 +128,31 @@ def orphans(conn, storage: str) -> int:
 
 
 def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> int:
+    """One closed clip per check, oldest start_at first, until the drive is under the cap.
+
+    Stops on the first reading that is back under the used-percent cap and at or
+    above the free-space floor. The open segment (ready=0) stays. If no closed
+    clip remains and the disk is still over, the oldest unprotected finished
+    export is next.
+    """
     n = 0
     while True:
         free, total = fs_space(storage)
         if not needs_space_purge(free, total, floor, max_used_pct):
             break
-        # Oldest unprotected export first.
+        crow = conn.execute(
+            """
+            SELECT * FROM chunks WHERE ready=1 AND orphan=0
+            ORDER BY start_at ASC LIMIT 1
+            """
+        ).fetchone()
+        if crow:
+            unlink_quiet(crow["path"])
+            delete_chunk_side_data(conn, crow["id"])
+            conn.execute("DELETE FROM chunks WHERE id=?", (crow["id"],))
+            conn.commit()
+            n += 1
+            continue
         row = conn.execute(
             """
             SELECT * FROM exports
@@ -141,23 +160,10 @@ def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> 
             ORDER BY created_at ASC LIMIT 1
             """
         ).fetchone()
-        if row:
-            unlink_quiet(row["path"])
-            conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))
-            conn.commit()
-            n += 1
-            continue
-        crow = conn.execute(
-            """
-            SELECT * FROM chunks WHERE ready=1 AND orphan=0
-            ORDER BY start_at ASC LIMIT 1
-            """
-        ).fetchone()
-        if not crow:
+        if not row:
             break
-        unlink_quiet(crow["path"])
-        delete_chunk_side_data(conn, crow["id"])
-        conn.execute("DELETE FROM chunks WHERE id=?", (crow["id"],))
+        unlink_quiet(row["path"])
+        conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))
         conn.commit()
         n += 1
     return n

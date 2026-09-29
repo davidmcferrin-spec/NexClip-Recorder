@@ -210,6 +210,104 @@ class TestCleanup(unittest.TestCase):
         self.assertEqual(stats["freed_for_floor"], 0)
         self.assertTrue(os.path.isfile(path))
 
+    def _chunk(self, cid: str, name: str, start, ready: int = 1) -> str:
+        path = os.path.join(self.storage, "inputs", "cam", "native", name)
+        with open(path, "wb") as fh:
+            fh.write(b"c" * 32)
+        now = utcnow()
+        insert_chunk(
+            self.conn,
+            {
+                "id": cid,
+                "input_id": "cam",
+                "path": path,
+                "kind": "native",
+                "start_at": iso_z(start),
+                "end_at": iso_z(start + timedelta(seconds=300)),
+                "duration_s": 300,
+                "size_bytes": 32,
+                "width": 1280,
+                "height": 720,
+                "fps": 30,
+                "interlaced": 0,
+                "codec": "h264",
+                "timecode_start": None,
+                "ready": ready,
+                "orphan": 0,
+                "created_at": iso_z(now),
+            },
+        )
+        return path
+
+    def _export(self, eid: str, name: str, protected: int = 0) -> str:
+        path = os.path.join(self.storage, "exports", name)
+        with open(path, "wb") as fh:
+            fh.write(b"e" * 32)
+        now = utcnow()
+        enqueue_export(
+            self.conn,
+            {
+                "id": eid,
+                "status": "done",
+                "input_ids": '["cam"]',
+                "t_in": iso_z(now),
+                "t_out": iso_z(now),
+                "quality": "full",
+                "scope": "one",
+                "path": path,
+                "size_bytes": 32,
+                "protected": protected,
+                "error": None,
+                "created_by": "t",
+                "created_at": iso_z(now - timedelta(days=30)),
+                "expires_at": iso_z(now + timedelta(days=10)),
+                "nexclip_schedule_id": None,
+            },
+        )
+        return path
+
+    def _with_space(self, readings, fn):
+        pending = list(readings)
+
+        def fake(_path):
+            if pending:
+                return pending.pop(0)
+            return readings[-1]
+
+        orig = mod.fs_space
+        mod.fs_space = fake
+        try:
+            return fn()
+        finally:
+            mod.fs_space = orig
+
+    def test_hard_limit_drops_oldest_clip_then_stops(self):
+        now = utcnow()
+        older = self._chunk("chk_older", "older.mp4", now - timedelta(hours=5))
+        newer = self._chunk("chk_newer", "newer.mp4", now - timedelta(hours=1))
+        export = self._export("exp_keep_disk", "fresh.mp4")
+        # 95% used, then 85% after one clip. Cap is 90%.
+        n = self._with_space([(50, 1000), (150, 1000)], lambda: mod.free_space_pass(self.conn, self.storage, 0, 90))
+        self.assertEqual(n, 1)
+        self.assertFalse(os.path.isfile(older))
+        self.assertTrue(os.path.isfile(newer))
+        self.assertTrue(os.path.isfile(export))
+
+    def test_hard_limit_skips_open_clip_then_export(self):
+        now = utcnow()
+        open_clip = self._chunk("chk_open", "open.mp4", now - timedelta(hours=2), ready=0)
+        export = self._export("exp_old_disk", "old-export.mp4")
+        n = self._with_space([(40, 1000), (200, 1000)], lambda: mod.free_space_pass(self.conn, self.storage, 0, 90))
+        self.assertEqual(n, 1)
+        self.assertTrue(os.path.isfile(open_clip))
+        self.assertFalse(os.path.isfile(export))
+
+    def test_hard_limit_keeps_protected_export(self):
+        export = self._export("exp_prot_disk", "protected.mp4", protected=1)
+        n = self._with_space([(40, 1000), (40, 1000)], lambda: mod.free_space_pass(self.conn, self.storage, 0, 90))
+        self.assertEqual(n, 0)
+        self.assertTrue(os.path.isfile(export))
+
 
 if __name__ == "__main__":
     unittest.main()

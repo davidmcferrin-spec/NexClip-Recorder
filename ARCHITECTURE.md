@@ -262,17 +262,17 @@ Helpers: `docs/references/nexapp-access-client.php`,
 
 ## 8. Retention and free-space floor
 
-`nexrec-cleanup.py` runs **twice daily** (`nexrec-cleanup.timer`, 06:00 and
-18:00 America/New_York):
+`nexrec-cleanup.py` runs **hourly** (`nexrec-cleanup.timer`, America/New_York):
 
 1. Delete unprotected exports with `expires_at < now` (default now+15d at
    create; `protected=1` skips).
 2. Delete native chunks older than the **input’s** `retention_days`.
 3. Remove orphan files under `inputs/` not referenced by `chunks`.
-4. If free space on the recordings path is still below the free-space floor
-   (`storage.free_space_floor` in Setup, seeded from `NEXREC_FREE_SPACE_FLOOR`),
-   delete oldest unprotected exports, then oldest
-   unprotected native chunks, until the floor is met or nothing remains.
+4. If the recordings disk is still at the free-space floor
+   (`storage.free_space_floor`) or at Max drive used
+   (`storage.max_used_percent`), delete closed clips one at a time, oldest
+   `start_at` first, and stop as soon as the drive is back under that cap.
+   If no closed clip remains, the oldest unprotected finished export is next.
 
 Protected exports and in-progress recordings are never deleted by step 4.
 
@@ -298,7 +298,7 @@ NexClip never dials into this host; `nexrec-nexclip.timer` polls out.
 | `nexrec-record@id` | FFmpeg segment recorder |
 | `nexrec-preview@id` | FFmpeg proxy → MediaMTX (IP only; not started for DeckLink) |
 | `nexrec-export.service` | Drain `exports` queue |
-| `nexrec-cleanup.timer` | Twice-daily retention |
+| `nexrec-cleanup.timer` | Hourly retention |
 | `nexrec-nexclip.timer` | Mode 2 register / check-in / export-request poll |
 | `nexrec-analyze.service` | Sidecar: chunk intelligence + CALM ebur128 jobs |
 | `mediamtx.service` | WHEP |
