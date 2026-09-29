@@ -182,6 +182,100 @@ class InstallMediaTests(unittest.TestCase):
             "no",
         )
 
+    def test_nvdec_required_when_nvenc(self):
+        desired = bash('nexrec_ffmpeg_desired_stamp 0 1 0 0 0 /usr/local')
+        ver = "ffmpeg version 9.0.2 Copyright"
+        enc_only = " ".join([
+            "--enable-gpl", "--enable-nonfree", "--enable-libx264",
+            "--enable-openssl", "--enable-ffnvcodec", "--enable-nvenc",
+        ])
+        both = enc_only + " --enable-nvdec --enable-cuvid"
+        self.assertEqual(
+            bash(f'nexrec_ffmpeg_decide 1 "{ver}" "{enc_only}" "{desired}" "{desired}" 0'),
+            "build",
+        )
+        self.assertEqual(
+            bash(f'nexrec_ffmpeg_decide 1 "{ver}" "{both}" "{desired}" "{desired}" 0'),
+            "skip",
+        )
+
+    def test_nvidia_gpu_and_driver_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            gpu = root / "0000:01:00.0"
+            gpu.mkdir()
+            (gpu / "vendor").write_text("0x10DE\n", encoding="utf-8")
+            (gpu / "class").write_text("0x030200\n", encoding="utf-8")
+            audio = root / "0000:01:00.1"
+            audio.mkdir()
+            (audio / "vendor").write_text("0x10de\n", encoding="utf-8")
+            (audio / "class").write_text("0x040300\n", encoding="utf-8")
+            intel = root / "0000:00:02.0"
+            intel.mkdir()
+            (intel / "vendor").write_text("0x8086\n", encoding="utf-8")
+            (intel / "class").write_text("0x030000\n", encoding="utf-8")
+            self.assertEqual(
+                bash(
+                    'nexrec_nvidia_gpu_present && echo yes || echo no',
+                    env={"NEXREC_PCI_SYSFS": tmp},
+                ),
+                "yes",
+            )
+            self.assertEqual(
+                bash(
+                    'nexrec_nvenc_wanted && echo yes || echo no',
+                    env={
+                        "NEXREC_NVENC_PROBE": "",
+                        "NEXREC_NVENC_HOST_PROBE": "0",
+                        "NEXREC_PCI_SYSFS": tmp,
+                    },
+                ),
+                "yes",
+            )
+            empty = root / "empty"
+            empty.mkdir()
+            self.assertEqual(
+                bash(
+                    'nexrec_nvidia_gpu_present && echo yes || echo no',
+                    env={"NEXREC_PCI_SYSFS": str(empty)},
+                ),
+                "no",
+            )
+            self.assertEqual(
+                bash(
+                    'nexrec_nvenc_wanted && echo yes || echo no',
+                    env={
+                        "NEXREC_NVENC_PROBE": "",
+                        "NEXREC_NVENC_HOST_PROBE": "0",
+                        "NEXREC_PCI_SYSFS": str(empty),
+                    },
+                ),
+                "no",
+            )
+        devices = """== /sys/devices/pci0000:00/0000:01:00.0 ==
+vendor   : NVIDIA Corporation
+driver   : nvidia-driver-550-server - distro non-free
+driver   : nvidia-driver-550 - distro non-free recommended
+driver   : nvidia-driver-550-open - distro non-free
+driver   : xserver-xorg-video-nouveau - distro free builtin
+"""
+        quoted = devices.replace("'", "'\\''")
+        self.assertEqual(
+            bash(f"nexrec_nvidia_driver_package_from_devices '{quoted}'"),
+            "nvidia-driver-550",
+        )
+        self.assertEqual(
+            bash('nexrec_nvidia_install_wanted && echo yes || echo no'),
+            "yes",
+        )
+        self.assertEqual(
+            bash(
+                'nexrec_nvidia_install_wanted && echo yes || echo no',
+                env={"NEXREC_INSTALL_NVIDIA": "0"},
+            ),
+            "no",
+        )
+
     def test_setup_calls_real_installer(self):
         setup = (ROOT / "setup.sh").read_text(encoding="utf-8")
         self.assertIn('bash "$ROOT/bin/nexrec-install-media.sh" all', setup)

@@ -24,7 +24,6 @@
 <main>
   <div class="bar">
     <h1 style="margin:0">Inputs (max 10)</h1>
-    <button type="button" id="seed">Seed demo</button>
     <span class="ok-msg" id="msg"></span>
   </div>
   <div class="panel form-grid" id="form">
@@ -253,12 +252,6 @@ val("decklink_formats").onclick = function () {
     });
     hint.textContent = d.message || ((d.formats || []).length ? "format codes loaded" : "no format codes reported");
   }).catch(function (e) { hint.textContent = e.message; });
-};
-val("seed").onclick = function () {
-  NexRecAuth.recApi("demo_seed", {}).then(function () {
-    document.getElementById("msg").textContent = "seeded demo input + fixture chunks";
-    return refresh();
-  });
 };
 </script>
 </body>

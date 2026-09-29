@@ -9,7 +9,7 @@
 # Pins (Ubuntu 24.04):
 #   FFmpeg 9.0.2     https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
 #   MediaMTX v1.21.1 official linux tarball (not built from source)
-#   nv-codec-headers 13.1.15.0  (only if an NVIDIA toolkit is detected)
+#   nv-codec-headers 13.1.15.0  (when an NVIDIA GPU or toolkit is detected)
 #
 # FFmpeg lands in ${NEXREC_FFMPEG_PREFIX:-/usr/local} so ffmpeg and ffprobe
 # are on the systemd PATH. DeckLink (--enable-decklink) is turned on when
@@ -24,9 +24,13 @@
 # that contains DeckLinkAPI.h and DeckLinkAPIDispatch.cpp). Also checks
 # /usr/include, /usr/local/include, /opt/decklink-sdk, /usr/src/decklink-sdk,
 # and "Blackmagic DeckLink SDK *" under /opt, /usr/src, and /usr/local/src.
-# NVENC: autodetect nvidia-smi, /usr/local/cuda, CUDA_HOME, or ffnvcodec
-# headers. NEXREC_ENABLE_NVENC=1 forces headers on; =0 leaves NVENC off.
-# A missing GPU does not fail the build.
+# NVENC/NVDEC: an NVIDIA display-class PCI device (vendor 10de) causes this
+# script to install Ubuntu's recommended nvidia-driver package (encode and
+# decode libraries included) and to compile FFmpeg with ffnvcodec, nvenc,
+# nvdec, and cuvid. nvidia-smi, /usr/local/cuda, CUDA_HOME, or existing ffnvcodec headers
+# also turn the compile on. NEXREC_ENABLE_NVENC=1 forces the compile; =0 leaves
+# it off. NEXREC_INSTALL_NVIDIA=0 skips the driver package. A missing GPU, or a
+# driver that still needs a reboot, does not fail the build.
 
 NEXREC_FFMPEG_VERSION=9.0.2
 NEXREC_FFMPEG_URL=https://ffmpeg.org/releases/ffmpeg-9.0.2.tar.xz
@@ -121,6 +125,14 @@ nexrec_ffmpeg_decide() {
       return 0
     fi
   done
+  # nvenc=1 means encoder and decoder. An older binary with only --enable-nvenc
+  # must rebuild so h264_nvenc, the nvdec hwaccels, and the cuvid decoders are present.
+  if [[ "$(nexrec_stamp_bit "$desired" nvenc)" == "1" ]]; then
+    if [[ "$conf" != *"--enable-nvdec"* || "$conf" != *"--enable-cuvid"* || "$conf" != *"--enable-ffnvcodec"* ]]; then
+      printf '%s\n' build
+      return 0
+    fi
+  fi
   if [[ -n "$stamp" && "$stamp" != "$desired" ]]; then
     printf '%s\n' build
     return 0
@@ -240,6 +252,124 @@ nexrec_find_decklink_include() {
   return 1
 }
 
+# VGA 0300, 3D 0302, display 0380. Audio and other 10de functions do not count.
+nexrec_nvidia_display_class() {
+  local class="${1:-}"
+  class="${class,,}"
+  class="${class#0x}"
+  [[ "$class" == 0300* || "$class" == 0302* || "$class" == 0380* ]]
+}
+
+nexrec_nvidia_gpu_present() {
+  local root="${NEXREC_PCI_SYSFS:-/sys/bus/pci/devices}"
+  local dev vendor class
+  if [[ -d "$root" ]]; then
+    for dev in "$root"/*; do
+      [[ -e "$dev" && -r "$dev/vendor" && -r "$dev/class" ]] || continue
+      vendor="$(tr '[:upper:]' '[:lower:]' < "$dev/vendor" | tr -d '[:space:]')"
+      [[ "$vendor" == "0x10de" ]] || continue
+      class="$(tr -d '[:space:]' < "$dev/class")"
+      if nexrec_nvidia_display_class "$class"; then
+        return 0
+      fi
+    done
+  fi
+  # A test or override tree is the whole scan. Do not also read the host.
+  if [[ "$root" != "/sys/bus/pci/devices" ]]; then
+    return 1
+  fi
+  if command -v lspci >/dev/null 2>&1; then
+    if lspci -d 10de: -nn 2>/dev/null | grep -qiE 'VGA compatible|3D controller|Display controller'; then
+      return 0
+    fi
+  fi
+  return 1
+}
+
+# ubuntu-drivers devices lines look like:
+#   driver   : nvidia-driver-550 - distro non-free recommended
+# Prefer the recommended nvidia-driver package. Ignore nouveau.
+nexrec_nvidia_driver_package_from_devices() {
+  local text="$1" line pkg
+  line="$(printf '%s\n' "$text" | grep -E '^[[:space:]]*driver[[:space:]]*:' | grep -i 'nvidia-driver-' | grep -i recommended | head -n 1 || true)"
+  if [[ -z "$line" ]]; then
+    line="$(printf '%s\n' "$text" | grep -E '^[[:space:]]*driver[[:space:]]*:' | grep -i 'nvidia-driver-' | head -n 1 || true)"
+  fi
+  [[ -n "$line" ]] || return 1
+  pkg="$(printf '%s\n' "$line" | sed -E 's/^[[:space:]]*driver[[:space:]]*:[[:space:]]*([^[:space:]]+).*/\1/')"
+  [[ "$pkg" == nvidia-driver-* ]] || return 1
+  printf '%s\n' "$pkg"
+}
+
+nexrec_nvidia_install_wanted() {
+  local v="${NEXREC_INSTALL_NVIDIA-}"
+  if [[ -z "$v" ]]; then
+    return 0
+  fi
+  nexrec_flag_on "$v"
+}
+
+nexrec_nvidia_driver_loaded() {
+  command -v nvidia-smi >/dev/null 2>&1 || return 1
+  nvidia-smi -L >/dev/null 2>&1
+}
+
+nexrec_nvidia_driver_packaged() {
+  dpkg-query -W -f '${Package} ${Status}\n' 'nvidia-driver-[0-9]*' 2>/dev/null \
+    | grep -q 'install ok installed'
+}
+
+nexrec_install_nvidia_driver() {
+  local devices pkg ver
+  if ! nexrec_nvidia_install_wanted; then
+    nexrec_media_log "NVIDIA driver install skipped (NEXREC_INSTALL_NVIDIA=0)"
+    return 0
+  fi
+  if ! nexrec_nvidia_gpu_present; then
+    return 0
+  fi
+  if nexrec_nvidia_driver_loaded; then
+    ver="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+    nexrec_media_log "NVIDIA driver already loaded${ver:+: $ver}"
+    return 0
+  fi
+  if nexrec_nvidia_driver_packaged; then
+    nexrec_media_warn "NVIDIA driver package is installed but the kernel module is not loaded. Reboot before NVENC/NVDEC. Secure Boot must trust the module."
+    return 0
+  fi
+  export DEBIAN_FRONTEND=noninteractive
+  if ! apt-get install -y -qq ubuntu-drivers-common pciutils; then
+    nexrec_media_warn "could not install ubuntu-drivers-common; NVIDIA driver left for a later run"
+    return 0
+  fi
+  devices="$(ubuntu-drivers devices 2>/dev/null || true)"
+  pkg=""
+  if [[ -n "$devices" ]]; then
+    pkg="$(nexrec_nvidia_driver_package_from_devices "$devices" || true)"
+  fi
+  if [[ -n "$pkg" ]]; then
+    nexrec_media_log "installing $pkg (Ubuntu recommended; includes libnvidia-encode and libnvidia-decode)"
+    if ! apt-get install -y -qq "$pkg"; then
+      nexrec_media_warn "apt install $pkg failed; trying ubuntu-drivers install"
+      if ! ubuntu-drivers install; then
+        nexrec_media_warn "ubuntu-drivers install failed; FFmpeg will still be built with NVENC/NVDEC headers"
+      fi
+    fi
+  else
+    nexrec_media_log "installing the Ubuntu-recommended NVIDIA driver"
+    if ! ubuntu-drivers install; then
+      nexrec_media_warn "ubuntu-drivers install failed; FFmpeg will still be built with NVENC/NVDEC headers"
+    fi
+  fi
+  if nexrec_nvidia_driver_loaded; then
+    ver="$(nvidia-smi --query-gpu=name,driver_version --format=csv,noheader 2>/dev/null | head -n 1 || true)"
+    nexrec_media_log "NVIDIA driver loaded${ver:+: $ver}"
+  else
+    nexrec_media_warn "NVIDIA driver is not active yet. Reboot so NVENC/NVDEC can open the GPU. Secure Boot must trust the module."
+  fi
+  return 0
+}
+
 nexrec_nvenc_wanted() {
   local v="${NEXREC_ENABLE_NVENC-}"
   if [[ -n "$v" ]]; then
@@ -250,6 +380,14 @@ nexrec_nvenc_wanted() {
     return 0
   fi
   if [[ "${NEXREC_NVENC_PROBE:-}" == "0" ]]; then
+    return 1
+  fi
+  if nexrec_nvidia_gpu_present; then
+    return 0
+  fi
+  # Tests set this to 0 so a developer machine with nvidia-smi or headers
+  # does not change the assertion. Unset means probe the real host.
+  if [[ "${NEXREC_NVENC_HOST_PROBE:-1}" == "0" ]]; then
     return 1
   fi
   if command -v nvidia-smi >/dev/null 2>&1; then
@@ -355,15 +493,20 @@ nexrec_install_ffmpeg() {
     nexrec_media_warn "Desktop Video drivers (/dev/blackmagic) are separate from those SDK headers and are not installed here."
   fi
 
+  if nexrec_nvidia_gpu_present; then
+    nexrec_media_log "NVIDIA GPU detected"
+    nexrec_install_nvidia_driver
+  fi
+
   if nexrec_nvenc_wanted; then
     if nexrec_install_nvcodec "$prefix" "$work"; then
       want_nvenc=1
-      nexrec_media_log "NVENC headers ${NEXREC_NVCODEC_VERSION} installed (no GPU required to compile)"
+      nexrec_media_log "nv-codec-headers ${NEXREC_NVCODEC_VERSION} installed (--enable-nvenc --enable-nvdec --enable-cuvid)"
     else
-      nexrec_media_warn "NVENC headers failed to install; continuing without --enable-nvenc"
+      nexrec_media_warn "NVENC headers failed to install; continuing without NVENC/NVDEC"
     fi
   else
-    nexrec_media_log "NVENC left off (no NVIDIA toolkit detected; NEXREC_ENABLE_NVENC=1 forces it)"
+    nexrec_media_log "NVENC/NVDEC left off (no NVIDIA GPU detected; NEXREC_ENABLE_NVENC=1 forces the compile)"
   fi
 
   pkg-config --exists fdk-aac && want_fdk=1 || nexrec_media_warn "fdk-aac not found; FFmpeg native AAC encoder will be used"
@@ -410,7 +553,7 @@ nexrec_install_ffmpeg() {
   [[ "$want_fdk" == "1" ]] && args+=(--enable-libfdk-aac)
   [[ "$want_srt" == "1" ]] && args+=(--enable-libsrt)
   [[ "$want_zvbi" == "1" ]] && args+=(--enable-libzvbi)
-  [[ "$want_nvenc" == "1" ]] && args+=(--enable-ffnvcodec --enable-nvenc)
+  [[ "$want_nvenc" == "1" ]] && args+=(--enable-ffnvcodec --enable-nvenc --enable-nvdec --enable-cuvid)
   if [[ "$want_deck" == "1" ]]; then
     if [[ "$sdk" == *" "* ]]; then
       nexrec_media_warn "DeckLink SDK path contains spaces ($sdk). Rename the folder and re-run; building without DeckLink."

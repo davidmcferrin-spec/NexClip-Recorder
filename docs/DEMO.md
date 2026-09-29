@@ -43,8 +43,7 @@ until a frame arrives, and the VU reads “waiting” until preview audio does.
    Reload: the toggles and pop/position stick (`localStorage`, `nexrec-` keys).
 6. **Listen** / volume / solo affect this browser only. The `<video>` stays
    muted. This is not the export LKFS chart.
-Export editor scrubs indexed chunks (run `make demo` first, or click
-**Seed demo chunks** on Inputs as admin). **Play** rolls the selected pane
+Export editor scrubs indexed chunks (run `make demo` first). **Play** rolls the selected pane
 with audio so an in/out can be found by ear. The other panes stay muted and
 follow the same clock. Volume is this browser only (`nexrec-export-volume`).
 
