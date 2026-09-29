@@ -26,6 +26,57 @@ if (!defined('SQLITE3_ASSOC')) {
     define('SQLITE3_NULL', 5);
 }
 
+/**
+ * SQLite accepts "queued" as a string. PostgreSQL reads that as a column name.
+ * Rewrite double-quoted literals that sit outside a real string. Leave quotes
+ * that are already inside '...' alone (to_char format uses those).
+ */
+function nexrec_pg_literals(string $sql): string {
+    $out = '';
+    $len = strlen($sql);
+    $inSingle = false;
+    for ($i = 0; $i < $len; $i++) {
+        $c = $sql[$i];
+        if ($inSingle) {
+            $out .= $c;
+            if ($c === "'") {
+                if ($i + 1 < $len && $sql[$i + 1] === "'") {
+                    $out .= "'";
+                    $i++;
+                    continue;
+                }
+                $inSingle = false;
+            }
+            continue;
+        }
+        if ($c === "'") {
+            $inSingle = true;
+            $out .= $c;
+            continue;
+        }
+        if ($c === '"') {
+            $j = $i + 1;
+            $lit = '';
+            while ($j < $len) {
+                if ($sql[$j] === '"') {
+                    if ($j + 1 < $len && $sql[$j + 1] === '"') {
+                        $lit .= '"';
+                        $j += 2;
+                        continue;
+                    }
+                    $out .= "'" . str_replace("'", "''", $lit) . "'";
+                    $i = $j;
+                    continue 2;
+                }
+                $lit .= $sql[$j];
+                $j++;
+            }
+        }
+        $out .= $c;
+    }
+    return $out;
+}
+
 function nexrec_adapt_sql(string $sql): string {
     $sql = preg_replace("/datetime\\(\\s*'now'\\s*\\)/i", "to_char(timezone('utc', clock_timestamp()), 'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"')", $sql) ?? $sql;
     $sql = str_replace('IFNULL(', 'COALESCE(', $sql);
@@ -36,12 +87,12 @@ function nexrec_adapt_sql(string $sql): string {
         $sql
     ) ?? $sql;
     if (preg_match("/sqlite_master\\s+WHERE\\s+type\\s*=\\s*'table'\\s+AND\\s+name\\s*=\\s*'([A-Za-z0-9_]+)'/i", $sql, $m)) {
-        return "SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "'";
+        return nexrec_pg_literals("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "'");
     }
     if (preg_match('/PRAGMA\\s+table_info\\(([A-Za-z0-9_]+)\\)/i', $sql, $m)) {
-        return "SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "' ORDER BY ordinal_position";
+        return nexrec_pg_literals("SELECT column_name AS name FROM information_schema.columns WHERE table_schema = current_schema() AND table_name = '" . $m[1] . "' ORDER BY ordinal_position");
     }
-    return $sql;
+    return nexrec_pg_literals($sql);
 }
 
 function nexrec_split_sql(string $sql): array {

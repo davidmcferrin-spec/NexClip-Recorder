@@ -576,8 +576,8 @@ try {
         $protected = !empty($body['protected']) ? 1 : 0;
         $expires = $protected ? null : gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400);
         $st = nexrec_db()->prepare(
-            'INSERT INTO exports (id,status,input_ids,t_in,t_out,quality,scope,path,size_bytes,protected,error,created_by,created_at,expires_at,nexclip_schedule_id)
-             VALUES (:id,"queued",:ids,:tin,:tout,:q,:sc,NULL,NULL,:p,NULL,:by,:c,:e,NULL)'
+            "INSERT INTO exports (id,status,input_ids,t_in,t_out,quality,scope,path,size_bytes,protected,error,created_by,created_at,expires_at,nexclip_schedule_id)
+             VALUES (:id,'queued',:ids,:tin,:tout,:q,:sc,NULL,NULL,:p,NULL,:by,:c,:e,NULL)"
         );
         $st->bindValue(':id', $expId, SQLITE3_TEXT);
         $st->bindValue(':ids', json_encode(array_values($ids)), SQLITE3_TEXT);
@@ -729,8 +729,8 @@ try {
         $exists = nexrec_db()->querySingle("SELECT COUNT(*) FROM inputs WHERE id='demo'");
         if (!$exists) {
             $st = nexrec_db()->prepare(
-                'INSERT INTO inputs (id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,created_at,updated_at)
-                 VALUES ("demo","Demo color bars","testsrc","", "", "", 1, 1, 0, 0, "4M", "128k", 28, "in0", 1, :c, :u)'
+                "INSERT INTO inputs (id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,created_at,updated_at)
+                 VALUES ('demo','Demo color bars','testsrc','', '', '', 1, 1, 0, 0, '4M', '128k', 28, 'in0', 1, :c, :u)"
             );
             $st->bindValue(':c', nexrec_now_iso(), SQLITE3_TEXT);
             $st->bindValue(':u', nexrec_now_iso(), SQLITE3_TEXT);
@@ -744,8 +744,8 @@ try {
                 $end = gmdate('Y-m-d\TH:i:s\Z', $now - (5 - $i) * 300);
                 $cid = nexrec_new_id('chk');
                 $st = nexrec_db()->prepare(
-                    'INSERT INTO chunks (id,input_id,path,kind,start_at,end_at,duration_s,size_bytes,width,height,fps,interlaced,codec,timecode_start,ready,orphan,created_at)
-                     VALUES (:id,"demo",:p,"native",:s,:e,300,0,1280,720,30,0,"h264",NULL,1,0,:c)'
+                    "INSERT INTO chunks (id,input_id,path,kind,start_at,end_at,duration_s,size_bytes,width,height,fps,interlaced,codec,timecode_start,ready,orphan,created_at)
+                     VALUES (:id,'demo',:p,'native',:s,:e,300,0,1280,720,30,0,'h264',NULL,1,0,:c)"
                 );
                 $st->bindValue(':id', $cid, SQLITE3_TEXT);
                 $st->bindValue(':p', '/tmp/nexrec-fixture-' . $i . '.mp4', SQLITE3_TEXT);
@@ -891,8 +891,8 @@ try {
         $jid = nexrec_new_id('anl');
         $now = nexrec_now_iso();
         $st = nexrec_db()->prepare(
-            'INSERT INTO analyze_jobs (id,status,kind,input_id,export_id,t_in,t_out,path,error,result_json,created_at,updated_at)
-             VALUES (:id,"queued","loudness",:i,NULL,:tin,:tout,NULL,NULL,NULL,:c,:u)'
+            "INSERT INTO analyze_jobs (id,status,kind,input_id,export_id,t_in,t_out,path,error,result_json,created_at,updated_at)
+             VALUES (:id,'queued','loudness',:i,NULL,:tin,:tout,NULL,NULL,NULL,:c,:u)"
         );
         $st->bindValue(':id', $jid, SQLITE3_TEXT);
         $st->bindValue(':i', $iid, SQLITE3_TEXT);
@@ -915,8 +915,8 @@ try {
         $tStart = (string) ($body['t_start'] ?? nexrec_now_iso());
         $eid = nexrec_new_id('evt');
         $st = nexrec_db()->prepare(
-            'INSERT INTO events (id,input_id,chunk_id,kind,subtype,t_start,t_end,pts,timecode,duration_s,payload_summary,payload_json,created_at)
-             VALUES (:id,:i,NULL,"scte224","esam_http",:ts,NULL,NULL,NULL,NULL,:sum,:pj,:c)'
+            "INSERT INTO events (id,input_id,chunk_id,kind,subtype,t_start,t_end,pts,timecode,duration_s,payload_summary,payload_json,created_at)
+             VALUES (:id,:i,NULL,'scte224','esam_http',:ts,NULL,NULL,NULL,NULL,:sum,:pj,:c)"
         );
         $st->bindValue(':id', $eid, SQLITE3_TEXT);
         $st->bindValue(':i', $iid, SQLITE3_TEXT);

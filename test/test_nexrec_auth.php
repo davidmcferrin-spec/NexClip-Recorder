@@ -15,6 +15,17 @@ putenv('NEXREC_LDAP_ENABLED=0');
 
 require dirname(__DIR__) . '/web/nexrec-auth-lib.php';
 
+$adapted = nexrec_adapt_sql('INSERT INTO exports VALUES (:id,"queued",:ids,NULL,NULL,:p)');
+if ($adapted !== "INSERT INTO exports VALUES (:id,'queued',:ids,NULL,NULL,:p)") {
+    fwrite(STDERR, "double-quoted SQL literal was not rewritten: {$adapted}\n");
+    exit(1);
+}
+$fmt = nexrec_adapt_sql("SELECT datetime('now')");
+if (!str_contains($fmt, '\'YYYY-MM-DD"T"HH24:MI:SS"Z"\'')) {
+    fwrite(STDERR, "to_char format quotes were rewritten: {$fmt}\n");
+    exit(1);
+}
+
 nexrec_migrate();
 nexrec_seed_admin();
 $n = (int) nexrec_db()->querySingle('SELECT COUNT(*) FROM users');
