@@ -301,6 +301,9 @@ class TestThumbs(unittest.TestCase):
         try:
             self.assertEqual(thumb_path_for(mp4), mp4 + ".jpg")
             self.assertTrue(write_chunk_thumb(mp4, "ffmpeg"))
+            self.assertIn("-update", calls[0])
+            self.assertTrue(calls[0][-1].endswith(".jpg"))
+            self.assertNotIn(".part", calls[0][-1])
             self.assertTrue(os.path.isfile(mp4 + ".jpg"))
             self.assertTrue(write_chunk_thumb(mp4, "ffmpeg"))
             self.assertEqual(len(calls), 1)

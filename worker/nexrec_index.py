@@ -104,7 +104,9 @@ def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
         return True
     if mp4 in _thumb_failed or not os.path.isfile(mp4):
         return False
-    tmp = dest + ".part"
+    # image2 on this FFmpeg refuses a single still unless the name ends in
+    # .jpg and -update 1 is set. A .part suffix makes it skip the file.
+    tmp = dest + ".tmp.jpg"
     cmd = [
         ffmpeg,
         "-hide_banner",
@@ -120,13 +122,16 @@ def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
         "scale=320:-2",
         "-q:v",
         "5",
+        "-update",
+        "1",
         "-y",
         tmp,
     ]
     try:
-        subprocess.run(cmd, check=False, timeout=30, capture_output=True)
-    except (OSError, subprocess.TimeoutExpired):
+        proc = subprocess.run(cmd, check=False, timeout=30, capture_output=True)
+    except (OSError, subprocess.TimeoutExpired) as exc:
         _thumb_failed.add(mp4)
+        print(f"thumb {mp4}: {exc}", file=sys.stderr)
         try:
             os.remove(tmp)
         except OSError:
@@ -134,6 +139,10 @@ def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
         return False
     if not os.path.isfile(tmp) or os.path.getsize(tmp) < 64:
         _thumb_failed.add(mp4)
+        err = getattr(proc, "stderr", None) or b""
+        text = err.decode("utf-8", "replace").strip()
+        if text:
+            print(f"thumb {mp4}: {text}", file=sys.stderr)
         try:
             os.remove(tmp)
         except OSError:
