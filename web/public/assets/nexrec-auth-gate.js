@@ -329,8 +329,23 @@
       var pc = new RTCPeerConnection({ iceServers: sess.ice_servers || [] });
       pc.addTransceiver("video", { direction: "recvonly" });
       pc.addTransceiver("audio", { direction: "recvonly" });
+      // Video and audio arrive as separate tracks, often on separate streams.
+      // Keeping only the last stream drops whichever track arrived first.
       pc.ontrack = function (ev) {
-        if (videoEl) videoEl.srcObject = ev.streams[0];
+        if (!videoEl || !ev.track) return;
+        var stream = videoEl.srcObject;
+        if (!stream || typeof stream.addTrack !== "function" || typeof stream.getTracks !== "function") {
+          stream = new MediaStream();
+          videoEl.srcObject = stream;
+        }
+        var tracks = stream.getTracks();
+        for (var i = 0; i < tracks.length; i++) {
+          if (tracks[i].id === ev.track.id) return;
+        }
+        stream.addTrack(ev.track);
+        try {
+          videoEl.dispatchEvent(new Event("nexrec-whep-track"));
+        } catch (e) { /* the Live page also polls srcObject */ }
       };
       return pc.createOffer().then(function (offer) {
         return pc.setLocalDescription(offer).then(function () { return offer; });

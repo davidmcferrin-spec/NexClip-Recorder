@@ -10,6 +10,7 @@ const ROOT = path.join(__dirname, "..");
 const uiSrc = fs.readFileSync(path.join(ROOT, "web", "public", "assets", "nexrec-ui.js"), "utf8");
 const liveSrc = fs.readFileSync(path.join(ROOT, "web", "pages", "live.html"), "utf8");
 const vuSrc = fs.readFileSync(path.join(ROOT, "web", "public", "assets", "nexrec-vu.js"), "utf8");
+const authSrc = fs.readFileSync(path.join(ROOT, "web", "public", "assets", "nexrec-auth-gate.js"), "utf8");
 const exportSrc = fs.readFileSync(path.join(ROOT, "web", "pages", "export.html"), "utf8");
 
 const store = new Map();
@@ -90,6 +91,9 @@ var winter = UI.parseStation("2026-01-15 15:00:00");
 assert.strictEqual(new Date(summer).toISOString(), "2026-07-15T19:00:00.000Z");
 assert.strictEqual(new Date(winter).toISOString(), "2026-01-15T20:00:00.000Z");
 assert.strictEqual(UI.stationStamp(summer).indexOf("2026-07-15 15:00:00"), 0);
+assert.strictEqual(authSrc.includes("stream.addTrack(ev.track)"), true);
+assert.strictEqual(authSrc.includes("videoEl.srcObject = ev.streams[0]"), false);
+assert.strictEqual(liveSrc.includes("nexrec-whep-track"), true);
 assert.strictEqual(liveSrc.includes('id="listen-toggle"'), true);
 assert.strictEqual(liveSrc.includes('id="listen-vol"'), true);
 assert.strictEqual(vuSrc.includes('data-vu", "mute"'), false);

@@ -444,6 +444,7 @@
     let levels = [];
     let peakHold = [];
     let connectedStreamId = null;
+    let connectedAudioCount = 0;
     let timeData = null;
     let popped = floatable ? getPopPref() : false;
     let pos = floatable ? getPosPref() : null;
@@ -688,6 +689,7 @@
       chGains = [];
       outNodes = [];
       connectedStreamId = null;
+      connectedAudioCount = 0;
     }
 
     function tick() {
@@ -830,6 +832,7 @@
         masterGain.connect(ctx.destination);
         configureDestination(outN);
         connectedStreamId = stream.id || "stream";
+        connectedAudioCount = audioTracks.length;
         hasAudio = true;
         applyRouting();
         video.muted = true;
@@ -979,7 +982,10 @@
           return;
         }
         const id = stream.id || "";
-        if (id && id === connectedStreamId && analysers.length) {
+        const audioCount = typeof stream.getAudioTracks === "function"
+          ? stream.getAudioTracks().length
+          : 0;
+        if (id && id === connectedStreamId && analysers.length && audioCount === connectedAudioCount) {
           hasAudio = true;
           updateRootVisibility();
           return;
