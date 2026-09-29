@@ -202,6 +202,11 @@ function nexrec_pg_config(): array {
     } elseif ($user === '' || $pass === '') {
         throw new RuntimeException('PostgreSQL requires NEXREC_PGDATABASE, NEXREC_PGUSER, and NEXREC_PGPASSWORD');
     }
+    $ssl = getenv('NEXREC_PGSSLMODE');
+    $ssl = is_string($ssl) ? trim($ssl) : '';
+    if ($ssl === '' || !preg_match('/^[A-Za-z0-9_-]+$/', $ssl)) {
+        $ssl = 'disable';
+    }
     return [
         'host' => $host,
         'port' => $port,
@@ -209,6 +214,7 @@ function nexrec_pg_config(): array {
         'user' => $user,
         'password' => $pass,
         'schema' => nexrec_pg_schema(),
+        'sslmode' => $ssl,
     ];
 }
 
@@ -219,7 +225,7 @@ function nexrec_db(): NexrecDb {
     }
     $cfg = nexrec_pg_config();
     $pdo = new PDO(
-        'pgsql:host=' . $cfg['host'] . ';port=' . $cfg['port'] . ';dbname=' . $cfg['db'],
+        'pgsql:host=' . $cfg['host'] . ';port=' . $cfg['port'] . ';dbname=' . $cfg['db'] . ';sslmode=' . $cfg['sslmode'],
         $cfg['user'],
         $cfg['password'],
         [

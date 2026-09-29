@@ -3,9 +3,10 @@
 
 Connection settings come from the process environment (bootstrap):
 NEXREC_PGHOST, NEXREC_PGPORT, NEXREC_PGDATABASE, NEXREC_PGUSER,
-NEXREC_PGPASSWORD. A filesystem path is not the database. Tests may still
-pass a temp path or set NEXREC_DB to one; that string only selects a private
-schema inside the local Postgres database.
+NEXREC_PGPASSWORD. The database is on the recorder LAN, so connections use
+sslmode=disable unless NEXREC_PGSSLMODE is set. A filesystem path is not the
+database. Tests may still pass a temp path or set NEXREC_DB to one; that
+string only selects a private schema inside the local Postgres database.
 """
 
 from __future__ import annotations
@@ -88,6 +89,7 @@ def _pg_params(env: dict[str, str]) -> dict[str, Any]:
         raise RuntimeError(
             "PostgreSQL requires NEXREC_PGDATABASE, NEXREC_PGUSER, and NEXREC_PGPASSWORD"
         )
+    sslmode = str(env.get("NEXREC_PGSSLMODE") or "disable").strip() or "disable"
     return {
         "host": host,
         "port": port,
@@ -95,6 +97,7 @@ def _pg_params(env: dict[str, str]) -> dict[str, Any]:
         "user": user,
         "password": password,
         "connect_timeout": 8,
+        "sslmode": sslmode,
     }
 
 
@@ -162,10 +165,60 @@ class PgCursor(psycopg2.extras.RealDictCursor):
         return [PgRow(r) for r in super().fetchall()]
 
 
+def _connection_lost(exc: BaseException) -> bool:
+    if isinstance(exc, psycopg2.InterfaceError):
+        return True
+    if not isinstance(exc, psycopg2.OperationalError):
+        return False
+    msg = str(exc).lower()
+    return (
+        "ssl connection" in msg
+        or "server closed the connection" in msg
+        or "connection already closed" in msg
+        or "consuming input failed" in msg
+        or "could not receive data" in msg
+        or "terminating connection" in msg
+    )
+
+
+def _open_raw(params: dict[str, Any], schema: str) -> Any:
+    raw = psycopg2.connect(**params)
+    raw.autocommit = True
+    with raw.cursor() as cur:
+        if schema != "public":
+            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {_safe_schema(schema)}")
+        cur.execute(f"SET search_path TO {_safe_schema(schema)}")
+    raw.autocommit = False
+    return raw
+
+
 class PgConn:
-    def __init__(self, raw: Any, schema: str) -> None:
+    def __init__(self, raw: Any, schema: str, params: dict[str, Any] | None = None) -> None:
         self.raw = raw
         self.schema = schema
+        self._params = dict(params or {})
+
+    def _rollback_quiet(self) -> None:
+        try:
+            if getattr(self.raw, "closed", 1):
+                return
+            self.raw.rollback()
+        except Exception:
+            return
+
+    def _reconnect(self) -> None:
+        if not self._params:
+            return
+        try:
+            self.raw.close()
+        except Exception:
+            pass
+        self.raw = _open_raw(self._params, self.schema)
+
+    def _execute_once(self, sql: str, bound: Any) -> PgCursor:
+        cur = self.raw.cursor(cursor_factory=PgCursor)
+        cur.execute(sql, bound)
+        return cur
 
     def execute(self, sql: str, params: Any = ()) -> PgCursor:
         sql = adapt_sql(sql)
@@ -175,13 +228,14 @@ class PgConn:
         else:
             sql = sql.replace("?", "%s")
             bound = tuple(params or ())
-        cur = self.raw.cursor(cursor_factory=PgCursor)
         try:
-            cur.execute(sql, bound)
-        except Exception:
-            self.raw.rollback()
-            raise
-        return cur
+            return self._execute_once(sql, bound)
+        except Exception as exc:
+            self._rollback_quiet()
+            if not _connection_lost(exc) or not self._params:
+                raise
+            self._reconnect()
+            return self._execute_once(sql, bound)
 
     def executescript(self, sql: str) -> None:
         for stmt in _split_sql(sql):
@@ -208,14 +262,9 @@ def connect(env: dict[str, str] | str | None = None) -> PgConn:
             if value is not None:
                 merged[key] = str(value)
     schema = schema_for_env(merged)
-    raw = psycopg2.connect(**_pg_params(merged))
-    raw.autocommit = True
-    with raw.cursor() as cur:
-        if schema != "public":
-            cur.execute(f"CREATE SCHEMA IF NOT EXISTS {schema}")
-        cur.execute(f"SET search_path TO {schema}")
-    raw.autocommit = False
-    return PgConn(raw, schema)
+    params = _pg_params(merged)
+    raw = _open_raw(params, schema)
+    return PgConn(raw, schema, params)
 
 
 def table_columns(conn: PgConn, table: str) -> set[str]:

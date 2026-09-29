@@ -55,6 +55,7 @@ upsert_line NEXREC_PGPORT 5432
 upsert_line NEXREC_PGDATABASE nexrec
 upsert_line NEXREC_PGUSER nexrec
 upsert_line NEXREC_PGPASSWORD ""
+upsert_line NEXREC_PGSSLMODE disable
 
 pass="$(read_line NEXREC_PGPASSWORD)"
 if [[ -z "$pass" || "$pass" == "change-me" ]]; then
