@@ -235,7 +235,7 @@
 
   function copyViewLink() {
     var msg = document.getElementById("msg");
-    if (!(t1 > t0) || slotIds == null) {
+    if (!(t1 > t0)) {
       msg.style.color = "var(--bad)";
       msg.textContent = "Timeline is not ready.";
       return;
