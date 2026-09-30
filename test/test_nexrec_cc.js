@@ -91,6 +91,8 @@ for (const html of [live, exp]) {
   assert.ok(html.includes('id="cc-toggle"'));
   assert.ok(html.includes("captions_window"));
 }
+const css = fs.readFileSync(path.join(ASSETS, "nexrec.css"), "utf8");
+assert.ok(css.includes(".nexrec-cc[hidden] { display: none; }"));
 assert.ok(api.includes("captions_window"));
 assert.ok(api.includes("kind = :k"));
 assert.ok(!api.includes('kind = "caption"'));

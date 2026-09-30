@@ -208,6 +208,7 @@ body.stage-page .pane {
   z-index: 7; display: flex; justify-content: center;
   pointer-events: none;
 }
+.nexrec-cc[hidden] { display: none; }
 .nexrec-cc-text {
   max-width: 100%;
   background: rgba(0, 0, 0, .78);
