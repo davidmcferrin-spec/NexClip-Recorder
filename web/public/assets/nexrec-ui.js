@@ -338,6 +338,114 @@
     return h + "h " + m + "m";
   }
 
+  var EXPORT_LAYOUTS = { "1": 1, "2": 2, "3": 3, "4": 4, "6": 6 };
+
+  function exportStamp(ms) {
+    return new Date(ms).toISOString().replace(".000", "");
+  }
+
+  function exportParseStamp(raw) {
+    if (raw == null || raw === "") return null;
+    var ms = Date.parse(raw);
+    return isFinite(ms) ? ms : null;
+  }
+
+  // Shareable Export view. `t` is required. `inputs` keeps blank panes
+  // (a,,c). A missing inputs param leaves ids null so a time-only link
+  // does not replace the saved pane assignment. As-run links omit n,
+  // from, to, sel, in, and out.
+  function parseExportView(search) {
+    var text = search == null ? "" : String(search);
+    if (text.charAt(0) === "?") text = text.slice(1);
+    var q = new URLSearchParams(text);
+    var raw = q.get("t") || "";
+    var ms = Date.parse(raw);
+    if (!raw || !isFinite(ms)) return null;
+    var rawInputs = q.get("inputs");
+    var ids = null;
+    if (rawInputs != null) {
+      ids = rawInputs.split(",").map(function (s) { return s.trim(); });
+      while (ids.length && ids[ids.length - 1] === "") ids.pop();
+      if (ids.length > PANE_MAX) ids = ids.slice(0, PANE_MAX);
+    }
+    var selRaw = q.get("sel");
+    var sel = selRaw == null || selRaw === "" ? null : parseInt(selRaw, 10);
+    if (sel != null && (!isFinite(sel) || sel < 0)) sel = null;
+    var from = exportParseStamp(q.get("from"));
+    var to = exportParseStamp(q.get("to"));
+    if (from == null || to == null || from >= to) {
+      from = null;
+      to = null;
+    }
+    return {
+      t: ms,
+      ids: ids,
+      n: EXPORT_LAYOUTS[q.get("n") || ""] || null,
+      sel: sel,
+      from: from,
+      to: to,
+      markIn: exportParseStamp(q.get("in")),
+      markOut: exportParseStamp(q.get("out")),
+    };
+  }
+
+  function exportViewLayout(view) {
+    if (view && view.n) return view.n;
+    var count = 0;
+    var ids = (view && view.ids) || [];
+    for (var i = 0; i < ids.length; i++) if (ids[i]) count++;
+    if (count <= 1) return 1;
+    if (count === 2) return 2;
+    if (count === 3) return 3;
+    if (count <= 4) return 4;
+    return 6;
+  }
+
+  function exportViewSlots(view) {
+    var ids = view && view.ids ? view.ids.slice(0, PANE_MAX) : [];
+    var out = [];
+    for (var i = 0; i < PANE_MAX; i++) out.push(ids[i] == null ? "" : String(ids[i]));
+    return out;
+  }
+
+  function exportViewSelection(view) {
+    var layout = exportViewLayout(view);
+    var sel = view && view.sel != null ? view.sel : 0;
+    if (sel < 0 || sel >= layout) return 0;
+    return sel;
+  }
+
+  // Chunk fetch window: three hours around the playhead, widened to the
+  // shared timeline range when that range sticks out.
+  function exportChunkBounds(view) {
+    var t = view && isFinite(view.t) ? view.t : Date.now();
+    var a = t - 3 * 3600000;
+    var b = t + 3 * 3600000;
+    if (view && view.from != null && view.from < a) a = view.from;
+    if (view && view.to != null && view.to > b) b = view.to;
+    return { from: a, to: b };
+  }
+
+  function exportViewQuery(state) {
+    var layout = EXPORT_LAYOUTS[String(state && state.n)] || 1;
+    var ids = [];
+    var source = (state && state.ids) || [];
+    for (var i = 0; i < layout; i++) ids.push(source[i] == null ? "" : String(source[i]));
+    while (ids.length && ids[ids.length - 1] === "") ids.pop();
+    var sel = state && state.sel != null ? (state.sel | 0) : 0;
+    if (sel < 0 || sel >= layout) sel = 0;
+    var q = new URLSearchParams();
+    q.set("n", String(layout));
+    q.set("inputs", ids.join(","));
+    q.set("sel", String(sel));
+    q.set("t", exportStamp(state.t));
+    q.set("from", exportStamp(state.from));
+    q.set("to", exportStamp(state.to));
+    if (state.markIn != null && isFinite(state.markIn)) q.set("in", exportStamp(state.markIn));
+    if (state.markOut != null && isFinite(state.markOut)) q.set("out", exportStamp(state.markOut));
+    return q.toString();
+  }
+
   global.NexRecUI = {
     getTheme: getTheme,
     setTheme: setTheme,
@@ -360,5 +468,11 @@
     exportRemainingMs: exportRemainingMs,
     exportQueueEta: exportQueueEta,
     formatEta: formatEta,
+    parseExportView: parseExportView,
+    exportViewLayout: exportViewLayout,
+    exportViewSlots: exportViewSlots,
+    exportViewSelection: exportViewSelection,
+    exportChunkBounds: exportChunkBounds,
+    exportViewQuery: exportViewQuery,
   };
 })(typeof window !== "undefined" ? window : globalThis);

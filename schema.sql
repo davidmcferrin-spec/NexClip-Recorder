@@ -251,3 +251,55 @@ CREATE TABLE IF NOT EXISTS input_heartbeats (
   last_chunk_at TEXT,
   seen_at TEXT NOT NULL
 );
+
+-- One imported automation as-run (one channel, one broadcast day).
+CREATE TABLE IF NOT EXISTS asruns (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  filename TEXT NOT NULL DEFAULT '',
+  channel TEXT NOT NULL DEFAULT '',
+  broadcast_date TEXT NOT NULL,
+  timezone TEXT NOT NULL DEFAULT 'America/New_York',
+  day_start TEXT NOT NULL DEFAULT '04:00:00',
+  event_count INTEGER NOT NULL DEFAULT 0,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_asruns_channel_day ON asruns(channel, broadcast_date) WHERE channel <> '';
+
+CREATE TABLE IF NOT EXISTS asrun_inputs (
+  asrun_id TEXT NOT NULL,
+  input_id TEXT NOT NULL,
+  PRIMARY KEY (asrun_id, input_id),
+  FOREIGN KEY (asrun_id) REFERENCES asruns(id),
+  FOREIGN KEY (input_id) REFERENCES inputs(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_asrun_inputs_input ON asrun_inputs(input_id);
+
+CREATE TABLE IF NOT EXISTS asrun_events (
+  id TEXT PRIMARY KEY,
+  asrun_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  event_number TEXT NOT NULL DEFAULT '',
+  status TEXT NOT NULL DEFAULT '',
+  relation TEXT NOT NULL DEFAULT '',
+  event_class TEXT NOT NULL DEFAULT '',
+  parent_id TEXT,
+  machine TEXT NOT NULL DEFAULT '',
+  house_id TEXT NOT NULL DEFAULT '',
+  house_number TEXT NOT NULL DEFAULT '',
+  segment TEXT NOT NULL DEFAULT '',
+  content_type TEXT NOT NULL DEFAULT '',
+  title TEXT NOT NULL DEFAULT '',
+  actual TEXT NOT NULL DEFAULT '',
+  duration_tc TEXT NOT NULL DEFAULT '',
+  start_at TEXT,
+  end_at TEXT,
+  on_timeline INTEGER NOT NULL DEFAULT 0,
+  FOREIGN KEY (asrun_id) REFERENCES asruns(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_asrun_events_asrun_seq ON asrun_events(asrun_id, seq);
+CREATE INDEX IF NOT EXISTS idx_asrun_events_window ON asrun_events(asrun_id, on_timeline, start_at);

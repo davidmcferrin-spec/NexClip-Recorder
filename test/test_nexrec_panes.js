@@ -22,6 +22,7 @@ const sandbox = {
     setItem(k, v) { store.set(k, String(v)); },
   },
   fetch() { return Promise.resolve({ json() { return {}; } }); },
+  URLSearchParams: URLSearchParams,
 };
 sandbox.window = sandbox;
 sandbox.globalThis = sandbox;
@@ -124,5 +125,68 @@ const jobs = [
 assert.strictEqual(UI.exportRemainingMs(jobs[0], now), 10000);
 assert.strictEqual(UI.exportQueueEta(jobs, jobs[1], now), 11000);
 assert.strictEqual(UI.formatEta(11000), "11s");
+
+assert.strictEqual(exportSrc.includes('id="copy-link"'), true);
+assert.strictEqual(exportSrc.includes("parseExportView"), true);
+assert.strictEqual(exportSrc.includes("exportViewQuery"), true);
+assert.strictEqual(exportSrc.includes("exportChunkBounds"), true);
+assert.strictEqual(exportSrc.includes("exportViewSlots"), true);
+
+const playAt = Date.parse("2026-09-29T23:14:07.000Z");
+const fromAt = Date.parse("2026-09-29T22:00:00.000Z");
+const toAt = Date.parse("2026-09-29T23:59:00.000Z");
+const inAt = Date.parse("2026-09-29T23:10:00.000Z");
+const outAt = Date.parse("2026-09-29T23:12:30.000Z");
+const shared = UI.exportViewQuery({
+  n: 4,
+  ids: ["in_a", "", "in_c", "in_b"],
+  sel: 2,
+  t: playAt,
+  from: fromAt,
+  to: toAt,
+  markIn: inAt,
+  markOut: outAt,
+});
+const opened = UI.parseExportView("?" + shared);
+assert.strictEqual(opened.t, playAt);
+assert.strictEqual(opened.n, 4);
+same(opened.ids, ["in_a", "", "in_c", "in_b"]);
+assert.strictEqual(UI.exportViewLayout(opened), 4);
+same(UI.exportViewSlots(opened), ["in_a", "", "in_c", "in_b", "", ""]);
+assert.strictEqual(UI.exportViewSelection(opened), 2);
+assert.strictEqual(opened.from, fromAt);
+assert.strictEqual(opened.to, toAt);
+assert.strictEqual(opened.markIn, inAt);
+assert.strictEqual(opened.markOut, outAt);
+
+const asrun = UI.parseExportView("?inputs=in_a,in_b&t=2026-09-29T23:14:07Z");
+assert.strictEqual(asrun.n, null);
+assert.strictEqual(UI.exportViewLayout(asrun), 2);
+same(asrun.ids, ["in_a", "in_b"]);
+assert.strictEqual(asrun.from, null);
+assert.strictEqual(asrun.markIn, null);
+assert.strictEqual(asrun.sel, null);
+
+const timeOnly = UI.parseExportView("?t=2026-09-29T23:14:07Z");
+assert.strictEqual(timeOnly.ids, null);
+assert.strictEqual(timeOnly.n, null);
+
+const wide = UI.exportChunkBounds({
+  t: playAt,
+  from: playAt - 5 * 3600000,
+  to: playAt + 4 * 3600000,
+});
+assert.strictEqual(wide.from, playAt - 5 * 3600000);
+assert.strictEqual(wide.to, playAt + 4 * 3600000);
+const tight = UI.exportChunkBounds({ t: playAt, from: playAt - 60000, to: playAt + 60000 });
+assert.strictEqual(tight.from, playAt - 3 * 3600000);
+assert.strictEqual(tight.to, playAt + 3 * 3600000);
+
+const unmarked = UI.parseExportView("?" + UI.exportViewQuery({
+  n: 1, ids: ["in_a"], sel: 0, t: playAt, from: fromAt, to: toAt, markIn: null, markOut: null,
+}));
+assert.strictEqual(unmarked.markIn, null);
+assert.strictEqual(unmarked.markOut, null);
+assert.strictEqual(UI.exportViewSelection({ n: 2, sel: 9, ids: ["a", "b"] }), 0);
 
 console.log("pane assignment ok");

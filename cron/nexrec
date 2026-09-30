@@ -1,3 +1,7 @@
-# Cron equivalent of nexrec-cleanup.timer (if a host prefers cron).
-# Twice daily: 06:00 and 18:00 (host local time; setup.sh uses America/New_York).
-0 6,18 * * * www-data /usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-cleanup.py --env /etc/nexrec/nexrec.env >/dev/null 2>&1
+# Installed by setup.sh as /etc/cron.d/nexrec.
+# Retention stays on nexrec-cleanup.timer. This file imports as-run logs.
+SHELL=/bin/sh
+PATH=/usr/sbin:/usr/bin:/sbin:/bin
+
+# Minute 0 of every hour. Host local time; setup.sh sets America/New_York.
+0 * * * * www-data /usr/bin/php /opt/NexClip-Recorder/worker/nexrec-asrun-import.php --env /etc/nexrec/nexrec.env >/dev/null

@@ -135,15 +135,15 @@ apt-get update -qq
 apt-get install -y -qq \
   php-cli php-pgsql php-mbstring php-ldap php-curl php-xml \
   apache2 libapache2-mod-php python3 python3-psycopg2 \
-  postgresql postgresql-contrib \
+  postgresql postgresql-contrib cron \
   chrony 2>/dev/null || apt-get install -y \
   php-cli php-pgsql php-mbstring php-ldap php-curl php-xml \
   apache2 libapache2-mod-php python3 python3-psycopg2 \
-  postgresql postgresql-contrib
+  postgresql postgresql-contrib cron
 
 configure_clock
 
-mkdir -p "$ETC/inputs" "$VAR/storage" "$VAR/auth" "$VAR/sessions"
+mkdir -p "$ETC/inputs" "$VAR/storage" "$VAR/auth" "$VAR/sessions" "$VAR/asruns"
 chown -R www-data:www-data "$VAR"
 if getent group video >/dev/null 2>&1; then
   usermod -aG video www-data || warn "could not add www-data to group video (DeckLink device nodes)"
@@ -214,6 +214,15 @@ nexrec_grant_www_data
 
 systemctl daemon-reload
 systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
+
+# Hourly as-run import. cron.d must be root-owned and not writable by group/other.
+if [[ -f "$ROOT/cron/nexrec" ]]; then
+  sed "s|/opt/NexClip-Recorder|$ROOT|g" "$ROOT/cron/nexrec" > /etc/cron.d/nexrec
+  chown root:root /etc/cron.d/nexrec
+  chmod 644 /etc/cron.d/nexrec
+  systemctl enable --now cron >/dev/null 2>&1 || true
+  log "installed /etc/cron.d/nexrec (as-run import hourly)"
+fi
 
 # Pinned FFmpeg (source build) + MediaMTX release + optional decklink-status.
 # Distro ffmpeg is not the DeckLink capture binary.

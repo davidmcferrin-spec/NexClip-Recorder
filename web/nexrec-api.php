@@ -7,6 +7,7 @@ declare(strict_types=1);
 require_once __DIR__ . '/nexrec-auth-lib.php';
 require_once __DIR__ . '/nexrec-decklink.php';
 require_once __DIR__ . '/nexrec-forecast.php';
+require_once __DIR__ . '/nexrec-asrun.php';
 
 function nexrec_api_fail(int $status, string $message): never {
     if (!headers_sent()) {
@@ -508,7 +509,7 @@ try {
             nexrec_api_fail(400, 'invalid id');
         }
         $db = nexrec_db();
-        foreach (['events', 'captions', 'loudness_samples', 'analyze_jobs', 'chunks', 'input_heartbeats'] as $tbl) {
+        foreach (['events', 'captions', 'loudness_samples', 'analyze_jobs', 'chunks', 'input_heartbeats', 'asrun_inputs'] as $tbl) {
             $st = $db->prepare("DELETE FROM {$tbl} WHERE input_id=:i");
             $st->bindValue(':i', $id, SQLITE3_TEXT);
             $st->execute();
@@ -525,15 +526,27 @@ try {
     if ($action === 'chunks_list') {
         nexrec_require_roles([]);
         $iid = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        $from = (string) ($_GET['t_from'] ?? $body['t_from'] ?? '');
+        $to = (string) ($_GET['t_to'] ?? $body['t_to'] ?? '');
         $sql = 'SELECT * FROM chunks WHERE ready=1 AND orphan=0';
-        $args = [];
         if ($iid !== '') {
             $sql .= ' AND input_id = :i';
         }
-        $sql .= ' ORDER BY start_at DESC LIMIT 500';
+        $window = $from !== '' || $to !== '';
+        if ($window) {
+            if ($from === '' || $to === '') {
+                nexrec_api_fail(400, 't_from and t_to are both required');
+            }
+            $sql .= ' AND start_at < :t_to AND COALESCE(end_at, start_at) > :t_from';
+        }
+        $sql .= ' ORDER BY start_at DESC LIMIT ' . ($window ? '2000' : '500');
         $st = nexrec_db()->prepare($sql);
         if ($iid !== '') {
             $st->bindValue(':i', $iid, SQLITE3_TEXT);
+        }
+        if ($window) {
+            $st->bindValue(':t_from', $from, SQLITE3_TEXT);
+            $st->bindValue(':t_to', $to, SQLITE3_TEXT);
         }
         $res = $st->execute();
         $out = [];
@@ -1054,6 +1067,91 @@ try {
         ]);
     }
 
+    if ($action === 'asruns_list') {
+        nexrec_require_roles([]);
+        nexrec_api_ok(['asruns' => nexrec_asrun_list()]);
+    }
+
+    if ($action === 'asrun_get') {
+        nexrec_require_roles([]);
+        $id = (string) ($_GET['id'] ?? $body['id'] ?? '');
+        $row = nexrec_asrun_find($id);
+        if ($row === null) {
+            nexrec_api_fail(404, 'as-run not found');
+        }
+        nexrec_api_ok([
+            'asrun' => [
+                'id' => $row['id'],
+                'name' => $row['name'],
+                'filename' => $row['filename'],
+                'channel' => $row['channel'],
+                'broadcast_date' => $row['broadcast_date'],
+                'timezone' => $row['timezone'],
+                'day_start' => $row['day_start'],
+                'event_count' => (int) $row['event_count'],
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'input_ids' => nexrec_asrun_input_ids($id),
+            ],
+            'events' => nexrec_asrun_events($id),
+        ]);
+    }
+
+    if ($action === 'asrun_import') {
+        nexrec_require_roles(['admin', 'operator']);
+        $text = (string) ($body['text'] ?? '');
+        if (trim($text) === '') {
+            nexrec_api_fail(400, 'text required');
+        }
+        $ids = $body['input_ids'] ?? [];
+        if (!is_array($ids)) {
+            nexrec_api_fail(400, 'input_ids must be a list');
+        }
+        $saved = nexrec_asrun_import($text, [
+            'filename' => (string) ($body['filename'] ?? ''),
+            'name' => (string) ($body['name'] ?? ''),
+            'timezone' => (string) ($body['timezone'] ?? 'America/New_York'),
+            'day_start' => (string) ($body['day_start'] ?? '04:00:00'),
+            'input_ids' => $ids,
+        ]);
+        nexrec_api_ok($saved);
+    }
+
+    if ($action === 'asrun_link') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        if (nexrec_asrun_find($id) === null) {
+            nexrec_api_fail(404, 'as-run not found');
+        }
+        $ids = $body['input_ids'] ?? [];
+        if (!is_array($ids)) {
+            nexrec_api_fail(400, 'input_ids must be a list');
+        }
+        nexrec_asrun_link($id, $ids);
+        nexrec_api_ok(['id' => $id, 'input_ids' => nexrec_asrun_input_ids($id)]);
+    }
+
+    if ($action === 'asrun_delete') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        if (nexrec_asrun_find($id) === null) {
+            nexrec_api_fail(404, 'as-run not found');
+        }
+        nexrec_asrun_delete($id);
+        nexrec_api_ok(['deleted' => $id]);
+    }
+
+    if ($action === 'asrun_band') {
+        nexrec_require_roles([]);
+        $iid = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        $from = (string) ($_GET['t_from'] ?? $body['t_from'] ?? '');
+        $to = (string) ($_GET['t_to'] ?? $body['t_to'] ?? '');
+        if ($iid === '' || $from === '' || $to === '') {
+            nexrec_api_fail(400, 'input_id, t_from, and t_to required');
+        }
+        nexrec_api_ok(['events' => nexrec_asrun_band($iid, $from, $to)]);
+    }
+
     if ($action === 'analyze_jobs_list') {
         nexrec_require_roles(['admin', 'operator']);
         $out = [];
@@ -1076,6 +1174,8 @@ try {
         nexrec_api_fail(403, $msg);
     }
     nexrec_api_fail(500, $msg);
+} catch (InvalidArgumentException $e) {
+    nexrec_api_fail(400, $e->getMessage());
 } catch (Throwable $e) {
     nexrec_api_fail(500, 'internal error');
 }

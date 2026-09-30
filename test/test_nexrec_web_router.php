@@ -5,7 +5,7 @@ declare(strict_types=1);
 require dirname(__DIR__) . '/web/nexrec-web-router.php';
 
 $pages = nexrec_web_pages();
-foreach (['/live', '/export', '/inputs', '/settings', '/users', '/metrics', '/services', '/login'] as $p) {
+foreach (['/live', '/export', '/asruns', '/inputs', '/settings', '/users', '/metrics', '/services', '/login'] as $p) {
     if (!isset($pages[$p])) {
         fwrite(STDERR, "missing page {$p}\n");
         exit(1);

@@ -36,6 +36,7 @@ test-php:
 	$(PHP) $(TESTDIR)/test_nexrec_web_router.php
 	$(PHP) $(TESTDIR)/test_nexrec_nexapp.php
 	$(PHP) $(TESTDIR)/test_nexrec_features.php
+	$(PHP) $(TESTDIR)/test_nexrec_asrun.php
 	$(PHP) $(TESTDIR)/test_nexrec_ops_allowlist.php
 	$(PHP) $(TESTDIR)/test_nexrec_settings.php
 	$(PHP) $(TESTDIR)/test_nexrec_decklink.php

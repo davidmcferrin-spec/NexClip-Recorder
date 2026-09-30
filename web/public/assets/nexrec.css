@@ -246,6 +246,18 @@ body.stage-page .pane {
   position: absolute; pointer-events: none; z-index: 0;
   background: #111 center / cover no-repeat;
 }
+.timeline .tl-asrun {
+  position: absolute; z-index: 1; overflow: hidden; pointer-events: none;
+  box-sizing: border-box; height: 16px; padding: 0 3px;
+  font-size: 10px; line-height: 16px; white-space: nowrap; color: #fff;
+}
+.timeline .tl-asrun.ent { background: rgba(62, 207, 142, .88); }
+.timeline .tl-asrun.cm { background: rgba(232, 168, 56, .92); color: #1a1204; }
+.timeline .tl-asrun.pro, .timeline .tl-asrun.pr { background: rgba(120, 144, 180, .92); }
+tr.asrun-hit { cursor: pointer; }
+tr.asrun-hit:hover { background: rgba(62, 207, 142, .12); }
+tr.asrun-tied td.asrun-time { padding-left: 22px; }
+tr.asrun-note { color: var(--dim); }
 .timeline .playhead, .timeline .mark { z-index: 2; }
 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 .metric-card { background: var(--bg); border: 1px solid var(--edge); border-radius: 6px; padding: 10px 12px; }

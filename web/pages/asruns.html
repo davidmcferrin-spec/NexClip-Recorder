@@ -1,0 +1,282 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — As-run</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a class="active" href="/asruns">As-run</a>
+  <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Setup</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div id="list-view">
+    <div class="bar">
+      <h1 style="margin:0">As-run</h1>
+      <a href="/asruns">All logs</a>
+    </div>
+    <div class="panel" id="import-panel">
+      <h2>Import</h2>
+      <p class="sub">One file is one channel’s automation log for one broadcast day. The day starts at 04:00 in the log’s zone. Times before that belong to the next calendar morning. Importing the same channel and day replaces the events and keeps the input links you check here.</p>
+      <label>File
+        <input type="file" id="file" accept=".asr,.txt,text/plain">
+      </label>
+      <label>Zone
+        <input type="text" id="tz" value="America/New_York" spellcheck="false" autocomplete="off">
+      </label>
+      <label>Day start
+        <input type="text" id="day-start" value="04:00:00" spellcheck="false" autocomplete="off">
+      </label>
+      <p class="sub" style="margin-top:12px">Link to inputs</p>
+      <div id="import-inputs"></div>
+      <div class="bar">
+        <button type="button" class="primary" id="import-btn">Import</button>
+        <span class="err" id="import-err"></span>
+        <span class="ok-msg" id="import-ok"></span>
+      </div>
+    </div>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th>Channel</th><th>Broadcast day</th><th>Zone</th><th>Events</th><th>Inputs</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <p class="sub" id="empty" hidden>No as-run logs yet.</p>
+    </div>
+  </div>
+  <div id="solo-view" hidden>
+    <div class="bar">
+      <a href="/asruns">All logs</a>
+      <h1 style="margin:0" id="solo-title">As-run</h1>
+      <span class="meta" id="solo-meta"></span>
+    </div>
+    <div class="panel" id="link-panel">
+      <p class="sub">This log can describe more than one input. An input can carry more than one log. A line with an air time opens Export on the linked inputs at that time.</p>
+      <div id="link-inputs"></div>
+      <div class="bar">
+        <button type="button" id="link-save">Save links</button>
+        <button type="button" id="delete-btn">Delete log</button>
+      </div>
+    </div>
+    <p><span class="err" id="solo-err"></span> <span class="ok-msg" id="solo-ok"></span></p>
+    <div class="panel">
+      <table>
+        <thead>
+          <tr><th>Air time</th><th>Machine</th><th>HouseID</th><th>Seg</th><th>Type</th><th>Title</th></tr>
+        </thead>
+        <tbody id="events"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+(function () {
+  var canEdit = false;
+  var inputs = [];
+  var asrunId = new URLSearchParams(location.search).get("id") || "";
+
+  function esc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  }
+
+  function checks(container, selected) {
+    container.innerHTML = "";
+    if (!inputs.length) {
+      container.textContent = "No inputs yet.";
+      return;
+    }
+    inputs.forEach(function (inp) {
+      var id = String(inp.id);
+      var label = document.createElement("label");
+      label.style.display = "inline-flex";
+      label.style.alignItems = "center";
+      label.style.gap = "6px";
+      label.style.margin = "0 14px 8px 0";
+      var box = document.createElement("input");
+      box.type = "checkbox";
+      box.value = id;
+      box.checked = selected.indexOf(id) >= 0;
+      box.disabled = !canEdit;
+      label.appendChild(box);
+      label.appendChild(document.createTextNode(inp.name || id));
+      container.appendChild(label);
+    });
+  }
+
+  function checked(container) {
+    return Array.prototype.map.call(container.querySelectorAll("input:checked"), function (el) {
+      return el.value;
+    });
+  }
+
+  function loadList() {
+    return NexRecAuth.recApi("asruns_list").then(function (data) {
+      var body = document.getElementById("rows");
+      var list = data.asruns || [];
+      body.innerHTML = "";
+      document.getElementById("empty").hidden = list.length > 0;
+      list.forEach(function (row) {
+        var tr = document.createElement("tr");
+        var names = (row.inputs || []).map(function (inp) { return inp.name || inp.id; }).join(", ");
+        tr.innerHTML =
+          "<td>" + esc(row.channel) + "</td>" +
+          "<td><a href=\"/asruns?id=" + encodeURIComponent(row.id) + "\">" + esc(row.broadcast_date) + "</a></td>" +
+          "<td>" + esc(row.timezone) + " from " + esc(row.day_start) + "</td>" +
+          "<td>" + esc(row.event_count) + "</td>" +
+          "<td>" + esc(names || "—") + "</td>" +
+          "<td><a href=\"/asruns?id=" + encodeURIComponent(row.id) + "\">Open</a></td>";
+        body.appendChild(tr);
+      });
+    });
+  }
+
+  function typeLabel(ev) {
+    var parts = [];
+    if (ev.status === "C") return "note";
+    if (ev.status === "P") return "header";
+    if (ev.status === "M") parts.push("missed");
+    if (ev.relation) parts.push(ev.relation);
+    if (ev.content_type) parts.push(ev.content_type);
+    return parts.join(" · ") || ev.event_class || "";
+  }
+
+  function loadSolo() {
+    return NexRecAuth.recApi("asrun_get", { id: asrunId }).then(function (data) {
+      var asrun = data.asrun;
+      var events = data.events || [];
+      var linked = asrun.input_ids || [];
+      document.getElementById("solo-title").textContent = asrun.name || asrun.channel || "As-run";
+      var linkedNames = linked.map(function (id) {
+        for (var i = 0; i < inputs.length; i++) {
+          if (String(inputs[i].id) === String(id)) return inputs[i].name || id;
+        }
+        return id;
+      });
+      document.getElementById("solo-meta").textContent =
+        (asrun.channel || "") + "  " + asrun.broadcast_date +
+        "  " + asrun.timezone + " from " + asrun.day_start +
+        "  ·  " + (linkedNames.length ? linkedNames.join(", ") : "no inputs linked");
+      checks(document.getElementById("link-inputs"), linked);
+      var body = document.getElementById("events");
+      body.innerHTML = "";
+      events.forEach(function (ev) {
+        var tr = document.createElement("tr");
+        var note = ev.status === "C" || ev.status === "P" || ev.status === "M";
+        var tied = !!ev.parent_id;
+        tr.className = (note ? "asrun-note" : "") + (tied ? " asrun-tied" : "") + (ev.on_timeline ? " asrun-hit" : "");
+        tr.innerHTML =
+          "<td class=\"asrun-time\">" + esc(ev.actual || "—") + "</td>" +
+          "<td>" + esc(ev.machine) + "</td>" +
+          "<td>" + esc(ev.house_id) + "</td>" +
+          "<td>" + esc(ev.segment) + "</td>" +
+          "<td>" + esc(typeLabel(ev)) + "</td>" +
+          "<td>" + esc(ev.title) + "</td>";
+        if (ev.on_timeline && ev.start_at) {
+          tr.title = linked.length
+            ? "Open this time on the linked inputs"
+            : "Link an input to open this time in Export";
+          tr.addEventListener("click", function () {
+            if (!linked.length) {
+              document.getElementById("solo-err").textContent = "Link this log to an input first.";
+              return;
+            }
+            location.href = "/export?inputs=" + encodeURIComponent(linked.join(",")) +
+              "&t=" + encodeURIComponent(ev.start_at);
+          });
+        }
+        body.appendChild(tr);
+      });
+      document.getElementById("link-save").onclick = function () {
+        document.getElementById("solo-err").textContent = "";
+        document.getElementById("solo-ok").textContent = "";
+        NexRecAuth.recApi("asrun_link", {
+          id: asrunId,
+          input_ids: checked(document.getElementById("link-inputs"))
+        }).then(function () {
+          document.getElementById("solo-ok").textContent = "Links saved.";
+          return loadSolo();
+        }).catch(function (err) {
+          document.getElementById("solo-err").textContent = err.message || "Save failed";
+        });
+      };
+      document.getElementById("delete-btn").onclick = function () {
+        if (!confirm("Delete this as-run log?")) return;
+        NexRecAuth.recApi("asrun_delete", { id: asrunId }).then(function () {
+          location.href = "/asruns";
+        }).catch(function (err) {
+          document.getElementById("solo-err").textContent = err.message || "Delete failed";
+        });
+      };
+    });
+  }
+
+  NexRecAuth.requirePage().then(function (user) {
+    canEdit = user.role === "admin" || user.role === "operator";
+    document.getElementById("import-panel").hidden = !canEdit;
+    document.getElementById("link-panel").hidden = !canEdit;
+    return NexRecAuth.recApi("inputs_list");
+  }).then(function (data) {
+    inputs = data.inputs || [];
+    checks(document.getElementById("import-inputs"), []);
+    if (asrunId) {
+      document.getElementById("list-view").hidden = true;
+      document.getElementById("solo-view").hidden = false;
+      return loadSolo();
+    }
+    return loadList();
+  }).catch(function (err) {
+    if (err && err.message && err.message !== "unauthorized" && err.message !== "forbidden") {
+      var slot = document.getElementById(asrunId ? "solo-err" : "import-err");
+      if (slot) slot.textContent = err.message;
+    }
+  });
+
+  document.getElementById("import-btn").addEventListener("click", function () {
+    var err = document.getElementById("import-err");
+    var ok = document.getElementById("import-ok");
+    err.textContent = "";
+    ok.textContent = "";
+    var file = document.getElementById("file").files[0];
+    if (!file) {
+      err.textContent = "Choose an as-run file.";
+      return;
+    }
+    var reader = new FileReader();
+    reader.onload = function () {
+      NexRecAuth.recApi("asrun_import", {
+        text: String(reader.result || ""),
+        filename: file.name,
+        timezone: document.getElementById("tz").value,
+        day_start: document.getElementById("day-start").value,
+        input_ids: checked(document.getElementById("import-inputs"))
+      }).then(function (saved) {
+        location.href = "/asruns?id=" + encodeURIComponent(saved.id);
+      }).catch(function (ex) {
+        err.textContent = ex.message || "Import failed";
+      });
+    };
+    reader.onerror = function () { err.textContent = "Could not read that file."; };
+    reader.readAsText(file);
+  });
+})();
+</script>
+</body>
+</html>

@@ -49,6 +49,7 @@ function nexrec_web_pages(): array {
         '/' => ['file' => 'live.html', 'roles' => null, 'public' => false],
         '/live' => ['file' => 'live.html', 'roles' => null, 'public' => false],
         '/export' => ['file' => 'export.html', 'roles' => null, 'public' => false],
+        '/asruns' => ['file' => 'asruns.html', 'roles' => null, 'public' => false],
         '/inputs' => ['file' => 'inputs.html', 'roles' => ['admin', 'operator'], 'public' => false],
         '/settings' => ['file' => 'settings.html', 'roles' => ['admin', 'operator'], 'public' => false],
         '/users' => ['file' => 'users.html', 'roles' => ['admin'], 'public' => false],

@@ -12,6 +12,7 @@
   <a class="brand" href="/live">NexCLIP Recorder</a>
   <a href="/live">Live</a>
   <a class="active" href="/export">Export</a>
+  <a href="/asruns">As-run</a>
   <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
   <a href="/settings" data-auth-role="admin,operator">Setup</a>
@@ -32,6 +33,7 @@
       <button type="button" data-n="4">4</button>
       <button type="button" data-n="6">6</button>
     </div>
+    <button type="button" id="copy-link" title="Copy a link to this layout, the videos in each pane, the playhead, the timeline range, and any in/out marks.">Copy link</button>
     <button type="button" id="mark-in" title="Mark in at the playhead (I). Shift+I jumps to the in point.">Mark I</button>
     <button type="button" id="mark-out" title="Mark out at the playhead (O). Shift+O jumps to the out point.">Mark O</button>
     <span class="meta" id="io">I — / O —</span>
@@ -111,6 +113,7 @@
   var shuttle = 0, kHeld = false, shuttleTimer = null;
   var tlRows = 1, tlLanes = 0, tlSig = "";
   var ccBox = null, ccCues = [], ccWindow0 = 0, ccWindow1 = 0, ccInput = "", ccFetch = 0;
+  var asrunKey = "", asrunRows = [], asrunToken = 0;
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -122,15 +125,38 @@
     }
   } catch (e) {}
 
+  var jump = readExportJump();
+
+  function isoWindow(ms) {
+    return new Date(ms).toISOString().replace(/\.\d{3}Z$/, "Z");
+  }
+
   NexRecAuth.requirePage().then(function () {
+    var chunkWindow = jump ? NexRecUI.exportChunkBounds(jump) : null;
+    var chunks = chunkWindow
+      ? NexRecAuth.recApi("chunks_list", {
+          t_from: isoWindow(chunkWindow.from),
+          t_to: isoWindow(chunkWindow.to)
+        })
+      : NexRecAuth.recApi("chunks_list");
     return Promise.all([
       NexRecAuth.recApi("inputs_list"),
-      NexRecAuth.recApi("chunks_list"),
+      chunks,
       NexRecAuth.recApi("exports_list"),
     ]);
   }).then(function (all) {
     inputs = all[0].inputs || [];
-    if (slotIds == null) slotIds = NexRecUI.readPaneSlots(localStorage, SLOT_KEY);
+    if (jump && jump.ids) {
+      slotIds = NexRecUI.exportViewSlots(jump);
+    } else if (slotIds == null) {
+      slotIds = NexRecUI.readPaneSlots(localStorage, SLOT_KEY);
+    }
+    if (jump && (jump.ids || jump.n)) {
+      n = NexRecUI.exportViewLayout(jump);
+      document.querySelectorAll("#layout-seg button").forEach(function (b) {
+        b.classList.toggle("active", b.getAttribute("data-n") === String(n));
+      });
+    }
     (all[1].chunks || []).forEach(function (c) {
       (chunksByInput[c.input_id] = chunksByInput[c.input_id] || []).push(c);
     });
@@ -142,14 +168,35 @@
         archive1 = Date.now();
         archive0 = archive1 - 3600000;
       }
-    } else {
+    } else if (!jump) {
       archive1 = Date.now();
       archive0 = archive1 - 3600000;
+    } else {
+      archive0 = jump.t - 10 * 60 * 1000;
+      archive1 = jump.t + 50 * 60 * 1000;
     }
-    t1 = archive1;
-    t0 = Math.max(archive0, t1 - 3600000);
-    if (t1 <= t0) t0 = archive0;
-    play = t0;
+    if (jump) {
+      play = jump.t;
+      if (jump.from != null && jump.to != null) {
+        t0 = jump.from;
+        t1 = jump.to;
+      } else {
+        t0 = play - 10 * 60 * 1000;
+        t1 = play + 50 * 60 * 1000;
+      }
+      if (play < t0) play = t0;
+      if (play > t1) play = t1;
+      if (t0 < archive0) archive0 = t0;
+      if (t1 > archive1) archive1 = t1;
+      if (jump.markIn != null) markIn = jump.markIn;
+      if (jump.markOut != null) markOut = jump.markOut;
+      if (jump.sel != null) selected = NexRecUI.exportViewSelection(jump);
+    } else {
+      t1 = archive1;
+      t0 = Math.max(archive0, t1 - 3600000);
+      if (t1 <= t0) t0 = archive0;
+      play = t0;
+    }
     fillRangeFields();
     var vol = document.getElementById("listen-vol");
     if (vol) vol.value = String(volume);
@@ -157,6 +204,61 @@
     render();
     tick();
   });
+
+  function readExportJump() {
+    return NexRecUI.parseExportView(location.search);
+  }
+
+  function writeClipboard(text) {
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(text);
+    }
+    return new Promise(function (resolve, reject) {
+      var el = document.createElement("textarea");
+      el.value = text;
+      el.setAttribute("readonly", "");
+      el.style.position = "fixed";
+      el.style.left = "-9999px";
+      document.body.appendChild(el);
+      el.select();
+      try {
+        var ok = document.execCommand("copy");
+        document.body.removeChild(el);
+        if (ok) resolve();
+        else reject(new Error("copy"));
+      } catch (e) {
+        document.body.removeChild(el);
+        reject(e);
+      }
+    });
+  }
+
+  function copyViewLink() {
+    var msg = document.getElementById("msg");
+    if (!(t1 > t0) || slotIds == null) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = "Timeline is not ready.";
+      return;
+    }
+    var query = NexRecUI.exportViewQuery({
+      n: n,
+      ids: visibleIds().slice(0, n),
+      sel: selected,
+      t: play,
+      from: t0,
+      to: t1,
+      markIn: markIn,
+      markOut: markOut
+    });
+    var url = location.origin + "/export?" + query;
+    writeClipboard(url).then(function () {
+      msg.style.color = "var(--ok)";
+      msg.textContent = "Link copied.";
+    }).catch(function () {
+      msg.style.color = "var(--ok)";
+      msg.textContent = url;
+    });
+  }
 
   function iso(ms) { return new Date(ms).toISOString().replace(".000", ""); }
   function esc(s) {
@@ -350,6 +452,7 @@
     el.hidden = false;
     var span = Math.max(1, t1 - t0);
     var strip = tlLanes * 2;
+    var labelH = asrunRows.length ? 16 : 0;
     if (tlRows <= 1) {
       el.style.top = "0";
       el.style.bottom = "0";
@@ -361,7 +464,7 @@
     var row = Math.floor((ms - t0) / rowSpan);
     if (row >= tlRows) row = tlRows - 1;
     if (row < 0) row = 0;
-    el.style.top = (strip + row * 55) + "px";
+    el.style.top = (strip + labelH + row * 55) + "px";
     el.style.bottom = "auto";
     el.style.height = "55px";
     el.style.left = (((ms - t0) - row * rowSpan) / rowSpan * 100) + "%";
@@ -385,7 +488,32 @@
     range.style.left = pct;
   }
 
+  function ensureAsrunBand() {
+    var sel = selectedInput();
+    var key = sel && t1 > t0 ? (String(sel.id) + "|" + t0 + "|" + t1) : "";
+    if (key === asrunKey) return;
+    asrunKey = key;
+    asrunRows = [];
+    tlSig = "";
+    var token = ++asrunToken;
+    if (!key) return;
+    NexRecAuth.recApi("asrun_band", {
+      input_id: String(sel.id),
+      t_from: isoSec(t0),
+      t_to: isoSec(t1)
+    }).then(function (data) {
+      if (token !== asrunToken) return;
+      asrunRows = data.events || [];
+      tlSig = "";
+      paintChrome();
+    }).catch(function () {
+      if (token !== asrunToken) return;
+      asrunRows = [];
+    });
+  }
+
   function paintChrome() {
+    ensureAsrunBand();
     document.getElementById("tlabel").textContent = station(play);
     document.getElementById("scale-start").textContent = station(t0);
     document.getElementById("scale-end").textContent = station(t1);
@@ -399,7 +527,10 @@
     var note = "Scrubbing " + station(t0) + " → " + station(t1) +
       ". Colored lines are each input. Pictures follow the selected input.";
     if (tlRows > 1) note += " Pictures wrap across " + tlRows + " rows.";
-    note += " Loaded archive is " + station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
+    if (asrunRows.length) note += " Program and commercial titles sit under the lines.";
+    note += jump
+      ? " Loaded archive covers the as-run time."
+      : " Loaded archive is " + station(archive0) + " → " + station(archive1) + " (newest 500 chunks).";
     document.getElementById("coverage-note").textContent = note;
     syncCc();
   }
@@ -418,14 +549,18 @@
         sig.push(c.id, c.start_at, c.end_at);
       });
     });
+    asrunRows.forEach(function (ev) {
+      sig.push(ev.id, ev.start_at, ev.end_at, ev.title);
+    });
     sig = sig.join("|");
     tlLanes = lanes.length;
     tlRows = NexRecUI.thumbRows(t1 - t0, width);
     if (sig === tlSig) return;
     tlSig = sig;
-    bar.querySelectorAll(".tl-avail, .tl-thumb").forEach(function (el) { el.remove(); });
+    bar.querySelectorAll(".tl-avail, .tl-thumb, .tl-asrun").forEach(function (el) { el.remove(); });
     var strip = lanes.length * 2;
-    bar.style.height = Math.max(55, strip + tlRows * 55) + "px";
+    var labelH = asrunRows.length ? 16 : 0;
+    bar.style.height = Math.max(55, strip + labelH + tlRows * 55) + "px";
     lanes.forEach(function (lane, i) {
       var color = NexRecUI.laneColor(lane.slot);
       (chunksByInput[lane.inp.id] || []).forEach(function (c) {
@@ -445,6 +580,23 @@
         bar.appendChild(line);
       });
     });
+    asrunRows.forEach(function (ev) {
+      var a = Date.parse(ev.start_at);
+      var b = Date.parse(ev.end_at);
+      if (!isFinite(a) || !isFinite(b) || b <= t0 || a >= t1) return;
+      var left = ((Math.max(a, t0) - t0) / Math.max(1, t1 - t0)) * 100;
+      var widthPct = ((Math.min(b, t1) - Math.max(a, t0)) / Math.max(1, t1 - t0)) * 100;
+      if (widthPct <= 0) return;
+      var block = document.createElement("div");
+      var kind = String(ev.content_type || "").toLowerCase();
+      block.className = "tl-asrun" + (kind ? " " + kind : "");
+      block.style.left = left + "%";
+      block.style.width = Math.max(widthPct, 0.15) + "%";
+      block.style.top = strip + "px";
+      block.textContent = ev.title || ev.house_id || "";
+      block.title = (ev.title || ev.house_id || "") + (ev.house_id ? " (" + ev.house_id + ")" : "");
+      bar.appendChild(block);
+    });
     if (!sel) return;
     (chunksByInput[sel.id] || []).forEach(function (c) {
       var bounds = chunkBounds(c);
@@ -454,7 +606,7 @@
         thumb.className = "tl-thumb";
         thumb.style.left = part.left + "%";
         thumb.style.width = Math.max(part.width, 0.15) + "%";
-        thumb.style.top = (strip + part.row * 55) + "px";
+        thumb.style.top = (strip + labelH + part.row * 55) + "px";
         thumb.style.height = "55px";
         if (c.id) thumb.style.backgroundImage = "url(/api/chunks/" + encodeURIComponent(c.id) + "/thumb)";
         thumb.title = (sel.name || sel.id) + " " + station(bounds.a);
@@ -969,11 +1121,12 @@
     if (x > 1) x = 1;
     var y = ev.clientY - r.top;
     var strip = tlLanes * 2;
+    var labelH = asrunRows.length ? 16 : 0;
     var ms;
-    if (tlRows <= 1 || y < strip) {
+    if (tlRows <= 1 || y < strip + labelH) {
       ms = t0 + x * (t1 - t0);
     } else {
-      var row = Math.floor((y - strip) / 55);
+      var row = Math.floor((y - strip - labelH) / 55);
       if (row < 0) row = 0;
       if (row >= tlRows) row = tlRows - 1;
       var rowSpan = (t1 - t0) / tlRows;
@@ -985,6 +1138,7 @@
     tlSig = "";
     if (t1 > t0) paintChrome();
   });
+  document.getElementById("copy-link").onclick = copyViewLink;
   document.getElementById("mark-in").onclick = markInAtPlay;
   document.getElementById("mark-out").onclick = markOutAtPlay;
   document.getElementById("do-export").onclick = function () {
