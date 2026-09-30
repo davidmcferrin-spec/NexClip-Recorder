@@ -40,6 +40,7 @@ test-php:
 	$(PHP) $(TESTDIR)/test_nexrec_ops_allowlist.php
 	$(PHP) $(TESTDIR)/test_nexrec_settings.php
 	$(PHP) $(TESTDIR)/test_nexrec_decklink.php
+	$(PHP) $(TESTDIR)/test_nexrec_share.php
 
 demo: test-db
 	./test/test_demo_pipeline.sh

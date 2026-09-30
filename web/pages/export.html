@@ -37,12 +37,6 @@
     <button type="button" id="mark-in" title="Mark in at the playhead (I). Shift+I jumps to the in point.">Mark I</button>
     <button type="button" id="mark-out" title="Mark out at the playhead (O). Shift+O jumps to the out point.">Mark O</button>
     <span class="meta" id="io">I — / O —</span>
-    <label class="meta" style="margin:0">Scope
-      <select id="scope"><option value="one">This stream</option><option value="all">All visible</option></select>
-    </label>
-    <label class="meta" style="margin:0">Quality
-      <select id="quality"><option value="full">Full (native)</option><option value="proxy">Proxy</option></select>
-    </label>
     <button type="button" class="primary" id="do-export">Export trim</button>
     <span class="ok-msg" id="msg"></span>
   </div>
@@ -77,23 +71,6 @@
     <input type="range" id="scrub" min="0" max="1000" value="0" style="flex:1">
     <span class="meta" id="tlabel" style="font-family:var(--nx-mono)">—</span>
   </div>
-  <div class="panel" id="lkfs-panel">
-    <h1>CALM Act · LKFS</h1>
-    <p class="meta">Export editor only. ITU-R BS.1770 / ATSC A/85 target <strong>−24 LKFS</strong>. FFmpeg <code>ebur128</code> on the selected I/O (not live multiviewer).</p>
-    <div class="bar">
-      <button type="button" id="measure-lkfs">Measure selected range</button>
-      <span class="meta" id="lkfs-msg">Mark I/O, then measure. Enqueues sidecar job — PHP does not shell FFmpeg.</span>
-    </div>
-    <div class="lkfs-wrap" id="lkfs-wrap">
-      <svg viewBox="0 0 1000 150" preserveAspectRatio="none" aria-label="LKFS chart">
-        <line x1="0" y1="75" x2="1000" y2="75" stroke="#f5a524" stroke-dasharray="6 4" stroke-width="1"/>
-        <text x="8" y="20" fill="#9aa8b5" font-size="12">−10</text>
-        <text x="8" y="79" fill="#f5a524" font-size="12">−24 LKFS</text>
-        <text x="8" y="142" fill="#9aa8b5" font-size="12">−40</text>
-        <polyline id="lkfs-line" fill="none" stroke="#3ecf8e" stroke-width="2" points=""/>
-      </svg>
-    </div>
-  </div>
   <div class="panel" id="jobs-panel">
     <h1>Queue</h1>
     <p class="sub">The export service works this list one job at a time. ETA uses the trim length and FFmpeg’s progress. Cancel stops a queued job immediately and asks a running job to stop.</p>
@@ -104,6 +81,48 @@
   </div>
   </div>
 </main>
+<dialog id="export-dialog" class="nx-dialog">
+  <form id="export-form">
+    <h1 id="export-dialog-title">Export trim</h1>
+    <p class="meta" id="export-window"></p>
+    <div id="export-create-fields">
+      <fieldset class="export-scope">
+        <legend>Streams</legend>
+        <label class="check"><input type="radio" name="export-scope" value="one" checked> This stream</label>
+        <label class="check"><input type="radio" name="export-scope" value="all"> All visible streams</label>
+        <label class="check"><input type="radio" name="export-scope" value="pick"> Choose streams</label>
+        <div id="export-picks" class="stream-picks"></div>
+      </fieldset>
+      <label for="export-quality">Quality
+        <select id="export-quality">
+          <option value="full">Full (native)</option>
+          <option value="proxy">Proxy</option>
+        </select>
+      </label>
+    </div>
+    <p class="meta" id="export-locked" hidden></p>
+    <label for="export-title">Title
+      <input id="export-title" maxlength="200" autocomplete="off" placeholder="Optional">
+    </label>
+    <label for="export-description">Description
+      <textarea id="export-description" maxlength="2000" rows="3" placeholder="Optional"></textarea>
+    </label>
+    <label class="check" for="export-auth">
+      <input type="checkbox" id="export-auth">
+      Require sign-in to download
+    </label>
+    <p class="sub">Off by default. Anyone with the link can download until you turn this on.</p>
+    <div class="share-row" id="export-share-row" hidden>
+      <input id="export-share-url" readonly aria-label="Download page link">
+      <button type="button" id="export-share-copy">Share</button>
+    </div>
+    <div class="bar dialog-actions">
+      <button type="button" id="export-cancel">Close</button>
+      <button type="submit" class="primary" id="export-submit">Export</button>
+      <span class="ok-msg" id="export-dialog-msg"></span>
+    </div>
+  </form>
+</dialog>
 <script src="/assets/nexrec-cc.js"></script>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
@@ -114,6 +133,9 @@
   var tlRows = 1, tlLanes = 0, tlSig = "";
   var ccBox = null, ccCues = [], ccWindow0 = 0, ccWindow1 = 0, ccInput = "", ccFetch = 0;
   var asrunKey = "", asrunRows = [], asrunToken = 0;
+  var jobsCache = [];
+  var exportJobId = "";
+  var exportToken = "";
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -821,6 +843,7 @@
     return job.status || "";
   }
   function paintJobs(jobs) {
+    jobsCache = jobs || [];
     var tb = document.getElementById("jobs");
     var me = (NexRecAuth.currentUser && NexRecAuth.currentUser()) || {};
     var can = me.role === "admin" || me.role === "operator";
@@ -835,6 +858,9 @@
         ? NexRecUI.formatEta(NexRecUI.exportQueueEta(jobs, j, now)) : "—";
       var bits = [];
       if (j.status === "done") bits.push('<a href="/api/exports/' + encodeURIComponent(j.id) + '/file">download</a>');
+      if (j.share_token) {
+        bits.push('<button type="button" data-act="export_share" data-id="' + esc(j.id) + '">Share</button>');
+      }
       if (can && (j.status === "queued" || j.status === "running") && Number(j.cancel_requested) !== 1) {
         bits.push('<button type="button" data-act="export_cancel" data-id="' + esc(j.id) + '">Cancel</button>');
       }
@@ -845,9 +871,10 @@
         bits.push('<button type="button" data-act="export_remove" data-id="' + esc(j.id) + '">Remove</button>');
       }
       var who = j.created_by ? '<div class="sub">' + esc(j.created_by) + "</div>" : "";
+      var titled = j.title ? '<div class="sub">' + esc(j.title) + "</div>" : "";
       var err = j.status === "error" && j.error ? '<div class="sub">' + esc(j.error) + "</div>" : "";
       return '<tr id="job-' + esc(j.id) + '"' + (j.id === focus ? ' class="job-focus"' : "") + ">" +
-        "<td>" + esc(j.id) + who + "</td>" +
+        "<td>" + esc(j.id) + titled + who + "</td>" +
         "<td>" + esc(station(j.t_in) + " → " + station(j.t_out)) + "</td>" +
         "<td>" + esc(inputLabel(j)) + "</td>" +
         "<td>" + esc(j.quality || "") + "</td>" +
@@ -868,6 +895,14 @@
     if (!btn) return;
     var act = btn.getAttribute("data-act");
     var id = btn.getAttribute("data-id");
+    if (act === "export_share") {
+      var found = null;
+      for (var i = 0; i < jobsCache.length; i++) {
+        if (jobsCache[i].id === id) found = jobsCache[i];
+      }
+      if (found) openExportDialog(found);
+      return;
+    }
     if (act === "export_remove" && !window.confirm("Remove this export?")) return;
     NexRecAuth.recApi(act, { id: id }).then(function () {
       return NexRecAuth.refreshExports();
@@ -970,6 +1005,7 @@
     return false;
   }
   function onTransportKey(ev) {
+    if (document.querySelector("dialog[open]")) return;
     if (ev.metaKey || ev.ctrlKey || ev.altKey) return;
     if (typingTarget(ev.target)) return;
     var key = ev.key;
@@ -1141,56 +1177,258 @@
   document.getElementById("copy-link").onclick = copyViewLink;
   document.getElementById("mark-in").onclick = markInAtPlay;
   document.getElementById("mark-out").onclick = markOutAtPlay;
-  document.getElementById("do-export").onclick = function () {
-    var msg = document.getElementById("msg");
-    msg.textContent = "";
-    if (markIn == null || markOut == null || markOut <= markIn) {
-      msg.textContent = "mark I before O"; msg.style.color = "var(--bad)"; return;
-    }
-    var visible = NexRecUI.paneInputs(inputs, visibleIds(), n).filter(Boolean);
-    var scope = document.getElementById("scope").value;
+
+  function visibleStreams() {
+    var rows = [];
+    var seen = {};
+    NexRecUI.paneInputs(inputs, visibleIds(), n).forEach(function (inp, slot) {
+      if (!inp || seen[inp.id]) return;
+      seen[inp.id] = true;
+      rows.push({ inp: inp, slot: slot });
+    });
+    return rows;
+  }
+
+  function scopeMode() {
+    var picked = document.querySelector('input[name="export-scope"]:checked');
+    return picked ? picked.value : "one";
+  }
+
+  function setScopeMode(mode) {
+    document.querySelectorAll('input[name="export-scope"]').forEach(function (el) {
+      el.checked = el.value === mode;
+    });
+  }
+
+  function chosenStreamIds() {
+    var ids = [];
+    document.querySelectorAll("#export-picks input[type=checkbox]:checked").forEach(function (el) {
+      ids.push(el.value);
+    });
+    return ids;
+  }
+
+  function paintStreamPicks() {
+    var box = document.getElementById("export-picks");
+    var mode = scopeMode();
+    var streams = visibleStreams();
     var one = selectedInput();
-    var ids = scope === "all" ? visible.map(function (x) { return x.id; }) : (one ? [one.id] : []);
-    if (!ids.length) { msg.textContent = "no inputs"; return; }
+    var selectedId = one ? String(one.id) : "";
+    var prev = {};
+    box.querySelectorAll("input[type=checkbox]").forEach(function (el) {
+      prev[el.value] = el.checked;
+    });
+    var keep = mode === "pick" && Object.keys(prev).length > 0;
+    box.innerHTML = "";
+    if (!streams.length) {
+      box.textContent = "No streams in this layout.";
+      return;
+    }
+    streams.forEach(function (row) {
+      var id = String(row.inp.id);
+      var label = document.createElement("label");
+      label.className = "check";
+      var boxIn = document.createElement("input");
+      boxIn.type = "checkbox";
+      boxIn.value = id;
+      if (mode === "all") boxIn.checked = true;
+      else if (mode === "one") boxIn.checked = id === selectedId;
+      else boxIn.checked = keep ? !!prev[id] : id === selectedId;
+      boxIn.disabled = mode !== "pick";
+      var swatch = document.createElement("span");
+      swatch.className = "swatch";
+      swatch.style.background = NexRecUI.laneColor(row.slot);
+      var name = document.createElement("span");
+      name.textContent = row.inp.name || id;
+      label.appendChild(boxIn);
+      label.appendChild(swatch);
+      label.appendChild(name);
+      box.appendChild(label);
+    });
+  }
+
+  function shareUrl(token) {
+    return location.origin + "/s/" + token;
+  }
+
+  function canEditExport() {
+    var me = (NexRecAuth.currentUser && NexRecAuth.currentUser()) || {};
+    return me.role === "admin" || me.role === "operator";
+  }
+
+  function dialogMsg(text, bad) {
+    var msg = document.getElementById("export-dialog-msg");
+    msg.style.color = bad ? "var(--bad)" : "var(--ok)";
+    msg.textContent = text || "";
+  }
+
+  function showShareLink(token) {
+    exportToken = token || "";
+    var row = document.getElementById("export-share-row");
+    var input = document.getElementById("export-share-url");
+    if (!exportToken) {
+      row.hidden = true;
+      input.value = "";
+      return;
+    }
+    row.hidden = false;
+    input.value = shareUrl(exportToken);
+  }
+
+  function jobInputIds(job) {
+    var ids = job.input_ids;
+    if (typeof ids === "string") {
+      try { ids = JSON.parse(ids); } catch (e) { ids = [ids]; }
+    }
+    return ids || [];
+  }
+
+  function openExportDialog(job) {
+    var dialog = document.getElementById("export-dialog");
+    var editing = !!(job && job.id);
+    exportJobId = editing ? job.id : "";
+    document.getElementById("export-dialog-title").textContent = editing ? "Share export" : "Export trim";
+    document.getElementById("export-create-fields").hidden = editing;
+    document.getElementById("export-locked").hidden = !editing;
+    document.getElementById("export-submit").textContent = editing ? "Save" : "Export";
+    document.getElementById("export-submit").hidden = editing && !canEditExport();
+    document.getElementById("export-title").disabled = editing && !canEditExport();
+    document.getElementById("export-description").disabled = editing && !canEditExport();
+    document.getElementById("export-auth").disabled = editing && !canEditExport();
+    dialogMsg("");
+    if (editing) {
+      document.getElementById("export-title").value = job.title || "";
+      document.getElementById("export-description").value = job.description || "";
+      document.getElementById("export-auth").checked = Number(job.auth_required) === 1;
+      document.getElementById("export-locked").textContent =
+        station(Date.parse(job.t_in)) + " → " + station(Date.parse(job.t_out)) +
+        " · " + (jobInputIds(job).map(inputName).join(", ") || "no inputs") +
+        " · " + (job.quality || "full");
+      showShareLink(job.share_token || "");
+      document.getElementById("export-window").textContent = "Send this page to anyone who should download the file.";
+    } else {
+      document.getElementById("export-window").textContent =
+        "I " + station(markIn) + " → O " + station(markOut);
+      document.getElementById("export-title").value = "";
+      document.getElementById("export-description").value = "";
+      document.getElementById("export-auth").checked = false;
+      document.getElementById("export-quality").value = "full";
+      setScopeMode("one");
+      paintStreamPicks();
+      showShareLink("");
+    }
+    if (!dialog.open) dialog.showModal();
+  }
+
+  function exportFieldPayload() {
+    return {
+      title: document.getElementById("export-title").value,
+      description: document.getElementById("export-description").value,
+      auth_required: document.getElementById("export-auth").checked
+    };
+  }
+
+  function saveShareFields() {
+    return NexRecAuth.recApi("export_share_update", Object.assign({ id: exportJobId }, exportFieldPayload()))
+      .then(function (d) {
+        if (d.share_token) showShareLink(d.share_token);
+        dialogMsg("Saved.");
+        return NexRecAuth.refreshExports();
+      });
+  }
+
+  document.querySelectorAll('input[name="export-scope"]').forEach(function (el) {
+    el.addEventListener("change", paintStreamPicks);
+  });
+  document.getElementById("export-cancel").onclick = function () {
+    document.getElementById("export-dialog").close();
+  };
+  document.getElementById("export-share-copy").onclick = function () {
+    var go = function () {
+      var url = document.getElementById("export-share-url").value;
+      if (!url) return;
+      writeClipboard(url).then(function () {
+        dialogMsg("Link copied.");
+      }).catch(function () {
+        dialogMsg(url);
+      });
+    };
+    if (exportJobId && canEditExport()) {
+      saveShareFields().then(go).catch(function (e) {
+        dialogMsg(e.message, true);
+      });
+      return;
+    }
+    go();
+  };
+  document.getElementById("export-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var submit = document.getElementById("export-submit");
+    if (submit.hidden) return;
+    dialogMsg("");
+    if (exportJobId) {
+      submit.disabled = true;
+      saveShareFields().then(function () {
+        submit.disabled = false;
+      }).catch(function (e) {
+        submit.disabled = false;
+        dialogMsg(e.message, true);
+      });
+      return;
+    }
+    var mode = scopeMode();
+    var ids = chosenStreamIds();
+    if (mode !== "pick") {
+      ids = [];
+      document.querySelectorAll("#export-picks input[type=checkbox]").forEach(function (el) {
+        if (el.checked) ids.push(el.value);
+      });
+    }
+    if (!ids.length) {
+      dialogMsg("Choose at least one stream.", true);
+      return;
+    }
+    submit.disabled = true;
+    var fields = exportFieldPayload();
     NexRecAuth.recApi("export_create", {
       input_ids: ids,
       t_in: iso(markIn),
       t_out: iso(markOut),
-      quality: document.getElementById("quality").value,
-      scope: scope,
+      quality: document.getElementById("export-quality").value,
+      scope: mode,
+      title: fields.title,
+      description: fields.description,
+      auth_required: fields.auth_required
     }).then(function (d) {
-      msg.style.color = "var(--ok)";
-      msg.textContent = "Export received.";
+      exportJobId = d.export_id || "";
+      document.getElementById("export-dialog-title").textContent = "Share export";
+      document.getElementById("export-create-fields").hidden = true;
+      document.getElementById("export-submit").textContent = "Save";
+      document.getElementById("export-window").textContent = "Export received. Copy the link to send the download page.";
+      showShareLink(d.share_token || "");
+      dialogMsg("Export received.");
+      var bar = document.getElementById("msg");
+      bar.style.color = "var(--ok)";
+      bar.textContent = "Export received.";
       if (NexRecAuth.noteExportReceived) NexRecAuth.noteExportReceived(d.export_id);
       return NexRecAuth.refreshExports();
-    }).then(function (d) { paintJobs((d && d.exports) || []); })
-      .catch(function (e) { msg.style.color = "var(--bad)"; msg.textContent = e.message; });
-  };
-  document.getElementById("measure-lkfs").onclick = function () {
-    var msg = document.getElementById("lkfs-msg");
+    }).then(function (d) {
+      submit.disabled = false;
+      if (d && d.exports) paintJobs(d.exports);
+    }).catch(function (e) {
+      submit.disabled = false;
+      dialogMsg(e.message, true);
+    });
+  });
+  document.getElementById("do-export").onclick = function () {
+    var msg = document.getElementById("msg");
+    msg.textContent = "";
     if (markIn == null || markOut == null || markOut <= markIn) {
       msg.textContent = "mark I before O";
+      msg.style.color = "var(--bad)";
       return;
     }
-    var one = selectedInput();
-    var iid = one && one.id;
-    if (!iid) { msg.textContent = "no input"; return; }
-    var tin = iso(markIn), tout = iso(markOut);
-    NexRecAuth.recApi("loudness_enqueue", { input_id: iid, t_in: tin, t_out: tout }).then(function (d) {
-      msg.textContent = "queued " + d.job_id + " — python3 worker/nexrec-analyze.py --once";
-      return NexRecAuth.recApi("loudness_chart", { input_id: iid, t_in: tin, t_out: tout });
-    }).then(function (d) {
-      var pts = (d.samples || []).map(function (s, i, arr) {
-        var x = arr.length > 1 ? (i / (arr.length - 1)) * 1000 : 0;
-        var y = 75 - ((Number(s.lkfs) + 24) / 16) * 50;
-        if (y < 4) y = 4; if (y > 146) y = 146;
-        return x.toFixed(1) + "," + y.toFixed(1);
-      });
-      document.getElementById("lkfs-line").setAttribute("points", pts.join(" "));
-      if (!(d.samples || []).length) {
-        msg.textContent = (msg.textContent || "") + " · no samples yet (run analyze worker)";
-      }
-    }).catch(function (e) { msg.textContent = e.message; });
+    openExportDialog(null);
   };
 })();
 </script>

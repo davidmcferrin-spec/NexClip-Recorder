@@ -39,12 +39,12 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Chunk index in local PostgreSQL
 - Export job: concat overlapping chunks + trim in/out → one Premiere/FCPX-friendly MP4
 - Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player; confidence WFM / vectorscope / VU / 64-band RTA on the selected pane, default off)
-- Export editor: shared timeline, mark in/out, one-stream vs all-visible, full vs proxy
+- Export editor: shared timeline, mark in/out, trim dialog (this stream, all visible, or chosen streams), full vs proxy, title, description, and a shareable download page
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
 - `setup.sh` builds pinned **FFmpeg 9.0.2** into `/usr/local` and installs pinned **MediaMTX v1.21.1** plus `mediamtx.service` (not distro `ffmpeg` for DeckLink)
 - DeckLink SDI capture with an in-process preview tee, when `setup.sh` finds SDK headers (`--enable-decklink` + `nexrec-decklink-status`)
-- Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen presence log, live analyzer panes) + FTS caption search + export LKFS chart (see `docs/FEATURES.md`)
+- Per-input **monitoring/intelligence flags** (SCTE, freeze/black/bars, CC 608/708, ASR, Nielsen presence log, live analyzer panes) + FTS caption search (see `docs/FEATURES.md`)
 - `make test` and `make demo`
 
 ### Next (called out, not blocking)

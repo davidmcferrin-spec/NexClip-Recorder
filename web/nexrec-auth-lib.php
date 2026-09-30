@@ -341,11 +341,32 @@ function nexrec_ensure_input_feature_columns(): void {
         'progress_at' => 'TEXT',
         'encode_mode' => "TEXT NOT NULL DEFAULT ''",
         'cancel_requested' => 'INTEGER NOT NULL DEFAULT 0',
+        'title' => "TEXT NOT NULL DEFAULT ''",
+        'description' => "TEXT NOT NULL DEFAULT ''",
+        'auth_required' => 'INTEGER NOT NULL DEFAULT 0',
+        'share_token' => 'TEXT',
     ];
     foreach ($exportCols as $name => $decl) {
         if (empty($expHave[$name])) {
             nexrec_db()->exec('ALTER TABLE exports ADD COLUMN ' . $name . ' ' . $decl);
         }
+    }
+    nexrec_db()->exec('CREATE UNIQUE INDEX IF NOT EXISTS idx_exports_share_token ON exports(share_token)');
+    nexrec_backfill_share_tokens();
+}
+
+function nexrec_backfill_share_tokens(): void {
+    $res = nexrec_db()->query('SELECT id FROM exports WHERE share_token IS NULL');
+    if ($res === false) {
+        return;
+    }
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $st = nexrec_db()->prepare(
+            'UPDATE exports SET share_token = :t WHERE id = :id AND share_token IS NULL'
+        );
+        $st->bindValue(':t', bin2hex(random_bytes(16)), SQLITE3_TEXT);
+        $st->bindValue(':id', (string) $row['id'], SQLITE3_TEXT);
+        $st->execute();
     }
 }
 

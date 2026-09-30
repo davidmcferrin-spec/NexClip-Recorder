@@ -115,6 +115,21 @@ function nexrec_web_serve_page(string $file): void {
     exit;
 }
 
+function nexrec_web_share_token(string $path): ?string {
+    if (preg_match('#^/s/([a-f0-9]{32})$#', $path, $m) === 1) {
+        return $m[1];
+    }
+    return null;
+}
+
+/** @return array{token:string,input_id:string}|null */
+function nexrec_web_share_file(string $path): ?array {
+    if (preg_match('#^/api/share/([a-f0-9]{32})/([A-Za-z0-9][A-Za-z0-9-]{0,31})$#', $path, $m) !== 1) {
+        return null;
+    }
+    return ['token' => $m[1], 'input_id' => $m[2]];
+}
+
 function nexrec_web_dispatch(): void {
     $path = nexrec_web_request_path();
     if (str_starts_with($path, '/assets/')) {
@@ -127,6 +142,18 @@ function nexrec_web_dispatch(): void {
     if (isset($apis[$path])) {
         $full = nexrec_app_root() . '/' . $apis[$path];
         require $full;
+        exit;
+    }
+    $shareToken = nexrec_web_share_token($path);
+    if ($shareToken !== null) {
+        nexrec_web_serve_page('share.html');
+    }
+    $shareFile = nexrec_web_share_file($path);
+    if ($shareFile !== null) {
+        $_GET['action'] = 'share_file';
+        $_GET['token'] = $shareFile['token'];
+        $_GET['input_id'] = $shareFile['input_id'];
+        require nexrec_app_root() . '/nexrec-api.php';
         exit;
     }
     if (preg_match('#^/api/exports/([A-Za-z0-9_]+)/file$#', $path, $m)) {

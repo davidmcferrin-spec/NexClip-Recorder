@@ -100,7 +100,11 @@ CREATE TABLE IF NOT EXISTS exports (
   progress_pct DOUBLE PRECISION,
   progress_at TEXT,
   encode_mode TEXT NOT NULL DEFAULT '',
-  cancel_requested INTEGER NOT NULL DEFAULT 0
+  cancel_requested INTEGER NOT NULL DEFAULT 0,
+  title TEXT NOT NULL DEFAULT '',
+  description TEXT NOT NULL DEFAULT '',
+  auth_required INTEGER NOT NULL DEFAULT 0,
+  share_token TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status);

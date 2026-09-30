@@ -16,7 +16,7 @@ Canonical host sizing remains README **Hardware recommendations**.
 | Transcription + diarization | `FEAT_TRANSCRIBE` | Off unless `NEXREC_TRANSCRIBE_ENGINE` + `NEXREC_TRANSCRIBE_CMD`. Pluggable JSON ingest | whisper.cpp / faster-whisper + diarization on GPU |
 | Nielsen watermark presence | `FEAT_NIELSEN` | Best-effort **presence** log (appears present or absent) on the chunk timeline. **Not** audit-grade decode. No SID, watermark time, or layer | Swap the stub (`NEXREC_NIELSEN_PRESENCE_CMD` or `NielsenPresenceDetector`). Decoder SDK is **not** integrated |
 | Live monitors | `FEAT_MONITORS` | Confidence WFM, vectorscope, VU, and 64-band RTA on the **selected** Live pane, from the decoded WHEP `<video>` (default off, per-browser `nexrec-*` prefs). Preview is stereo Opus, so VU/RTA meter that listen pair | 64-channel SDI/AES embed metering; DeckLink SDK / Blackmagic scopes |
-| CALM / LKFS | (export editor) | Line chart + ebur128 job on marked I/O. ITU-R BS.1770 / ATSC A/85 **−24 LKFS** | Faster framed logs, true-peak alerts |
+| CALM / LKFS | (hidden) | ebur128 job API remains (`loudness_enqueue` / `loudness_chart`). The export chart is hidden until measurement is reliable. ITU-R BS.1770 / ATSC A/85 **−24 LKFS** | Chart on the export editor, true-peak alerts |
 
 Duration thresholds (seconds, per input):
 
@@ -55,7 +55,7 @@ record@input  →  DeckLink tee of the same proxy                 (exclusive-ope
                  VU + 64-band RTA    one Web Audio graph on that MediaStream
                  (not burned into record_argv / the mezzanine)
 
-export editor →  mark I/O → loudness_enqueue → ebur128 on concat+trim window
+export editor →  mark I/O → loudness_enqueue still exists, chart hidden
                  (CALM / LKFS — separate from the live VU)
 ```
 

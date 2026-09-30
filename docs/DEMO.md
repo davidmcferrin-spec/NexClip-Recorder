@@ -23,8 +23,9 @@ Login `admin` / `password`. Pages: Live, Export, Inputs, Settings, Users.
 Live confidence monitors (WFM, vectorscope, VU, 64-band RTA) sit on the
 **selected** pane and read the decoded WHEP preview. Toggles in the Live bar
 default **off** and are saved per browser (`nexrec-scopes-on`, `nexrec-vu-on`,
-`nexrec-spectrum-on`). They are not burned into the record. Export CALM/LKFS
-is a separate ebur128 job (`nexrec-analyze.py`). Inputs has per-input
+`nexrec-spectrum-on`). They are not burned into the record. CALM/LKFS
+measurement stays off the export page until the chart is ready. The
+ebur128 worker is still there (`nexrec-analyze.py`). Inputs has per-input
 intelligence toggles, a NexClip Mode 2 slot (1–8), and full-text search.
 
 Without MediaMTX, panes stay on the labeled placeholder (the WHEP path is
@@ -42,7 +43,7 @@ until a frame arrives, and the VU reads “waiting” until preview audio does.
 5. Click a strip to pop it, drag the popped panel, press Esc to dock.
    Reload: the toggles and pop/position stick (`localStorage`, `nexrec-` keys).
 6. **Listen** / volume / solo affect this browser only. The `<video>` stays
-   muted. This is not the export LKFS chart.
+   muted. This is not a CALM / LKFS measurement.
 Export editor scrubs indexed chunks (run `make demo` first). **Play** rolls the selected pane
 with audio so an in/out can be found by ear. The other panes stay muted and
 follow the same clock. Volume is this browser only (`nexrec-export-volume`).

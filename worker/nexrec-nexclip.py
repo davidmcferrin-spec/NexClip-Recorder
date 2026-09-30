@@ -320,6 +320,7 @@ def enqueue_from_request(conn, env: dict, inp: dict, req: dict, capture_id: str)
             "expires_at": iso_z(utcnow() + timedelta(days=days)),
             "nexclip_schedule_id": rid,
             "nexclip_capture_id": capture_id,
+            "title": str(req.get("title") or ""),
         },
     )
     conn.execute(

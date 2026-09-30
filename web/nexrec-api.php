@@ -292,6 +292,154 @@ function nexrec_float_body(array $body, string $key, float $default): float {
     return (float) $body[$key];
 }
 
+function nexrec_share_plain(string $value, int $max): string {
+    $value = str_replace(["\r\n", "\r"], "\n", $value);
+    $value = preg_replace('/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/', '', $value) ?? '';
+    if (function_exists('mb_substr')) {
+        return mb_substr($value, 0, $max);
+    }
+    return substr($value, 0, $max);
+}
+
+function nexrec_share_title(string $value): string {
+    $value = preg_replace('/\s+/', ' ', nexrec_share_plain($value, 200)) ?? '';
+    return trim($value);
+}
+
+function nexrec_share_description(string $value): string {
+    return trim(nexrec_share_plain($value, 2000));
+}
+
+/** @return list<string> */
+function nexrec_export_input_ids(array $row): array {
+    $raw = $row['input_ids'] ?? '[]';
+    if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+    } else {
+        $decoded = $raw;
+    }
+    if (!is_array($decoded)) {
+        return [];
+    }
+    $out = [];
+    foreach ($decoded as $id) {
+        if (is_string($id) && $id !== '') {
+            $out[] = $id;
+        }
+    }
+    return $out;
+}
+
+/**
+ * One MP4 per input. Several inputs use {id}_{input}.mp4 beside the stored path.
+ *
+ * @return list<array{input_id:string,path:string}>
+ */
+function nexrec_export_output_files(array $row): array {
+    $id = (string) ($row['id'] ?? '');
+    if (preg_match('/^[A-Za-z0-9_-]+$/', $id) !== 1) {
+        return [];
+    }
+    $ids = nexrec_export_input_ids($row);
+    $dir = nexrec_exports_dir();
+    $stored = (string) ($row['path'] ?? '');
+    if ($stored !== '') {
+        $parent = dirname($stored);
+        if ($parent !== '' && $parent !== '.' ) {
+            $dir = $parent;
+        }
+    }
+    if (count($ids) <= 1) {
+        $path = $stored !== '' ? $stored : ($dir . DIRECTORY_SEPARATOR . $id . '.mp4');
+        return [['input_id' => $ids[0] ?? '', 'path' => $path]];
+    }
+    $out = [];
+    foreach ($ids as $iid) {
+        if (preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/', $iid) !== 1) {
+            continue;
+        }
+        $out[] = [
+            'input_id' => $iid,
+            'path' => $dir . DIRECTORY_SEPARATOR . $id . '_' . $iid . '.mp4',
+        ];
+    }
+    return $out;
+}
+
+function nexrec_export_by_share_token(string $token): ?array {
+    if (preg_match('/^[a-f0-9]{32}$/', $token) !== 1) {
+        return null;
+    }
+    $st = nexrec_db()->prepare('SELECT * FROM exports WHERE share_token = :t');
+    $st->bindValue(':t', $token, SQLITE3_TEXT);
+    return nexrec_row($st->execute());
+}
+
+function nexrec_share_open(array $row): bool {
+    if ((int) ($row['auth_required'] ?? 0) !== 1) {
+        return true;
+    }
+    return nexrec_me_payload() !== null;
+}
+
+/** @return array<string, string> */
+function nexrec_input_name_map(): array {
+    $names = [];
+    $res = nexrec_db()->query('SELECT id, name FROM inputs');
+    if ($res === false) {
+        return $names;
+    }
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $id = (string) $row['id'];
+        $names[$id] = (string) ($row['name'] ?? $id);
+    }
+    return $names;
+}
+
+function nexrec_share_download_name(array $row, string $inputId): string {
+    $title = trim((string) ($row['title'] ?? ''));
+    $base = $title !== '' ? $title : (string) ($row['id'] ?? 'export');
+    $base = preg_replace('/[^A-Za-z0-9._ -]+/', '', $base) ?? '';
+    $base = trim($base);
+    if ($base === '') {
+        $base = 'export';
+    }
+    $suffix = $inputId !== '' ? ('-' . $inputId) : '';
+    return $base . $suffix . '.mp4';
+}
+
+/** @return array<string, mixed> */
+function nexrec_share_payload(array $row): array {
+    $names = nexrec_input_name_map();
+    $token = (string) ($row['share_token'] ?? '');
+    $done = (string) ($row['status'] ?? '') === 'done';
+    $files = [];
+    foreach (nexrec_export_output_files($row) as $file) {
+        $iid = $file['input_id'];
+        $path = $file['path'];
+        $ready = $done && $path !== '' && is_file($path) && nexrec_export_file_allowed($path);
+        $item = [
+            'input_id' => $iid,
+            'name' => $names[$iid] ?? ($iid !== '' ? $iid : 'Export'),
+            'ready' => $ready,
+        ];
+        if ($ready && $token !== '' && $iid !== '') {
+            $item['href'] = '/api/share/' . $token . '/' . rawurlencode($iid);
+        }
+        $files[] = $item;
+    }
+    return [
+        'title' => (string) ($row['title'] ?? ''),
+        'description' => (string) ($row['description'] ?? ''),
+        'status' => (string) ($row['status'] ?? ''),
+        'quality' => (string) ($row['quality'] ?? ''),
+        't_in' => (string) ($row['t_in'] ?? ''),
+        't_out' => (string) ($row['t_out'] ?? ''),
+        'auth_required' => (int) ($row['auth_required'] ?? 0) === 1,
+        'files' => $files,
+    ];
+}
+
 if (PHP_SAPI === 'cli' && getenv('NEXREC_AUTH_HTTP') === false) {
     return;
 }
@@ -584,13 +732,20 @@ try {
             nexrec_api_fail(400, 'quality must be full or proxy');
         }
         $scope = (string) ($body['scope'] ?? 'one');
+        if (!in_array($scope, ['one', 'all', 'pick'], true)) {
+            $scope = 'one';
+        }
         $days = nexrec_setting_int('retention.export_days', 15);
         $expId = nexrec_new_id('exp');
+        $token = bin2hex(random_bytes(16));
+        $title = nexrec_share_title((string) ($body['title'] ?? ''));
+        $description = nexrec_share_description((string) ($body['description'] ?? ''));
+        $authRequired = nexrec_flag($body, 'auth_required', 0);
         $protected = !empty($body['protected']) ? 1 : 0;
         $expires = $protected ? null : gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400);
         $st = nexrec_db()->prepare(
-            "INSERT INTO exports (id,status,input_ids,t_in,t_out,quality,scope,path,size_bytes,protected,error,created_by,created_at,expires_at,nexclip_schedule_id)
-             VALUES (:id,'queued',:ids,:tin,:tout,:q,:sc,NULL,NULL,:p,NULL,:by,:c,:e,NULL)"
+            "INSERT INTO exports (id,status,input_ids,t_in,t_out,quality,scope,path,size_bytes,protected,error,created_by,created_at,expires_at,nexclip_schedule_id,title,description,auth_required,share_token)
+             VALUES (:id,'queued',:ids,:tin,:tout,:q,:sc,NULL,NULL,:p,NULL,:by,:c,:e,NULL,:title,:descr,:auth,:token)"
         );
         $st->bindValue(':id', $expId, SQLITE3_TEXT);
         $st->bindValue(':ids', json_encode(array_values($ids)), SQLITE3_TEXT);
@@ -602,8 +757,67 @@ try {
         $st->bindValue(':by', $me['username'], SQLITE3_TEXT);
         $st->bindValue(':c', nexrec_now_iso(), SQLITE3_TEXT);
         $st->bindValue(':e', $expires, SQLITE3_TEXT);
+        $st->bindValue(':title', $title, SQLITE3_TEXT);
+        $st->bindValue(':descr', $description, SQLITE3_TEXT);
+        $st->bindValue(':auth', $authRequired, SQLITE3_INTEGER);
+        $st->bindValue(':token', $token, SQLITE3_TEXT);
         $st->execute();
-        nexrec_api_ok(['export_id' => $expId]);
+        nexrec_api_ok(['export_id' => $expId, 'share_token' => $token]);
+    }
+
+    if ($action === 'export_share_update') {
+        nexrec_require_roles(['admin', 'operator']);
+        $id = (string) ($body['id'] ?? '');
+        $st = nexrec_db()->prepare('SELECT id, share_token FROM exports WHERE id=:id');
+        $st->bindValue(':id', $id, SQLITE3_TEXT);
+        $row = nexrec_row($st->execute());
+        if ($row === null) {
+            nexrec_api_fail(404, 'not found');
+        }
+        $title = nexrec_share_title((string) ($body['title'] ?? ''));
+        $description = nexrec_share_description((string) ($body['description'] ?? ''));
+        $authRequired = nexrec_flag($body, 'auth_required', 0);
+        $token = (string) ($row['share_token'] ?? '');
+        if (preg_match('/^[a-f0-9]{32}$/', $token) !== 1) {
+            $token = bin2hex(random_bytes(16));
+        }
+        $up = nexrec_db()->prepare(
+            'UPDATE exports SET title=:title, description=:descr, auth_required=:auth, share_token=:token WHERE id=:id'
+        );
+        $up->bindValue(':title', $title, SQLITE3_TEXT);
+        $up->bindValue(':descr', $description, SQLITE3_TEXT);
+        $up->bindValue(':auth', $authRequired, SQLITE3_INTEGER);
+        $up->bindValue(':token', $token, SQLITE3_TEXT);
+        $up->bindValue(':id', $id, SQLITE3_TEXT);
+        $up->execute();
+        nexrec_api_ok(['id' => $id, 'share_token' => $token]);
+    }
+
+    if ($action === 'share_get' || $action === 'share_file') {
+        $token = (string) ($_GET['token'] ?? $body['token'] ?? '');
+        $row = nexrec_export_by_share_token($token);
+        if ($row === null) {
+            nexrec_api_fail(404, 'not found');
+        }
+        if (!nexrec_share_open($row)) {
+            nexrec_api_fail(401, 'unauthorized');
+        }
+        if ($action === 'share_get') {
+            nexrec_api_ok(['share' => nexrec_share_payload($row)]);
+        }
+        $want = (string) ($_GET['input_id'] ?? $body['input_id'] ?? '');
+        $match = null;
+        foreach (nexrec_export_output_files($row) as $file) {
+            if ($file['input_id'] === $want) {
+                $match = $file;
+                break;
+            }
+        }
+        $path = (string) ($match['path'] ?? '');
+        if ((string) ($row['status'] ?? '') !== 'done' || $match === null || !is_file($path) || !nexrec_export_file_allowed($path)) {
+            nexrec_api_fail(404, 'not found');
+        }
+        nexrec_send_media_file($path, 'video/mp4', nexrec_share_download_name($row, $want), 'private, no-store');
     }
 
     if ($action === 'export_protect') {

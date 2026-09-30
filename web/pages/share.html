@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Download</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+<main class="share-page">
+  <div class="panel">
+    <h1 id="share-title">Download</h1>
+    <p id="share-desc" hidden></p>
+    <p class="meta" id="share-meta"></p>
+    <p id="share-status"></p>
+    <div class="share-files" id="share-files"></div>
+  </div>
+</main>
+<script>
+(function () {
+  var token = (location.pathname.match(/\/s\/([a-f0-9]{32})$/) || [])[1] || "";
+  var titleEl = document.getElementById("share-title");
+  var descEl = document.getElementById("share-desc");
+  var metaEl = document.getElementById("share-meta");
+  var statusEl = document.getElementById("share-status");
+  var filesEl = document.getElementById("share-files");
+
+  function fail(text) {
+    titleEl.textContent = "Download";
+    statusEl.textContent = text;
+  }
+
+  if (!token) {
+    fail("This link is not valid.");
+    return;
+  }
+
+  fetch("/api/recorder?action=share_get&token=" + encodeURIComponent(token), {
+    credentials: "same-origin",
+    cache: "no-store"
+  }).then(function (res) {
+    return res.json().then(function (data) {
+      return { res: res, data: data };
+    });
+  }).then(function (pack) {
+    if (pack.res.status === 401) {
+      location.href = "/login?next=" + encodeURIComponent(location.pathname);
+      return;
+    }
+    if (!pack.res.ok || !pack.data || pack.data.ok === false || !pack.data.share) {
+      fail("This link is not valid.");
+      return;
+    }
+    var share = pack.data.share;
+    titleEl.textContent = share.title || "Download";
+    document.title = (share.title || "Download") + " — NexCLIP Recorder";
+    if (share.description) {
+      descEl.hidden = false;
+      descEl.textContent = share.description;
+      descEl.style.whiteSpace = "pre-wrap";
+    }
+    var quality = share.quality === "proxy" ? "Proxy" : "Full";
+    var when = "";
+    if (window.NexRecUI && share.t_in && share.t_out) {
+      when = NexRecUI.formatStation(share.t_in, true) + " → " + NexRecUI.formatStation(share.t_out, true) + " · ";
+    }
+    metaEl.textContent = when + quality;
+    var status = share.status || "";
+    if (status === "done") statusEl.textContent = "";
+    else if (status === "error") statusEl.textContent = "This export did not finish.";
+    else if (status === "cancelled") statusEl.textContent = "This export was cancelled.";
+    else statusEl.textContent = "Preparing the download.";
+    filesEl.innerHTML = "";
+    (share.files || []).forEach(function (file) {
+      if (!file.ready || !file.href) return;
+      var link = document.createElement("a");
+      link.className = "primary";
+      link.href = file.href;
+      link.textContent = "Download " + (file.name || "file");
+      filesEl.appendChild(link);
+    });
+    if (status === "done" && !filesEl.children.length) {
+      statusEl.textContent = "The file is not available.";
+    }
+  }).catch(function () {
+    fail("This link is not valid.");
+  });
+})();
+</script>
+</body>
+</html>

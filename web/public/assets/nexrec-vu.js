@@ -13,8 +13,8 @@
  * Web Audio master gain only. Analysers hang off a silent bus into the
  * destination so the meters keep moving while that gain is 0. The audio
  * clock starts when a preview with audio is attached and on any click or
- * key on the page, including while Listen is off. Not CALM / LKFS — that
- * stays on the export editor.
+ * key on the page, including while Listen is off. Not CALM / LKFS. That
+ * measurement stays off the export page until the chart is ready.
  *
  * Per-browser prefs (VU default off, listen default muted):
  *   nexrec-vu-on          1 | 0

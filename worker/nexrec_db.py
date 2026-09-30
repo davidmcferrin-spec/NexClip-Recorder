@@ -15,6 +15,7 @@ import hashlib
 import json
 import os
 import re
+import secrets
 from typing import Any, Iterable
 
 import psycopg2
@@ -294,9 +295,22 @@ def ensure_input_feature_columns(conn: PgConn) -> None:
         ("progress_at", "TEXT"),
         ("encode_mode", "TEXT NOT NULL DEFAULT ''"),
         ("cancel_requested", "INTEGER NOT NULL DEFAULT 0"),
+        ("title", "TEXT NOT NULL DEFAULT ''"),
+        ("description", "TEXT NOT NULL DEFAULT ''"),
+        ("auth_required", "INTEGER NOT NULL DEFAULT 0"),
+        ("share_token", "TEXT"),
     ):
         if name not in exp_cols:
             conn.execute(f"ALTER TABLE exports ADD COLUMN {name} {decl}")
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_exports_share_token ON exports(share_token)"
+    )
+    missing = fetchall(conn, "SELECT id FROM exports WHERE share_token IS NULL")
+    for row in missing:
+        conn.execute(
+            "UPDATE exports SET share_token=? WHERE id=? AND share_token IS NULL",
+            (secrets.token_hex(16), row["id"]),
+        )
 
 
 def ensure_fts(conn: PgConn) -> bool:
@@ -460,16 +474,21 @@ def enqueue_export(conn: PgConn, rec: dict[str, Any]) -> None:
     rec = dict(rec)
     rec.setdefault("nexclip_schedule_id", None)
     rec.setdefault("nexclip_capture_id", None)
+    rec.setdefault("title", "")
+    rec.setdefault("description", "")
+    rec.setdefault("auth_required", 0)
+    if not rec.get("share_token"):
+        rec["share_token"] = secrets.token_hex(16)
     conn.execute(
         """
         INSERT INTO exports (
           id, status, input_ids, t_in, t_out, quality, scope, path, size_bytes,
           protected, error, created_by, created_at, expires_at, nexclip_schedule_id,
-          nexclip_capture_id
+          nexclip_capture_id, title, description, auth_required, share_token
         ) VALUES (
           :id, :status, :input_ids, :t_in, :t_out, :quality, :scope, :path, :size_bytes,
           :protected, :error, :created_by, :created_at, :expires_at, :nexclip_schedule_id,
-          :nexclip_capture_id
+          :nexclip_capture_id, :title, :description, :auth_required, :share_token
         )
         """,
         rec,

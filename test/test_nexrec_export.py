@@ -13,7 +13,7 @@ from datetime import timedelta
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(os.path.dirname(HERE), "worker"))
 
-from nexrec_db import chunks_overlapping, connect, insert_chunk, migrate, upsert_input  # noqa: E402
+from nexrec_db import chunks_overlapping, connect, enqueue_export, fetchone, insert_chunk, migrate, upsert_input  # noqa: E402
 from nexrec_util import iso_z, utcnow  # noqa: E402
 
 spec = importlib.util.spec_from_file_location(
@@ -97,6 +97,43 @@ class TestExport(unittest.TestCase):
         text = open(tmp.name, encoding="utf-8").read()
         os.unlink(tmp.name)
         self.assertIn("file '", text)
+
+    def test_enqueue_share_is_public_by_default(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        conn = connect(os.path.join(tmp.name, "nexrec.db"))
+        self.addCleanup(conn.close)
+        migrate(conn)
+        now = iso_z()
+        enqueue_export(
+            conn,
+            {
+                "id": "exp_share",
+                "status": "queued",
+                "input_ids": '["a"]',
+                "t_in": now,
+                "t_out": now,
+                "quality": "full",
+                "scope": "one",
+                "path": None,
+                "size_bytes": None,
+                "protected": 0,
+                "error": None,
+                "created_by": "t",
+                "created_at": now,
+                "expires_at": None,
+                "nexclip_schedule_id": None,
+            },
+        )
+        row = fetchone(
+            conn,
+            "SELECT title, auth_required, share_token FROM exports WHERE id=?",
+            ("exp_share",),
+        )
+        self.assertIsNotNone(row)
+        self.assertEqual(row["title"], "")
+        self.assertEqual(int(row["auth_required"]), 0)
+        self.assertRegex(str(row["share_token"]), r"^[a-f0-9]{32}$")
 
 
 if __name__ == "__main__":
