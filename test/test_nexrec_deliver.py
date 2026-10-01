@@ -77,6 +77,25 @@ class TestRemote(unittest.TestCase):
         self.assertIn("--ignore-times", argv)
         self.assertNotIn("hunter2", " ".join(argv))
 
+    def test_ftp_config_can_require_tls(self):
+        dest = {
+            "protocol": "ftp",
+            "host": "ftp.example",
+            "username": "drop",
+            "port": 21,
+            "extra": json.dumps({"explicit_tls": 1}),
+        }
+        text = config_text(dest, "OBSCURED-TOKEN")
+        self.assertIn("type = ftp", text)
+        self.assertIn("explicit_tls = true", text)
+        self.assertNotIn("hunter2", text)
+        remote, shown = remote_target(
+            {"protocol": "ftp", "host": "ftp.example", "remote_prefix": "in", "extra": "{}"},
+            "exp_abc",
+        )
+        self.assertEqual(remote, "dest:in/exp_abc")
+        self.assertEqual(shown, "ftp://ftp.example/in/exp_abc/")
+
     def test_multi_file_names_follow_the_export_id(self):
         job = {
             "id": "exp_abc",

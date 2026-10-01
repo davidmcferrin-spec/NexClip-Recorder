@@ -31,7 +31,7 @@
     <span class="ok-msg" id="msg"></span>
   </div>
   <div class="panel">
-    <p class="sub">A copy is queued only after that export finishes. The deliver service runs one at a time and replaces the same remote files when the export is retried. Waiting rows are held until then.</p>
+    <p class="sub">A copy is queued only after that export finishes. The deliver service runs one at a time and replaces the same remote files when the export is retried. Waiting rows are held until then. FTP can require explicit TLS. Plain FTP does not.</p>
     <table>
       <thead>
         <tr><th>Export</th><th>Destination</th><th>Remote</th><th>Status</th><th></th><th></th></tr>
@@ -44,7 +44,7 @@
       <h2 style="margin:0">Destinations</h2>
       <button type="button" class="primary" id="dest-new">New destination</button>
     </div>
-    <p class="sub">Shared by every operator. Passwords are encrypted with <code>NEXREC_DEST_KEY</code> and are not shown again. The deliver service needs <code>rclone</code> on the host for sftp, S3, and SMB.</p>
+    <p class="sub">Shared by every operator. Passwords are encrypted with <code>NEXREC_DEST_KEY</code> and are not shown again. The deliver service needs <code>rclone</code> on the host for SFTP, FTP, S3, and SMB.</p>
     <table>
       <thead>
         <tr><th>Name</th><th>Protocol</th><th>Host</th><th>Path</th><th>User</th><th>Password</th><th></th></tr>
@@ -61,20 +61,26 @@
     <label>Protocol
       <select id="d-protocol">
         <option value="sftp">SFTP</option>
+        <option value="ftp">FTP</option>
         <option value="s3">S3</option>
         <option value="smb">SMB</option>
       </select>
     </label>
-    <label id="lab-host">Host <input id="d-host" maxlength="255" autocomplete="off" placeholder="files.example"></label>
-    <label>Port <input id="d-port" inputmode="numeric" autocomplete="off" placeholder="default"></label>
-    <label>Username <input id="d-user" maxlength="128" autocomplete="off"></label>
-    <label>Password <input id="d-secret" type="password" maxlength="512" autocomplete="new-password" placeholder="Leave blank to keep the saved password"></label>
-    <label id="lab-key">SFTP key path <input id="d-key" autocomplete="off" placeholder="/var/lib/nexrec/keys/id_ed25519"></label>
+    <label id="lab-host"><span id="lab-host-name">Host</span> <input id="d-host" maxlength="255" autocomplete="off" placeholder="files.example"></label>
+    <label id="lab-port"><span>Port</span> <input id="d-port" inputmode="numeric" autocomplete="off" placeholder="22"></label>
+    <label id="lab-user"><span id="lab-user-name">Username</span> <input id="d-user" maxlength="128" autocomplete="off"></label>
+    <label id="lab-secret"><span id="lab-secret-name">Password</span> <input id="d-secret" type="password" maxlength="512" autocomplete="new-password" placeholder="Leave blank to keep the saved password"></label>
+    <label id="lab-key">Private key
+      <input id="d-key" type="file" accept=".pem,.key,.txt">
+      <span class="meta" id="d-key-note"></span>
+    </label>
+    <label id="lab-key-pass">Key passphrase <input id="d-key-pass" type="password" maxlength="512" autocomplete="new-password" placeholder="Only if the key file asks for one"></label>
     <label id="lab-bucket">Bucket <input id="d-bucket" maxlength="200" autocomplete="off"></label>
     <label id="lab-region">Region <input id="d-region" maxlength="64" autocomplete="off" placeholder="us-east-1"></label>
     <label id="lab-share">Share <input id="d-share" maxlength="200" autocomplete="off"></label>
     <label id="lab-domain">Domain <input id="d-domain" maxlength="64" autocomplete="off"></label>
     <label class="check" id="lab-path"><input type="checkbox" id="d-path"> Path-style URLs</label>
+    <label class="check" id="lab-tls"><input type="checkbox" id="d-tls"> Explicit TLS</label>
     <label>Remote folder <input id="d-prefix" maxlength="400" autocomplete="off" placeholder="incoming"></label>
     <label class="check"><input type="checkbox" id="d-enabled" checked> Enabled</label>
     <p class="sub" id="dest-msg"></p>
@@ -177,7 +183,7 @@ function paintDestinations(rows) {
       "<td>" + esc(row.host || "—") + (row.port ? ":" + esc(row.port) : "") + "</td>" +
       "<td class=\"meta\">" + esc(destPath(row)) + "</td>" +
       "<td>" + esc(row.username || "—") + "</td>" +
-      "<td>" + (row.has_secret ? "saved" : "—") + "</td>" +
+      "<td>" + esc(authBits(row)) + "</td>" +
       "<td class=\"unit-actions\">" +
         '<button type="button" data-act="edit" data-id="' + esc(row.id) + '">Edit</button>' +
         '<button type="button" data-act="delete" data-id="' + esc(row.id) + '">Delete</button>' +
@@ -186,16 +192,33 @@ function paintDestinations(rows) {
   body._rows = rows;
 }
 
+function authBits(row) {
+  var extra = row.extra || {};
+  var bits = [];
+  if (row.has_secret) bits.push("password");
+  if (extra.has_key) bits.push("key");
+  return bits.length ? bits.join(", ") : "—";
+}
 function showProtocolFields() {
   var proto = document.getElementById("d-protocol").value;
-  document.getElementById("lab-key").hidden = proto !== "sftp";
-  document.getElementById("lab-bucket").hidden = proto !== "s3";
-  document.getElementById("lab-region").hidden = proto !== "s3";
-  document.getElementById("lab-path").hidden = proto !== "s3";
-  document.getElementById("lab-share").hidden = proto !== "smb";
-  document.getElementById("lab-domain").hidden = proto !== "smb";
-  var host = document.getElementById("lab-host");
-  host.firstChild.textContent = proto === "s3" ? "Endpoint " : "Host ";
+  var sftp = proto === "sftp";
+  var s3 = proto === "s3";
+  var smb = proto === "smb";
+  var ftp = proto === "ftp";
+  document.getElementById("lab-port").hidden = s3;
+  document.getElementById("lab-key").hidden = !sftp;
+  document.getElementById("lab-key-pass").hidden = !sftp;
+  document.getElementById("lab-bucket").hidden = !s3;
+  document.getElementById("lab-region").hidden = !s3;
+  document.getElementById("lab-path").hidden = !s3;
+  document.getElementById("lab-share").hidden = !smb;
+  document.getElementById("lab-domain").hidden = !smb;
+  document.getElementById("lab-tls").hidden = !ftp;
+  document.getElementById("lab-host-name").textContent = s3 ? "Endpoint" : "Host";
+  document.getElementById("lab-user-name").textContent = s3 ? "Access key" : "Username";
+  document.getElementById("lab-secret-name").textContent = s3 ? "Secret key" : "Password";
+  document.getElementById("d-port").placeholder = ftp ? "21" : (smb ? "445" : "22");
+  document.getElementById("d-host").placeholder = s3 ? "https://s3.example" : "files.example";
 }
 function openDest(row) {
   var extra = (row && row.extra) || {};
@@ -207,12 +230,17 @@ function openDest(row) {
   document.getElementById("d-port").value = row && row.port ? String(row.port) : "";
   document.getElementById("d-user").value = row ? (row.username || "") : "";
   document.getElementById("d-secret").value = "";
-  document.getElementById("d-key").value = extra.key_path || "";
+  document.getElementById("d-key").value = "";
+  document.getElementById("d-key-pass").value = "";
+  document.getElementById("d-key-note").textContent = extra.has_key
+    ? "A key is saved. Choose a file only to replace it."
+    : "";
   document.getElementById("d-bucket").value = extra.bucket || "";
   document.getElementById("d-region").value = extra.region || "";
   document.getElementById("d-share").value = extra.share || "";
   document.getElementById("d-domain").value = extra.domain || "";
   document.getElementById("d-path").checked = !!extra.path_style;
+  document.getElementById("d-tls").checked = !!extra.explicit_tls;
   document.getElementById("d-prefix").value = row ? (row.remote_prefix || "") : "";
   document.getElementById("d-enabled").checked = row ? !!row.enabled : true;
   document.getElementById("dest-msg").textContent = "";
@@ -231,31 +259,41 @@ document.getElementById("dest-new").onclick = function () { openDest(null); };
 document.getElementById("dest-cancel").onclick = function () {
   document.getElementById("dest-dialog").close();
 };
+function readPrivateKey() {
+  var input = document.getElementById("d-key");
+  var file = input.files && input.files[0];
+  if (!file) return Promise.resolve("");
+  if (file.size > 32768) return Promise.reject(new Error("private key is too large"));
+  return file.text();
+}
 document.getElementById("dest-form").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var msg = document.getElementById("dest-msg");
   msg.textContent = "";
-  var body = {
-    id: document.getElementById("d-id").value,
-    name: document.getElementById("d-name").value,
-    protocol: document.getElementById("d-protocol").value,
-    host: document.getElementById("d-host").value,
-    port: document.getElementById("d-port").value,
-    username: document.getElementById("d-user").value,
-    secret: document.getElementById("d-secret").value,
-    remote_prefix: document.getElementById("d-prefix").value,
-    enabled: document.getElementById("d-enabled").checked,
-    extra: {
-      bucket: document.getElementById("d-bucket").value,
-      region: document.getElementById("d-region").value,
-      share: document.getElementById("d-share").value,
-      domain: document.getElementById("d-domain").value,
-      key_path: document.getElementById("d-key").value,
-      path_style: document.getElementById("d-path").checked ? 1 : 0
-    }
-  };
   document.getElementById("dest-save").disabled = true;
-  NexRecAuth.recApi("destination_save", body).then(function () {
+  readPrivateKey().then(function (pem) {
+    return NexRecAuth.recApi("destination_save", {
+      id: document.getElementById("d-id").value,
+      name: document.getElementById("d-name").value,
+      protocol: document.getElementById("d-protocol").value,
+      host: document.getElementById("d-host").value,
+      port: document.getElementById("d-port").value,
+      username: document.getElementById("d-user").value,
+      secret: document.getElementById("d-secret").value,
+      private_key: pem,
+      key_pass: document.getElementById("d-key-pass").value,
+      remote_prefix: document.getElementById("d-prefix").value,
+      enabled: document.getElementById("d-enabled").checked,
+      extra: {
+        bucket: document.getElementById("d-bucket").value,
+        region: document.getElementById("d-region").value,
+        share: document.getElementById("d-share").value,
+        domain: document.getElementById("d-domain").value,
+        path_style: document.getElementById("d-path").checked ? 1 : 0,
+        explicit_tls: document.getElementById("d-tls").checked ? 1 : 0
+      }
+    });
+  }).then(function () {
     document.getElementById("dest-save").disabled = false;
     document.getElementById("dest-dialog").close();
     say("Destination saved.");

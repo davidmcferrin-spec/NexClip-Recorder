@@ -12,6 +12,40 @@ function nexrec_deliver_now(): string {
     return gmdate('Y-m-d\TH:i:s\Z');
 }
 
+function nexrec_dest_key_path(string $id): string {
+    if (preg_match('/^dst_[a-f0-9]{12}$/', $id) !== 1) {
+        throw new InvalidArgumentException('invalid id');
+    }
+    return nexrec_data_dir() . '/keys/' . $id;
+}
+
+function nexrec_dest_store_key(string $id, string $pem): string {
+    $pem = str_replace("\r\n", "\n", $pem);
+    if (strlen($pem) < 40 || strlen($pem) > 32768 || str_contains($pem, "\0")) {
+        throw new InvalidArgumentException('private key is not allowed');
+    }
+    if (preg_match('/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/', $pem) !== 1) {
+        throw new InvalidArgumentException('file is not a private key');
+    }
+    $path = nexrec_dest_key_path($id);
+    $dir = dirname($path);
+    if (!is_dir($dir) && !mkdir($dir, 0700, true) && !is_dir($dir)) {
+        throw new RuntimeException('could not store the private key');
+    }
+    if (file_put_contents($path, $pem) === false) {
+        throw new RuntimeException('could not store the private key');
+    }
+    chmod($path, 0600);
+    return $path;
+}
+
+function nexrec_dest_remove_key(string $id): void {
+    $path = nexrec_dest_key_path($id);
+    if (is_file($path)) {
+        unlink($path);
+    }
+}
+
 function nexrec_deliver_extra(mixed $raw): array {
     if (is_array($raw)) {
         return $raw;
@@ -26,13 +60,16 @@ function nexrec_deliver_extra(mixed $raw): array {
 /** @param array<string,mixed> $row */
 function nexrec_destination_public(array $row): array {
     $extra = nexrec_deliver_extra($row['extra'] ?? '{}');
+    $keyPath = (string) ($extra['key_path'] ?? '');
     $publicExtra = [
         'bucket' => (string) ($extra['bucket'] ?? ''),
         'region' => (string) ($extra['region'] ?? ''),
         'share' => (string) ($extra['share'] ?? ''),
         'domain' => (string) ($extra['domain'] ?? ''),
-        'key_path' => (string) ($extra['key_path'] ?? ''),
+        'has_key' => $keyPath !== '' && is_file($keyPath) ? 1 : 0,
+        'has_key_pass' => trim((string) ($extra['key_pass_cipher'] ?? '')) !== '' ? 1 : 0,
         'path_style' => (int) ($extra['path_style'] ?? 0) === 1 ? 1 : 0,
+        'explicit_tls' => (int) ($extra['explicit_tls'] ?? 0) === 1 ? 1 : 0,
     ];
     return [
         'id' => (string) ($row['id'] ?? ''),
@@ -86,14 +123,14 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
         throw new InvalidArgumentException('name is required');
     }
     $protocol = strtolower(trim((string) ($body['protocol'] ?? '')));
-    if (!in_array($protocol, ['sftp', 's3', 'smb'], true)) {
-        throw new InvalidArgumentException('protocol must be sftp, s3, or smb');
+    if (!in_array($protocol, ['sftp', 'ftp', 's3', 'smb'], true)) {
+        throw new InvalidArgumentException('protocol must be sftp, ftp, s3, or smb');
     }
     $host = trim((string) ($body['host'] ?? ''));
     if ($host !== '' && preg_match('/^[A-Za-z0-9._:-]{1,255}$/', $host) !== 1) {
         throw new InvalidArgumentException('host is not allowed');
     }
-    if (($protocol === 'sftp' || $protocol === 'smb') && $host === '') {
+    if (in_array($protocol, ['sftp', 'ftp', 'smb'], true) && $host === '') {
         throw new InvalidArgumentException('host is required');
     }
     $port = $body['port'] ?? null;
@@ -118,8 +155,8 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
     $region = trim((string) ($incoming['region'] ?? ''));
     $share = trim((string) ($incoming['share'] ?? ''));
     $domain = trim((string) ($incoming['domain'] ?? ''));
-    $keyPath = trim((string) ($incoming['key_path'] ?? ''));
     $pathStyle = !empty($incoming['path_style']) ? 1 : 0;
+    $explicitTls = ($protocol === 'ftp' && !empty($incoming['explicit_tls'])) ? 1 : 0;
     if ($protocol === 's3') {
         $bucket = nexrec_deliver_check_segment($bucket, 'bucket');
         if ($region === '') {
@@ -142,15 +179,6 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
         $share = '';
         $domain = '';
     }
-    if ($protocol === 'sftp') {
-        if ($keyPath !== '') {
-            if (strlen($keyPath) > 512 || strpbrk($keyPath, "\r\n\0") !== false || !str_starts_with($keyPath, '/')) {
-                throw new InvalidArgumentException('key path must be an absolute path');
-            }
-        }
-    } else {
-        $keyPath = '';
-    }
     $secret = (string) ($body['secret'] ?? '');
     if (strpbrk($secret, "\r\n\0") !== false || strlen($secret) > 512) {
         throw new InvalidArgumentException('password is not allowed');
@@ -158,7 +186,7 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
     $cipher = $existing !== null ? (string) ($existing['secret_cipher'] ?? '') : '';
     if ($secret !== '') {
         $cipher = nexrec_secret_encrypt($secret, nexrec_dest_key());
-    } elseif ($cipher === '' && !($protocol === 'sftp' && $keyPath !== '')) {
+    } elseif ($cipher === '' && $protocol !== 'sftp') {
         throw new InvalidArgumentException('password is required');
     }
     $enabled = array_key_exists('enabled', $body) ? (!empty($body['enabled']) ? 1 : 0) : 1;
@@ -175,8 +203,8 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
             'region' => $region,
             'share' => $share,
             'domain' => $domain,
-            'key_path' => $keyPath,
             'path_style' => $pathStyle,
+            'explicit_tls' => $explicitTls,
         ], JSON_UNESCAPED_SLASHES),
         'enabled' => $enabled,
     ];
@@ -200,6 +228,38 @@ function nexrec_destination_save(array $body, string $username): array {
         $id = nexrec_new_id('dst');
     }
     $norm = nexrec_destination_normalize($body, $existing);
+    $extra = nexrec_deliver_extra($norm['extra']);
+    $pem = (string) ($body['private_key'] ?? '');
+    $keyPass = (string) ($body['key_pass'] ?? '');
+    if (strpbrk($keyPass, "\r\n\0") !== false || strlen($keyPass) > 512) {
+        throw new InvalidArgumentException('key passphrase is not allowed');
+    }
+    if ($norm['protocol'] === 'sftp') {
+        $previous = $existing !== null ? nexrec_deliver_extra($existing['extra'] ?? '{}') : [];
+        if ($pem !== '') {
+            $extra['key_path'] = nexrec_dest_store_key($id, $pem);
+            if ($keyPass === '') {
+                unset($extra['key_pass_cipher']);
+            }
+        } else {
+            $kept = (string) ($previous['key_path'] ?? '');
+            if ($kept !== '' && $kept === nexrec_dest_key_path($id) && is_file($kept)) {
+                $extra['key_path'] = $kept;
+            }
+            if ($keyPass === '' && !empty($previous['key_pass_cipher'])) {
+                $extra['key_pass_cipher'] = (string) $previous['key_pass_cipher'];
+            }
+        }
+        if ($keyPass !== '') {
+            $extra['key_pass_cipher'] = nexrec_secret_encrypt($keyPass, nexrec_dest_key());
+        }
+        if ($norm['secret_cipher'] === '' && empty($extra['key_path'])) {
+            throw new InvalidArgumentException('password or private key is required');
+        }
+    } else {
+        nexrec_dest_remove_key($id);
+    }
+    $norm['extra'] = json_encode($extra, JSON_UNESCAPED_SLASHES);
     $now = nexrec_deliver_now();
     if ($existing === null) {
         $st = nexrec_db()->prepare(
@@ -271,6 +331,7 @@ function nexrec_destination_delete(string $id): void {
     $del = nexrec_db()->prepare('DELETE FROM destinations WHERE id=:id');
     $del->bindValue(':id', $id, SQLITE3_TEXT);
     $del->execute();
+    nexrec_dest_remove_key($id);
 }
 
 /**

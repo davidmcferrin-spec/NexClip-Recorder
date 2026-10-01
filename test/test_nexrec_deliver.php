@@ -13,6 +13,7 @@ putenv('NEXREC_DEST_KEY=test-key');
 putenv('NEXREC_AUTH_HTTP');
 
 require dirname(__DIR__) . '/web/nexrec-secret.php';
+require dirname(__DIR__) . '/web/nexrec-deliver.php';
 
 function fail(string $msg): never {
     fwrite(STDERR, $msg . "\n");
@@ -30,6 +31,25 @@ if (nexrec_secret_decrypt($blob, 'test-key') !== 's3cret') {
 }
 if (str_contains($blob, 's3cret')) {
     fail('cipher contains the password');
+}
+
+try {
+    nexrec_dest_store_key('dst_aabbccddeeff', "ssh-ed25519 AAAA comment\n");
+    fail('a public key was accepted');
+} catch (InvalidArgumentException $e) {
+    // expected
+}
+$pem = "-----BEGIN OPENSSH PRIVATE KEY-----\nAAAA\n-----END OPENSSH PRIVATE KEY-----\n";
+$stored = nexrec_dest_store_key('dst_aabbccddeeff', $pem);
+if (!is_file($stored) || file_get_contents($stored) !== $pem) {
+    fail('private key was not stored');
+}
+if (str_contains($stored, 'AAAA') && !str_ends_with($stored, 'dst_aabbccddeeff')) {
+    fail('key path is not the destination id');
+}
+nexrec_dest_remove_key('dst_aabbccddeeff');
+if (is_file($stored)) {
+    fail('private key was not removed');
 }
 
 $page = (string) file_get_contents(dirname(__DIR__) . '/web/pages/transfers.html');

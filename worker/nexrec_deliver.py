@@ -109,7 +109,7 @@ def remote_target(dest: dict[str, Any], export_id: str) -> tuple[str, str]:
         if not _SAFE_SEG.match(share):
             raise RuntimeError("smb share is not allowed")
         bits.append(share)
-    elif proto != "sftp":
+    elif proto not in ("sftp", "ftp"):
         raise RuntimeError("unknown protocol")
     bits.extend(_prefix_parts(str(dest.get("remote_prefix") or "")))
     bits.append(export_id)
@@ -134,7 +134,7 @@ def ini_value(value: str) -> str:
     return value
 
 
-def config_text(dest: dict[str, Any], obscured: str) -> str:
+def config_text(dest: dict[str, Any], obscured: str, key_obscured: str = "") -> str:
     """rclone config. The password is the obscured form, never the plaintext."""
     proto = str(dest.get("protocol") or "")
     extra = _extra(dest)
@@ -153,6 +153,18 @@ def config_text(dest: dict[str, Any], obscured: str) -> str:
         key_path = str(extra.get("key_path") or "")
         if key_path:
             lines.append(f"key_file = {ini_value(key_path)}")
+        if key_obscured:
+            lines.append(f"key_file_pass = {ini_value(key_obscured)}")
+    elif proto == "ftp":
+        lines.append(f"host = {ini_value(host)}")
+        if user:
+            lines.append(f"user = {ini_value(user)}")
+        if port:
+            lines.append(f"port = {int(port)}")
+        if obscured:
+            lines.append(f"pass = {ini_value(obscured)}")
+        if int(extra.get("explicit_tls") or 0) == 1:
+            lines.append("explicit_tls = true")
     elif proto == "s3":
         provider = "Other" if host else "AWS"
         lines.append(f"provider = {provider}")
@@ -396,9 +408,10 @@ def _park_after_stop(conn, delivery_id: str, export_id: str) -> None:
     conn.commit()
 
 
-def _redact(text: str, secret: str) -> str:
-    if secret:
-        text = text.replace(secret, "***")
+def _redact(text: str, *secrets: str) -> str:
+    for secret in secrets:
+        if secret:
+            text = text.replace(secret, "***")
     return text[-2000:]
 
 
@@ -421,7 +434,7 @@ def _kill_rclone(proc: subprocess.Popen) -> None:
         proc.wait(timeout=5)
 
 
-def run_rclone(conn, delivery_id: str, export_id: str, cmd: list[str], secret: str) -> None:
+def run_rclone(conn, delivery_id: str, export_id: str, cmd: list[str], secret: str, key_secret: str = "") -> None:
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.PIPE,
@@ -467,7 +480,7 @@ def run_rclone(conn, delivery_id: str, export_id: str, cmd: list[str], secret: s
         _park_after_stop(conn, delivery_id, export_id)
         return
     if code != 0:
-        err = _redact("\n".join(tail), secret) or f"rclone exited {code}"
+        err = _redact("\n".join(tail), secret, key_secret) or f"rclone exited {code}"
         conn.execute(
             """UPDATE deliveries SET status='error', finished_at=?, error=?
                WHERE id=? AND status='running' AND cancel_requested=0""",
@@ -514,6 +527,8 @@ def perform_delivery(
         return
     cipher = str(dest.get("secret_cipher") or "")
     secret = decrypt_secret(cipher, dest_key(env)) if cipher else ""
+    key_cipher = str(_extra(dest).get("key_pass_cipher") or "")
+    key_secret = decrypt_secret(key_cipher, dest_key(env)) if key_cipher else ""
     files = export_media_files(job)
     remote, shown = remote_target(dest, str(job["id"]))
     conn.execute(
@@ -537,12 +552,15 @@ def perform_delivery(
         rclone = rclone_bin(env)
         obscurer = obscure or obscure_password
         obscured = obscurer(rclone, secret) if secret else ""
+        key_obscured = obscurer(rclone, key_secret) if key_secret else ""
         if secret and len(secret) >= 8 and secret in obscured:
             raise RuntimeError("refusing to store a plaintext password in the rclone config")
-        config = write_config(scratch, config_text(dest, obscured))
+        if key_secret and len(key_secret) >= 8 and key_secret in key_obscured:
+            raise RuntimeError("refusing to store a plaintext key passphrase in the rclone config")
+        config = write_config(scratch, config_text(dest, obscured, key_obscured))
         cmd = sync_argv(rclone, config, source, remote, files_from)
         print(f"deliver {delivery['id']} {shown}", flush=True)
-        run_rclone(conn, str(delivery["id"]), str(job["id"]), cmd, secret)
+        run_rclone(conn, str(delivery["id"]), str(job["id"]), cmd, secret, key_secret)
     finally:
         if config and os.path.isfile(config):
             try:

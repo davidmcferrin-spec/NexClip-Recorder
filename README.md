@@ -40,7 +40,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Export job: concat overlapping chunks + trim in/out → one Premiere/FCPX-friendly MP4
 - Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player; confidence WFM / vectorscope / VU / 64-band RTA on the selected pane, default off)
 - Export editor: shared timeline, mark in/out, trim dialog (this stream, all visible, or chosen streams), full vs proxy, title, description, and a shareable download page
-- Send-to: after an export finishes, rclone can copy it to one or more shared sftp, S3, or SMB destinations. Transfers has the queue. A retry replaces those remote files. Destination passwords are encrypted with `NEXREC_DEST_KEY`
+- Send-to: after an export finishes, rclone can copy it to one or more shared SFTP, FTP, S3, or SMB destinations. Transfers has the queue. A retry replaces those remote files. Destination passwords are encrypted with `NEXREC_DEST_KEY`
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
 - `setup.sh` builds pinned **FFmpeg 9.0.2** into `/usr/local` and installs pinned **MediaMTX v1.21.1** plus `mediamtx.service` (not distro `ffmpeg` for DeckLink)
