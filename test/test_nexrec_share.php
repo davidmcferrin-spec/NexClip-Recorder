@@ -15,7 +15,7 @@ foreach (['id="lkfs-panel"', 'measure-lkfs', 'id="scope"', 'id="quality"'] as $n
         exit(1);
     }
 }
-foreach (['id="export-dialog"', 'This stream', 'All visible streams', 'Choose streams', 'Require sign-in to download', 'id="export-share-copy"'] as $needle) {
+foreach (['id="export-dialog"', 'id="share-dialog"', 'This stream', 'All visible streams', 'Choose streams', 'Require sign-in to download', 'Share as URL', 'Copy to clipboard', 'id="export-share-copy"'] as $needle) {
     if (!str_contains($export, $needle)) {
         fwrite(STDERR, "export page missing {$needle}\n");
         exit(1);

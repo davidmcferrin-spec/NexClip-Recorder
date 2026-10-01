@@ -100,7 +100,6 @@
         </select>
       </label>
     </div>
-    <p class="meta" id="export-locked" hidden></p>
     <label for="export-title">Title
       <input id="export-title" maxlength="200" autocomplete="off" placeholder="Optional">
     </label>
@@ -112,16 +111,27 @@
       Require sign-in to download
     </label>
     <p class="sub">Off by default. Anyone with the link can download until you turn this on.</p>
-    <div class="share-row" id="export-share-row" hidden>
-      <input id="export-share-url" readonly aria-label="Download page link">
-      <button type="button" id="export-share-copy">Share</button>
-    </div>
+    <label class="check" for="export-share-as-url">
+      <input type="checkbox" id="export-share-as-url">
+      Share as URL
+    </label>
+    <p class="sub">After export, open the download link and copy it. Leave this off to only queue the trim.</p>
     <div class="bar dialog-actions">
       <button type="button" id="export-cancel">Close</button>
       <button type="submit" class="primary" id="export-submit">Export</button>
       <span class="ok-msg" id="export-dialog-msg"></span>
     </div>
   </form>
+</dialog>
+<dialog id="share-dialog" class="nx-dialog">
+  <h1>Share link</h1>
+  <p class="meta" id="share-dialog-note">Anyone with this link can download.</p>
+  <input id="share-url" readonly aria-label="Download page link">
+  <div class="bar dialog-actions">
+    <button type="button" id="share-close">Close</button>
+    <button type="button" class="primary" id="export-share-copy">Copy to clipboard</button>
+    <span class="ok-msg" id="share-dialog-msg"></span>
+  </div>
 </dialog>
 <script src="/assets/nexrec-cc.js"></script>
 <script src="/assets/nexrec-auth-gate.js"></script>
@@ -134,8 +144,6 @@
   var ccBox = null, ccCues = [], ccWindow0 = 0, ccWindow1 = 0, ccInput = "", ccFetch = 0;
   var asrunKey = "", asrunRows = [], asrunToken = 0;
   var jobsCache = [];
-  var exportJobId = "";
-  var exportToken = "";
   var SLOT_KEY = "nexrec-export-slots";
   var VOL_KEY = "nexrec-export-volume";
   var volume = 0.8;
@@ -900,7 +908,7 @@
       for (var i = 0; i < jobsCache.length; i++) {
         if (jobsCache[i].id === id) found = jobsCache[i];
       }
-      if (found) openExportDialog(found);
+      if (found && found.share_token) openShareDialog(found.share_token, Number(found.auth_required) === 1);
       return;
     }
     if (act === "export_remove" && !window.confirm("Remove this export?")) return;
@@ -1251,72 +1259,57 @@
     return location.origin + "/s/" + token;
   }
 
-  function canEditExport() {
-    var me = (NexRecAuth.currentUser && NexRecAuth.currentUser()) || {};
-    return me.role === "admin" || me.role === "operator";
-  }
-
   function dialogMsg(text, bad) {
     var msg = document.getElementById("export-dialog-msg");
     msg.style.color = bad ? "var(--bad)" : "var(--ok)";
     msg.textContent = text || "";
   }
 
-  function showShareLink(token) {
-    exportToken = token || "";
-    var row = document.getElementById("export-share-row");
-    var input = document.getElementById("export-share-url");
-    if (!exportToken) {
-      row.hidden = true;
-      input.value = "";
-      return;
-    }
-    row.hidden = false;
-    input.value = shareUrl(exportToken);
+  function shareDialogMsg(text, bad) {
+    var msg = document.getElementById("share-dialog-msg");
+    msg.style.color = bad ? "var(--bad)" : "var(--ok)";
+    msg.textContent = text || "";
   }
 
-  function jobInputIds(job) {
-    var ids = job.input_ids;
-    if (typeof ids === "string") {
-      try { ids = JSON.parse(ids); } catch (e) { ids = [ids]; }
-    }
-    return ids || [];
+  function copyShareUrl() {
+    var input = document.getElementById("share-url");
+    var url = input.value;
+    if (!url) return;
+    input.focus();
+    input.select();
+    writeClipboard(url).then(function () {
+      shareDialogMsg("Link copied.");
+    }).catch(function () {
+      shareDialogMsg("Use Copy to clipboard.");
+    });
   }
 
-  function openExportDialog(job) {
+  function openShareDialog(token, authRequired) {
+    if (!token) return;
+    var exportDialog = document.getElementById("export-dialog");
+    if (exportDialog.open) exportDialog.close();
+    document.getElementById("share-url").value = shareUrl(token);
+    document.getElementById("share-dialog-note").textContent = authRequired
+      ? "Sign-in is required to download."
+      : "Anyone with this link can download.";
+    shareDialogMsg("");
+    var dialog = document.getElementById("share-dialog");
+    if (!dialog.open) dialog.showModal();
+    copyShareUrl();
+  }
+
+  function openExportDialog() {
     var dialog = document.getElementById("export-dialog");
-    var editing = !!(job && job.id);
-    exportJobId = editing ? job.id : "";
-    document.getElementById("export-dialog-title").textContent = editing ? "Share export" : "Export trim";
-    document.getElementById("export-create-fields").hidden = editing;
-    document.getElementById("export-locked").hidden = !editing;
-    document.getElementById("export-submit").textContent = editing ? "Save" : "Export";
-    document.getElementById("export-submit").hidden = editing && !canEditExport();
-    document.getElementById("export-title").disabled = editing && !canEditExport();
-    document.getElementById("export-description").disabled = editing && !canEditExport();
-    document.getElementById("export-auth").disabled = editing && !canEditExport();
+    document.getElementById("export-window").textContent =
+      "I " + station(markIn) + " → O " + station(markOut);
+    document.getElementById("export-title").value = "";
+    document.getElementById("export-description").value = "";
+    document.getElementById("export-auth").checked = false;
+    document.getElementById("export-share-as-url").checked = false;
+    document.getElementById("export-quality").value = "full";
+    setScopeMode("one");
+    paintStreamPicks();
     dialogMsg("");
-    if (editing) {
-      document.getElementById("export-title").value = job.title || "";
-      document.getElementById("export-description").value = job.description || "";
-      document.getElementById("export-auth").checked = Number(job.auth_required) === 1;
-      document.getElementById("export-locked").textContent =
-        station(Date.parse(job.t_in)) + " → " + station(Date.parse(job.t_out)) +
-        " · " + (jobInputIds(job).map(inputName).join(", ") || "no inputs") +
-        " · " + (job.quality || "full");
-      showShareLink(job.share_token || "");
-      document.getElementById("export-window").textContent = "Send this page to anyone who should download the file.";
-    } else {
-      document.getElementById("export-window").textContent =
-        "I " + station(markIn) + " → O " + station(markOut);
-      document.getElementById("export-title").value = "";
-      document.getElementById("export-description").value = "";
-      document.getElementById("export-auth").checked = false;
-      document.getElementById("export-quality").value = "full";
-      setScopeMode("one");
-      paintStreamPicks();
-      showShareLink("");
-    }
     if (!dialog.open) dialog.showModal();
   }
 
@@ -1328,54 +1321,20 @@
     };
   }
 
-  function saveShareFields() {
-    return NexRecAuth.recApi("export_share_update", Object.assign({ id: exportJobId }, exportFieldPayload()))
-      .then(function (d) {
-        if (d.share_token) showShareLink(d.share_token);
-        dialogMsg("Saved.");
-        return NexRecAuth.refreshExports();
-      });
-  }
-
   document.querySelectorAll('input[name="export-scope"]').forEach(function (el) {
     el.addEventListener("change", paintStreamPicks);
   });
   document.getElementById("export-cancel").onclick = function () {
     document.getElementById("export-dialog").close();
   };
-  document.getElementById("export-share-copy").onclick = function () {
-    var go = function () {
-      var url = document.getElementById("export-share-url").value;
-      if (!url) return;
-      writeClipboard(url).then(function () {
-        dialogMsg("Link copied.");
-      }).catch(function () {
-        dialogMsg(url);
-      });
-    };
-    if (exportJobId && canEditExport()) {
-      saveShareFields().then(go).catch(function (e) {
-        dialogMsg(e.message, true);
-      });
-      return;
-    }
-    go();
+  document.getElementById("share-close").onclick = function () {
+    document.getElementById("share-dialog").close();
   };
+  document.getElementById("export-share-copy").onclick = copyShareUrl;
   document.getElementById("export-form").addEventListener("submit", function (ev) {
     ev.preventDefault();
     var submit = document.getElementById("export-submit");
-    if (submit.hidden) return;
     dialogMsg("");
-    if (exportJobId) {
-      submit.disabled = true;
-      saveShareFields().then(function () {
-        submit.disabled = false;
-      }).catch(function (e) {
-        submit.disabled = false;
-        dialogMsg(e.message, true);
-      });
-      return;
-    }
     var mode = scopeMode();
     var ids = chosenStreamIds();
     if (mode !== "pick") {
@@ -1390,6 +1349,8 @@
     }
     submit.disabled = true;
     var fields = exportFieldPayload();
+    var shareAfter = document.getElementById("export-share-as-url").checked;
+    var authRequired = !!fields.auth_required;
     NexRecAuth.recApi("export_create", {
       input_ids: ids,
       t_in: iso(markIn),
@@ -1400,17 +1361,13 @@
       description: fields.description,
       auth_required: fields.auth_required
     }).then(function (d) {
-      exportJobId = d.export_id || "";
-      document.getElementById("export-dialog-title").textContent = "Share export";
-      document.getElementById("export-create-fields").hidden = true;
-      document.getElementById("export-submit").textContent = "Save";
-      document.getElementById("export-window").textContent = "Export received. Copy the link to send the download page.";
-      showShareLink(d.share_token || "");
-      dialogMsg("Export received.");
+      submit.disabled = false;
+      document.getElementById("export-dialog").close();
       var bar = document.getElementById("msg");
       bar.style.color = "var(--ok)";
       bar.textContent = "Export received.";
       if (NexRecAuth.noteExportReceived) NexRecAuth.noteExportReceived(d.export_id);
+      if (shareAfter && d.share_token) openShareDialog(d.share_token, authRequired);
       return NexRecAuth.refreshExports();
     }).then(function (d) {
       submit.disabled = false;
@@ -1428,7 +1385,7 @@
       msg.style.color = "var(--bad)";
       return;
     }
-    openExportDialog(null);
+    openExportDialog();
   };
 })();
 </script>
