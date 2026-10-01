@@ -36,6 +36,26 @@ if ($file === null || $file['token'] !== $token || $file['input_id'] !== 'cam-1'
     fwrite(STDERR, "share file route\n");
     exit(1);
 }
+$under = nexrec_web_share_file('/api/share/' . $token . '/cam_1');
+if ($under === null || $under['input_id'] !== 'cam_1') {
+    fwrite(STDERR, "share file route rejected an underscore\n");
+    exit(1);
+}
+$longId = 'a' . str_repeat('b', 63);
+$long = nexrec_web_share_file('/api/share/' . $token . '/' . $longId);
+if ($long === null || $long['input_id'] !== $longId) {
+    fwrite(STDERR, "share file route rejected a 64-character id\n");
+    exit(1);
+}
+if (nexrec_web_share_file('/api/share/' . $token . '/' . $longId . 'c') !== null) {
+    fwrite(STDERR, "share file route accepted an id past 64 characters\n");
+    exit(1);
+}
+if (nexrec_web_share_file('/api/share/' . $token . '/cam/1') !== null
+    || nexrec_web_share_file('/api/share/' . $token . '/..') !== null) {
+    fwrite(STDERR, "share file route accepted a path segment\n");
+    exit(1);
+}
 if (nexrec_web_share_file('/api/exports/' . $token . '/file') !== null) {
     fwrite(STDERR, "export file route collided with share\n");
     exit(1);

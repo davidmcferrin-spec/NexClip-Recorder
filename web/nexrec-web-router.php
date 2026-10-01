@@ -124,7 +124,7 @@ function nexrec_web_share_token(string $path): ?string {
 
 /** @return array{token:string,input_id:string}|null */
 function nexrec_web_share_file(string $path): ?array {
-    if (preg_match('#^/api/share/([a-f0-9]{32})/([A-Za-z0-9][A-Za-z0-9-]{0,31})$#', $path, $m) !== 1) {
+    if (preg_match('#^/api/share/([a-f0-9]{32})/([A-Za-z0-9][A-Za-z0-9_-]{0,63})$#', $path, $m) !== 1) {
         return null;
     }
     return ['token' => $m[1], 'input_id' => $m[2]];
