@@ -128,12 +128,26 @@ def run_ffmpeg(conn, job_id: str, cmd: list[str], duration: float, encode_mode: 
         raise RuntimeError(err or "ffmpeg export failed")
 
 
+def chunk_raster(chunks: list) -> tuple[int, int, float]:
+    """Width, height, and fps from the first chunk that recorded them."""
+    for chunk in chunks:
+        try:
+            width = int(chunk.get("width") or 0)
+            height = int(chunk.get("height") or 0)
+            fps = float(chunk.get("fps") or 0)
+        except (TypeError, ValueError):
+            continue
+        if width > 0 and height > 0 and fps > 1:
+            return width, height, fps
+    return 0, 0, 0.0
+
+
 def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
     paths = data_paths(env)
     input_ids = json.loads(job["input_ids"])
     quality = job.get("quality") or "full"
     kind = "proxy" if quality == "proxy" else "native"
-    # v0: proxy requested but no proxy files → transcode from native.
+    # Proxy is a transcode of the native chunks down to 960×540 at 30 fps.
     force_tx = quality == "proxy"
 
     dest_dir = env.get("NEXREC_EXPORTS_DIR") or os.path.join(paths["storage"], "exports")
@@ -156,9 +170,12 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
         suffix = f"_{iid}" if len(input_ids) > 1 else ""
         dest = os.path.join(dest_dir, f"{job['id']}{suffix}.mp4")
         use_copy = copy and not force_tx
+        width, height, fps = chunk_raster(chunks)
+        proxy = quality == "proxy"
         cmd = export_concat_argv(
             concat_path, dest, ss, dur, copy=use_copy,
             ffmpeg=paths["ffmpeg"], env=env,
+            proxy=proxy, width=width, height=height, fps=fps,
         )
         span = (100.0 * index / total, 100.0 * (index + 1) / total)
         print("exec:", " ".join(cmd), flush=True)
@@ -170,6 +187,7 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
             cmd = export_concat_argv(
                 concat_path, dest, ss, dur, copy=False,
                 ffmpeg=paths["ffmpeg"], env=env,
+                width=width, height=height, fps=fps,
             )
             print("retry encode:", " ".join(cmd), flush=True)
             run_ffmpeg(conn, job["id"], cmd, dur, "encode", span)

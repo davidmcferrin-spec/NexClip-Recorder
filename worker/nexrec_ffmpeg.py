@@ -667,8 +667,17 @@ def export_concat_argv(
     copy: bool,
     ffmpeg: str = "ffmpeg",
     env: dict[str, str] | None = None,
+    proxy: bool = False,
+    width: int = 0,
+    height: int = 0,
+    fps: float = 0,
 ) -> list[str]:
-    """Trim a concat list to [ss, ss+duration] relative to the first chunk."""
+    """Trim a concat list to [ss, ss+duration] relative to the first chunk.
+
+    A proxy transcode scales to the preview raster (960×540 at 30 fps). A full
+    transcode keeps the source picture and picks an H.264 level that covers it.
+    Level 4.1 cannot carry 1080p60, and NVENC rejects that combination.
+    """
     env = env or {}
     argv = [
         ffmpeg, "-hide_banner", "-nostdin", "-y",
@@ -680,17 +689,32 @@ def export_concat_argv(
     if copy:
         argv += ["-c", "copy", "-avoid_negative_ts", "make_zero"]
     else:
-        vbr = env.get("NEXREC_BROADCAST_VIDEO_BITRATE") or "12M"
-        abr = env.get("NEXREC_BROADCAST_AUDIO_BITRATE") or "192k"
+        if proxy:
+            argv += ["-vf", f"scale={PREVIEW_SIZE}:force_original_aspect_ratio=decrease,fps=30,format=yuv420p"]
+            level = h264_level(960, 540, 30)
+            vbr = PREVIEW_VBITRATE
+            abr = "128k"
+            gop = "30"
+            bufsize = "3M"
+        else:
+            if width > 0 and height > 0 and fps > 1:
+                level = h264_level(int(width), int(height), float(fps))
+            else:
+                # Unknown raster. 4.2 covers 1080p60; 4.1 does not.
+                level = "4.2"
+            vbr = env.get("NEXREC_BROADCAST_VIDEO_BITRATE") or "12M"
+            abr = env.get("NEXREC_BROADCAST_AUDIO_BITRATE") or "192k"
+            gop = str(env.get("NEXREC_GOP_FRAMES") or "60")
+            bufsize = "24M"
         argv += _h264_video_args(
             env,
             preset=env.get("NEXREC_X264_PRESET") or "veryfast",
             profile="high",
-            level="4.1",
-            gop=str(env.get("NEXREC_GOP_FRAMES") or "60"),
+            level=level,
+            gop=gop,
             bitrate=vbr,
             maxrate=vbr,
-            bufsize="24M",
+            bufsize=bufsize,
         )
         argv += ["-c:a", "aac", "-b:a", abr, "-ar", "48000"]
     argv += ["-movflags", "+faststart", dest_path]

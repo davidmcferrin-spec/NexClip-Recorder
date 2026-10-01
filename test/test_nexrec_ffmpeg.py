@@ -280,8 +280,27 @@ class TestFfmpeg(unittest.TestCase):
         self.assertNotIn("libx264", tee)
         exported = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=False, env=env)
         self.assertIn("h264_nvenc", exported)
+        self.assertEqual(exported[exported.index("-level") + 1], "4.2")
         copied = export_concat_argv("/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=True, env=env)
         self.assertNotIn("h264_nvenc", copied)
+
+    def test_proxy_export_scales_1080p60(self):
+        env = {"NEXREC_VIDEO_ENCODER": "nvenc"}
+        cmd = export_concat_argv(
+            "/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=False, env=env, proxy=True,
+        )
+        vf = cmd[cmd.index("-vf") + 1]
+        self.assertIn("scale=960x540", vf)
+        self.assertIn("fps=30", vf)
+        self.assertEqual(cmd[cmd.index("-level") + 1], "4.1")
+        self.assertIn("1500k", cmd)
+        self.assertNotIn("12M", cmd)
+        full = export_concat_argv(
+            "/tmp/c.txt", "/tmp/o.mp4", 1.0, 5.0, copy=False, env=env,
+            width=1920, height=1080, fps=60,
+        )
+        self.assertNotIn("-vf", full)
+        self.assertEqual(full[full.index("-level") + 1], "4.2")
 
     def test_cpu_preview_stays_zerolatency(self):
         preview = preview_argv(
