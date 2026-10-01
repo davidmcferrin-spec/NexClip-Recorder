@@ -193,14 +193,14 @@
         var note = ev.status === "C" || ev.status === "P" || ev.status === "M";
         var tied = !!ev.parent_id;
         var kind = typeKind(ev);
-        tr.className = (note ? "asrun-note" : "") + (tied ? " asrun-tied" : "") + (ev.on_timeline ? " asrun-hit" : "");
+        tr.className = (note ? "asrun-note" : "") + (tied ? " asrun-tied" : "") + (kind ? " asrun-" + kind : "") + (ev.on_timeline ? " asrun-hit" : "");
         tr.innerHTML =
           "<td class=\"asrun-time\">" + esc(ev.actual || "—") + "</td>" +
           "<td>" + esc(ev.machine) + "</td>" +
           "<td>" + esc(ev.house_id) + "</td>" +
-          "<td class=\"asrun-seg\">" + esc(ev.segment) + "</td>" +
-          "<td class=\"asrun-type" + (kind ? " " + kind : "") + "\">" + esc(typeLabel(ev)) + "</td>" +
-          "<td class=\"asrun-title\">" + esc(ev.title) + "</td>";
+          "<td>" + esc(ev.segment) + "</td>" +
+          "<td>" + esc(typeLabel(ev)) + "</td>" +
+          "<td>" + esc(ev.title) + "</td>";
         if (ev.on_timeline && ev.start_at) {
           tr.title = linked.length
             ? "Open this time on the linked inputs"
