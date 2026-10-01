@@ -15,11 +15,21 @@ foreach (['id="lkfs-panel"', 'measure-lkfs', 'id="scope"', 'id="quality"'] as $n
         exit(1);
     }
 }
-foreach (['id="export-dialog"', 'id="share-dialog"', 'This stream', 'All visible streams', 'Choose streams', 'Require sign-in to download', 'Share as URL', 'Copy to clipboard', 'id="export-share-copy"'] as $needle) {
+foreach (['id="export-dialog"', 'id="share-dialog"', 'This stream', 'All visible streams', 'Choose streams', 'Require sign-in to download', 'Share as URL', 'Copy to clipboard', 'id="export-share-copy"', 'id="export-auth-wrap"'] as $needle) {
     if (!str_contains($export, $needle)) {
         fwrite(STDERR, "export page missing {$needle}\n");
         exit(1);
     }
+}
+$order = ['>Streams<', 'export-quality', 'export-title', 'export-description', 'export-share-as-url', 'export-auth-wrap', 'export-send-wrap', 'export-submit'];
+$at = -1;
+foreach ($order as $marker) {
+    $pos = strpos($export, $marker);
+    if ($pos === false || $pos <= $at) {
+        fwrite(STDERR, "export dialog fields out of order at {$marker}\n");
+        exit(1);
+    }
+    $at = $pos;
 }
 if (!is_file($root . '/web/pages/share.html')) {
     fwrite(STDERR, "share page missing\n");

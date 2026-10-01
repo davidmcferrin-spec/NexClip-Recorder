@@ -100,28 +100,29 @@
           <option value="proxy">Proxy</option>
         </select>
       </label>
+      <label for="export-title">Title
+        <input id="export-title" maxlength="200" autocomplete="off" placeholder="Optional">
+      </label>
+      <label for="export-description">Description
+        <textarea id="export-description" maxlength="2000" rows="3" placeholder="Optional"></textarea>
+      </label>
+      <label class="check" for="export-share-as-url">
+        <input type="checkbox" id="export-share-as-url">
+        Share as URL
+      </label>
+      <p class="sub">After export, open the download link and copy it. Leave this off to only queue the trim.</p>
+      <div id="export-auth-wrap" hidden>
+        <label class="check" for="export-auth">
+          <input type="checkbox" id="export-auth">
+          Require sign-in to download
+        </label>
+      </div>
       <fieldset class="export-scope" id="export-send-wrap" hidden>
         <legend>Send to</legend>
         <div id="export-send" class="stream-picks"></div>
       </fieldset>
       <p class="sub" id="export-send-note" hidden>Copies start after this export finishes. A retry replaces the files at each selected destination.</p>
     </div>
-    <label for="export-title">Title
-      <input id="export-title" maxlength="200" autocomplete="off" placeholder="Optional">
-    </label>
-    <label for="export-description">Description
-      <textarea id="export-description" maxlength="2000" rows="3" placeholder="Optional"></textarea>
-    </label>
-    <label class="check" for="export-auth">
-      <input type="checkbox" id="export-auth">
-      Require sign-in to download
-    </label>
-    <p class="sub">Off by default. Anyone with the link can download until you turn this on.</p>
-    <label class="check" for="export-share-as-url">
-      <input type="checkbox" id="export-share-as-url">
-      Share as URL
-    </label>
-    <p class="sub">After export, open the download link and copy it. Leave this off to only queue the trim.</p>
     <div class="bar dialog-actions">
       <button type="button" id="export-cancel">Close</button>
       <button type="submit" class="primary" id="export-submit">Export</button>
@@ -1313,6 +1314,7 @@
     document.getElementById("export-description").value = "";
     document.getElementById("export-auth").checked = false;
     document.getElementById("export-share-as-url").checked = false;
+    syncShareAuth();
     document.getElementById("export-quality").value = "full";
     setScopeMode("one");
     paintStreamPicks();
@@ -1353,13 +1355,21 @@
     return {
       title: document.getElementById("export-title").value,
       description: document.getElementById("export-description").value,
-      auth_required: document.getElementById("export-auth").checked
+      auth_required: document.getElementById("export-share-as-url").checked &&
+        document.getElementById("export-auth").checked
     };
+  }
+
+  function syncShareAuth() {
+    var share = document.getElementById("export-share-as-url").checked;
+    if (!share) document.getElementById("export-auth").checked = false;
+    document.getElementById("export-auth-wrap").hidden = !share;
   }
 
   document.querySelectorAll('input[name="export-scope"]').forEach(function (el) {
     el.addEventListener("change", paintStreamPicks);
   });
+  document.getElementById("export-share-as-url").addEventListener("change", syncShareAuth);
   document.getElementById("export-cancel").onclick = function () {
     document.getElementById("export-dialog").close();
   };
