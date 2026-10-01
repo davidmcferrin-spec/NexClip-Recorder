@@ -40,6 +40,7 @@ are the source of truth. Excerpts: [`docs/references/`](docs/references/). Contr
 - Export job: concat overlapping chunks + trim in/out → one Premiere/FCPX-friendly MP4
 - Live multi-viewer **1 / 2 / 3 / 4 / 6** (time-lock chrome; WHEP player; confidence WFM / vectorscope / VU / 64-band RTA on the selected pane, default off)
 - Export editor: shared timeline, mark in/out, trim dialog (this stream, all visible, or chosen streams), full vs proxy, title, description, and a shareable download page
+- Send-to: after an export finishes, rclone can copy it to one or more shared sftp, S3, or SMB destinations. Transfers has the queue. A retry replaces those remote files. Destination passwords are encrypted with `NEXREC_DEST_KEY`
 - Retention cleanup worker + **twice-daily systemd timer**
 - NexClip **Mode 2** client: register, check-in (`buffer_earliest_at`), poll `export-requests/next` (204 = idle), start/complete/fail. Calendar does **not** start/stop record. Mode 1 is out of scope.
 - `setup.sh` builds pinned **FFmpeg 9.0.2** into `/usr/local` and installs pinned **MediaMTX v1.21.1** plus `mediamtx.service` (not distro `ffmpeg` for DeckLink)
@@ -105,7 +106,7 @@ Operators change the station in **Setup** (`/settings`), not by editing
 | Local PostgreSQL | `NEXREC_PGHOST`, `NEXREC_PGPORT`, `NEXREC_PGDATABASE`, `NEXREC_PGUSER`, `NEXREC_PGPASSWORD` |
 | How HTTP starts | `NEXREC_HTTP_PORT`, `NEXREC_ALLOW_HTTP` |
 | First local admin (only if no users exist) | `NEXREC_ADMIN_USER`, `NEXREC_ADMIN_PASSWORD` |
-| Secrets | `NEXREC_API_KEY`, `NEXREC_LDAP_BIND_PASSWORD`, `NEXAPP_LAUNCH_SECRET`, `NEXCLIP_ENROLLMENT_SECRET`, `NEXCLIP_NODE_TOKEN`, `NEXREC_PUBLISH_JWT`, `NEXREC_PGPASSWORD` |
+| Secrets | `NEXREC_API_KEY`, `NEXREC_LDAP_BIND_PASSWORD`, `NEXAPP_LAUNCH_SECRET`, `NEXCLIP_ENROLLMENT_SECRET`, `NEXCLIP_NODE_TOKEN`, `NEXREC_PUBLISH_JWT`, `NEXREC_PGPASSWORD`, `NEXREC_DEST_KEY` |
 
 First boot copies defaults into `app_settings`. After that the database wins
 until you set break-glass `NEXREC_ENV_OVERRIDES=1`. Restart record, cleanup,

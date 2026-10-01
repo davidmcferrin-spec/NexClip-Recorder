@@ -16,6 +16,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate, overlay_app_settings  # noqa: E402
+from nexrec_deliver import export_transfer_busy, promote_deliveries  # noqa: E402
 from nexrec_ffmpeg import export_concat_argv, parse_export_progress, pin_video_encoder  # noqa: E402
 from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, pin_process_utc, utcnow  # noqa: E402
 
@@ -195,22 +196,37 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
 
     primary = produced[0]
     size = os.path.getsize(primary) if os.path.isfile(primary) else 0
-    conn.execute(
+    done = conn.execute(
         """UPDATE exports SET status='done', progress_pct=100, finished_at=?, path=?, size_bytes=?, error=NULL
            WHERE id=? AND status='running'""",
         (iso_z(), primary, size, job["id"]),
     )
     conn.commit()
+    if int(done.rowcount or 0) > 0:
+        try:
+            queued = promote_deliveries(conn, job["id"])
+        except Exception as exc:  # noqa: BLE001 — the file is already done; the transfer worker can sweep
+            print(f"export {job['id']} transfer queue: {exc}", file=sys.stderr, flush=True)
+            queued = 0
+        if queued:
+            print(f"export {job['id']} queued {queued} transfer(s)", flush=True)
 
 
 def process_one(conn, env: dict, job_id: str | None = None) -> bool:
     if job_id:
         job = fetchone(conn, "SELECT * FROM exports WHERE id=?", (job_id,))
+        if job and export_transfer_busy(conn, str(job["id"])):
+            return False
     else:
-        job = fetchone(
+        job = None
+        queued = fetchall(
             conn,
-            "SELECT * FROM exports WHERE status='queued' ORDER BY created_at ASC LIMIT 1",
+            "SELECT * FROM exports WHERE status='queued' ORDER BY created_at ASC LIMIT 8",
         )
+        for candidate in queued:
+            if not export_transfer_busy(conn, str(candidate["id"])):
+                job = candidate
+                break
     if not job or str(job.get("status") or "") != "queued":
         return False
     started = conn.execute(
@@ -229,6 +245,11 @@ def process_one(conn, env: dict, job_id: str | None = None) -> bool:
         conn.execute(
             """UPDATE exports SET status='cancelled', finished_at=?, error=NULL
                WHERE id=? AND status IN ('running','queued')""",
+            (iso_z(), job["id"]),
+        )
+        conn.execute(
+            """UPDATE deliveries SET status='cancelled', finished_at=?, error=NULL, cancel_requested=0
+               WHERE export_id=? AND status='waiting'""",
             (iso_z(), job["id"]),
         )
         conn.commit()

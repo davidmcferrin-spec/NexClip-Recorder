@@ -15,6 +15,7 @@ function fail(string $msg): never {
 $allowed = [
     'mediamtx.service',
     'nexrec-export.service',
+    'nexrec-deliver.service',
     'nexrec-cleanup.service',
     'nexrec-cleanup.timer',
     'nexrec-analyze.service',

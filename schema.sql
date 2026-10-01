@@ -112,6 +112,43 @@ CREATE TABLE IF NOT EXISTS exports (
 CREATE INDEX IF NOT EXISTS idx_exports_status ON exports(status);
 CREATE INDEX IF NOT EXISTS idx_exports_expires ON exports(expires_at, protected);
 
+-- Global send-to targets. secret_cipher is AES-free HMAC ciphertext; the key
+-- is NEXREC_DEST_KEY in nexrec.env and is never stored here.
+CREATE TABLE IF NOT EXISTS destinations (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  host TEXT NOT NULL DEFAULT '',
+  port INTEGER,
+  remote_prefix TEXT NOT NULL DEFAULT '',
+  username TEXT NOT NULL DEFAULT '',
+  secret_cipher TEXT NOT NULL DEFAULT '',
+  extra TEXT NOT NULL DEFAULT '{}',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+-- One row per export + destination. waiting is not in the copy queue yet.
+CREATE TABLE IF NOT EXISTS deliveries (
+  id TEXT PRIMARY KEY,
+  export_id TEXT NOT NULL,
+  destination_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'waiting',
+  remote_path TEXT NOT NULL DEFAULT '',
+  error TEXT,
+  created_at TEXT NOT NULL,
+  queued_at TEXT,
+  started_at TEXT,
+  finished_at TEXT,
+  progress_pct DOUBLE PRECISION,
+  cancel_requested INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_export_dest ON deliveries(export_id, destination_id);
+CREATE INDEX IF NOT EXISTS idx_deliveries_status ON deliveries(status, queued_at);
+
 CREATE TABLE IF NOT EXISTS nexclip_events (
   id TEXT PRIMARY KEY,
   input_id TEXT,

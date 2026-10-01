@@ -1,0 +1,303 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NexCLIP Recorder — Transfers</title>
+<link rel="stylesheet" href="/assets/nexrec.css">
+<script src="/assets/nexrec-ui.js"></script>
+</head>
+<body>
+<nav class="topnav">
+  <a class="brand" href="/live">NexCLIP Recorder</a>
+  <a href="/live">Live</a>
+  <a href="/export">Export</a>
+  <a class="active" href="/transfers" data-auth-role="admin,operator">Transfers</a>
+  <a href="/asruns">As-run</a>
+  <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
+  <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
+  <a href="/settings" data-auth-role="admin,operator">Setup</a>
+  <a href="/users" data-auth-role="admin">Users</a>
+  <a href="/services" data-auth-role="admin">Services</a>
+  <button type="button" class="theme-toggle" id="theme-toggle">Light</button>
+  <span class="nav-version" id="nav-version" hidden></span>
+  <span class="nav-who" id="nav-who" hidden></span>
+  <button type="button" class="nav-logout" id="nav-logout">Log out</button>
+</nav>
+<main>
+  <div class="bar">
+    <h1 style="margin:0">Transfer queue</h1>
+    <button type="button" id="refresh">Refresh</button>
+    <span class="ok-msg" id="msg"></span>
+  </div>
+  <div class="panel">
+    <p class="sub">A copy is queued only after that export finishes. The deliver service runs one at a time and replaces the same remote files when the export is retried. Waiting rows are held until then.</p>
+    <table>
+      <thead>
+        <tr><th>Export</th><th>Destination</th><th>Remote</th><th>Status</th><th></th><th></th></tr>
+      </thead>
+      <tbody id="queue"></tbody>
+    </table>
+  </div>
+  <div class="panel" id="dest-panel" hidden>
+    <div class="bar">
+      <h2 style="margin:0">Destinations</h2>
+      <button type="button" class="primary" id="dest-new">New destination</button>
+    </div>
+    <p class="sub">Shared by every operator. Passwords are encrypted with <code>NEXREC_DEST_KEY</code> and are not shown again. The deliver service needs <code>rclone</code> on the host for sftp, S3, and SMB.</p>
+    <table>
+      <thead>
+        <tr><th>Name</th><th>Protocol</th><th>Host</th><th>Path</th><th>User</th><th>Password</th><th></th></tr>
+      </thead>
+      <tbody id="destinations"></tbody>
+    </table>
+  </div>
+</main>
+<dialog id="dest-dialog" class="nx-dialog wide">
+  <form id="dest-form">
+    <h1 id="dest-title">Destination</h1>
+    <input type="hidden" id="d-id">
+    <label>Name <input id="d-name" maxlength="80" required autocomplete="off"></label>
+    <label>Protocol
+      <select id="d-protocol">
+        <option value="sftp">SFTP</option>
+        <option value="s3">S3</option>
+        <option value="smb">SMB</option>
+      </select>
+    </label>
+    <label id="lab-host">Host <input id="d-host" maxlength="255" autocomplete="off" placeholder="files.example"></label>
+    <label>Port <input id="d-port" inputmode="numeric" autocomplete="off" placeholder="default"></label>
+    <label>Username <input id="d-user" maxlength="128" autocomplete="off"></label>
+    <label>Password <input id="d-secret" type="password" maxlength="512" autocomplete="new-password" placeholder="Leave blank to keep the saved password"></label>
+    <label id="lab-key">SFTP key path <input id="d-key" autocomplete="off" placeholder="/var/lib/nexrec/keys/id_ed25519"></label>
+    <label id="lab-bucket">Bucket <input id="d-bucket" maxlength="200" autocomplete="off"></label>
+    <label id="lab-region">Region <input id="d-region" maxlength="64" autocomplete="off" placeholder="us-east-1"></label>
+    <label id="lab-share">Share <input id="d-share" maxlength="200" autocomplete="off"></label>
+    <label id="lab-domain">Domain <input id="d-domain" maxlength="64" autocomplete="off"></label>
+    <label class="check" id="lab-path"><input type="checkbox" id="d-path"> Path-style URLs</label>
+    <label>Remote folder <input id="d-prefix" maxlength="400" autocomplete="off" placeholder="incoming"></label>
+    <label class="check"><input type="checkbox" id="d-enabled" checked> Enabled</label>
+    <p class="sub" id="dest-msg"></p>
+    <div class="bar dialog-actions">
+      <button type="button" id="dest-cancel">Close</button>
+      <button type="submit" class="primary" id="dest-save">Save</button>
+    </div>
+  </form>
+</dialog>
+<script src="/assets/nexrec-auth-gate.js"></script>
+<script>
+var CAN_EDIT = false;
+NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(function (user) {
+  CAN_EDIT = user && user.role === "admin";
+  document.getElementById("dest-panel").hidden = !CAN_EDIT;
+  refreshQueue();
+  if (CAN_EDIT) loadDestinations();
+  setInterval(refreshQueue, 3000);
+});
+
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+  });
+}
+function say(text, bad) {
+  var el = document.getElementById("msg");
+  el.style.color = bad ? "var(--bad)" : "var(--ok)";
+  el.textContent = text || "";
+}
+function badge(status) {
+  var cls = "off";
+  if (status === "done" || status === "running") cls = "on";
+  else if (status === "error") cls = "bad";
+  else if (status === "queued" || status === "waiting") cls = "warn";
+  var label = status === "waiting" ? "waiting for export" : (status || "unknown");
+  return '<span class="badge ' + cls + '">' + esc(label) + "</span>";
+}
+function destPath(row) {
+  var extra = row.extra || {};
+  var head = row.protocol === "s3" ? (extra.bucket || "") : (row.protocol === "smb" ? (extra.share || "") : "");
+  var bits = [];
+  if (head) bits.push(head);
+  if (row.remote_prefix) bits.push(row.remote_prefix);
+  return bits.join("/") || "—";
+}
+
+function refreshQueue() {
+  return NexRecAuth.recApi("deliveries_list").then(function (d) {
+    paintQueue(d.deliveries || []);
+  }).catch(function (e) {
+    say(e.message, true);
+  });
+}
+function paintQueue(rows) {
+  var body = document.getElementById("queue");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="6">No transfers.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function (row) {
+    var title = row.export_title || row.export_id;
+    var progress = row.progress_pct == null ? "" : (" " + Math.round(row.progress_pct) + "%");
+    var err = row.error ? '<div class="meta" title="' + esc(row.error) + '">' + esc(row.error.slice(0, 180)) + "</div>" : "";
+    var actions = "";
+    if (row.status === "queued" || row.status === "running" || row.status === "waiting") {
+      actions += '<button type="button" data-act="cancel" data-id="' + esc(row.id) + '">Cancel</button>';
+    }
+    if ((row.status === "error" || row.status === "cancelled") && row.export_status === "done") {
+      actions += '<button type="button" data-act="retry" data-id="' + esc(row.id) + '">Retry</button>';
+    }
+    return "<tr>" +
+      "<td>" + esc(title) + '<div class="meta">' + esc(row.export_id) + "</div></td>" +
+      "<td>" + esc(row.destination_name || row.destination_id) + " <span class=\"meta\">" + esc(row.protocol) + "</span></td>" +
+      "<td class=\"meta\">" + esc(row.remote_path || "—") + "</td>" +
+      "<td>" + badge(row.status) + progress + err + "</td>" +
+      "<td class=\"meta\">" + esc(row.started_at || row.queued_at || "") + "</td>" +
+      "<td class=\"unit-actions\">" + actions + "</td></tr>";
+  }).join("");
+}
+
+function loadDestinations() {
+  return NexRecAuth.recApi("destinations_list").then(function (d) {
+    paintDestinations(d.destinations || []);
+  }).catch(function (e) {
+    say(e.message, true);
+  });
+}
+function paintDestinations(rows) {
+  var body = document.getElementById("destinations");
+  if (!rows.length) {
+    body.innerHTML = '<tr><td colspan="7">No destinations.</td></tr>';
+    return;
+  }
+  body.innerHTML = rows.map(function (row) {
+    var flag = row.enabled ? "" : ' <span class="badge">disabled</span>';
+    return "<tr>" +
+      "<td>" + esc(row.name) + flag + "</td>" +
+      "<td>" + esc(row.protocol) + "</td>" +
+      "<td>" + esc(row.host || "—") + (row.port ? ":" + esc(row.port) : "") + "</td>" +
+      "<td class=\"meta\">" + esc(destPath(row)) + "</td>" +
+      "<td>" + esc(row.username || "—") + "</td>" +
+      "<td>" + (row.has_secret ? "saved" : "—") + "</td>" +
+      "<td class=\"unit-actions\">" +
+        '<button type="button" data-act="edit" data-id="' + esc(row.id) + '">Edit</button>' +
+        '<button type="button" data-act="delete" data-id="' + esc(row.id) + '">Delete</button>' +
+      "</td></tr>";
+  }).join("");
+  body._rows = rows;
+}
+
+function showProtocolFields() {
+  var proto = document.getElementById("d-protocol").value;
+  document.getElementById("lab-key").hidden = proto !== "sftp";
+  document.getElementById("lab-bucket").hidden = proto !== "s3";
+  document.getElementById("lab-region").hidden = proto !== "s3";
+  document.getElementById("lab-path").hidden = proto !== "s3";
+  document.getElementById("lab-share").hidden = proto !== "smb";
+  document.getElementById("lab-domain").hidden = proto !== "smb";
+  var host = document.getElementById("lab-host");
+  host.firstChild.textContent = proto === "s3" ? "Endpoint " : "Host ";
+}
+function openDest(row) {
+  var extra = (row && row.extra) || {};
+  document.getElementById("dest-title").textContent = row ? "Edit destination" : "New destination";
+  document.getElementById("d-id").value = row ? row.id : "";
+  document.getElementById("d-name").value = row ? row.name : "";
+  document.getElementById("d-protocol").value = row ? row.protocol : "sftp";
+  document.getElementById("d-host").value = row ? (row.host || "") : "";
+  document.getElementById("d-port").value = row && row.port ? String(row.port) : "";
+  document.getElementById("d-user").value = row ? (row.username || "") : "";
+  document.getElementById("d-secret").value = "";
+  document.getElementById("d-key").value = extra.key_path || "";
+  document.getElementById("d-bucket").value = extra.bucket || "";
+  document.getElementById("d-region").value = extra.region || "";
+  document.getElementById("d-share").value = extra.share || "";
+  document.getElementById("d-domain").value = extra.domain || "";
+  document.getElementById("d-path").checked = !!extra.path_style;
+  document.getElementById("d-prefix").value = row ? (row.remote_prefix || "") : "";
+  document.getElementById("d-enabled").checked = row ? !!row.enabled : true;
+  document.getElementById("dest-msg").textContent = "";
+  showProtocolFields();
+  var dialog = document.getElementById("dest-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+
+document.getElementById("refresh").onclick = function () {
+  say("");
+  refreshQueue();
+  if (CAN_EDIT) loadDestinations();
+};
+document.getElementById("d-protocol").onchange = showProtocolFields;
+document.getElementById("dest-new").onclick = function () { openDest(null); };
+document.getElementById("dest-cancel").onclick = function () {
+  document.getElementById("dest-dialog").close();
+};
+document.getElementById("dest-form").addEventListener("submit", function (ev) {
+  ev.preventDefault();
+  var msg = document.getElementById("dest-msg");
+  msg.textContent = "";
+  var body = {
+    id: document.getElementById("d-id").value,
+    name: document.getElementById("d-name").value,
+    protocol: document.getElementById("d-protocol").value,
+    host: document.getElementById("d-host").value,
+    port: document.getElementById("d-port").value,
+    username: document.getElementById("d-user").value,
+    secret: document.getElementById("d-secret").value,
+    remote_prefix: document.getElementById("d-prefix").value,
+    enabled: document.getElementById("d-enabled").checked,
+    extra: {
+      bucket: document.getElementById("d-bucket").value,
+      region: document.getElementById("d-region").value,
+      share: document.getElementById("d-share").value,
+      domain: document.getElementById("d-domain").value,
+      key_path: document.getElementById("d-key").value,
+      path_style: document.getElementById("d-path").checked ? 1 : 0
+    }
+  };
+  document.getElementById("dest-save").disabled = true;
+  NexRecAuth.recApi("destination_save", body).then(function () {
+    document.getElementById("dest-save").disabled = false;
+    document.getElementById("dest-dialog").close();
+    say("Destination saved.");
+    return loadDestinations();
+  }).catch(function (e) {
+    document.getElementById("dest-save").disabled = false;
+    msg.style.color = "var(--bad)";
+    msg.textContent = e.message;
+  });
+});
+document.getElementById("queue").addEventListener("click", function (ev) {
+  var btn = ev.target.closest("button");
+  if (!btn) return;
+  var id = btn.getAttribute("data-id");
+  var act = btn.getAttribute("data-act");
+  say("");
+  var call = act === "retry" ? "delivery_retry" : "delivery_cancel";
+  NexRecAuth.recApi(call, { id: id }).then(function () {
+    return refreshQueue();
+  }).catch(function (e) {
+    say(e.message, true);
+  });
+});
+document.getElementById("destinations").addEventListener("click", function (ev) {
+  var btn = ev.target.closest("button");
+  if (!btn) return;
+  var id = btn.getAttribute("data-id");
+  var rows = document.getElementById("destinations")._rows || [];
+  var row = null;
+  for (var i = 0; i < rows.length; i++) if (rows[i].id === id) row = rows[i];
+  if (btn.getAttribute("data-act") === "edit") {
+    if (row) openDest(row);
+    return;
+  }
+  if (!window.confirm("Delete this destination?")) return;
+  NexRecAuth.recApi("destination_delete", { id: id }).then(function () {
+    say("Destination deleted.");
+    return loadDestinations();
+  }).catch(function (e) {
+    say(e.message, true);
+  });
+});
+</script>
+</body>
+</html>

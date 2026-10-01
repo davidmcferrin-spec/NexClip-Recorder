@@ -63,7 +63,7 @@ esac
 
 # Fixed units plus per-input record/preview instances.
 # Input ids match the app: [a-z0-9][a-z0-9-]{0,31}
-UNIT_RE='^(mediamtx\.service|nexrec-export\.service|nexrec-cleanup\.(service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(service|timer)|nexrec-decklink-configure\.service|nexrec-(record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$'
+UNIT_RE='^(mediamtx\.service|nexrec-export\.service|nexrec-deliver\.service|nexrec-cleanup\.(service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(service|timer)|nexrec-decklink-configure\.service|nexrec-(record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$'
 if [[ ! "$UNIT" =~ $UNIT_RE ]]; then
   echo "unit not allowed" >&2
   exit 2

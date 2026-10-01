@@ -13,6 +13,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
+from nexrec_deliver import release_export  # noqa: E402
 from nexrec_index import backfill_thumbs, thumb_path_for  # noqa: E402
 from nexrec_util import (  # noqa: E402
     data_paths,
@@ -82,6 +83,8 @@ def expire_exports(conn, now_iso: str) -> int:
     )
     n = 0
     for row in rows:
+        if not release_export(conn, str(row["id"])):
+            continue
         if row.get("path"):
             unlink_quiet(row["path"])
         conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))
@@ -177,6 +180,8 @@ def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> 
             """
         ).fetchone()
         if not row:
+            break
+        if not release_export(conn, str(row["id"])):
             break
         unlink_quiet(row["path"])
         conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))

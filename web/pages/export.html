@@ -12,6 +12,7 @@
   <a class="brand" href="/live">NexCLIP Recorder</a>
   <a href="/live">Live</a>
   <a class="active" href="/export">Export</a>
+  <a href="/transfers" data-auth-role="admin,operator">Transfers</a>
   <a href="/asruns">As-run</a>
   <a href="/metrics" data-auth-role="admin,operator">Metrics</a>
   <a href="/inputs" data-auth-role="admin,operator">Inputs</a>
@@ -73,7 +74,7 @@
   </div>
   <div class="panel" id="jobs-panel">
     <h1>Queue</h1>
-    <p class="sub">The export service works this list one job at a time. ETA uses the trim length and FFmpeg’s progress. Cancel stops a queued job immediately and asks a running job to stop.</p>
+    <p class="sub">The export service works this list one job at a time. ETA uses the trim length and FFmpeg’s progress. Cancel stops a queued job immediately and asks a running job to stop. Send-to copies are on Transfers. They start after the export finishes, and a retry replaces those files.</p>
     <table>
       <thead><tr><th>Job</th><th>Window</th><th>Inputs</th><th>Quality</th><th>Status</th><th>ETA</th><th></th></tr></thead>
       <tbody id="jobs"></tbody>
@@ -99,6 +100,11 @@
           <option value="proxy">Proxy</option>
         </select>
       </label>
+      <fieldset class="export-scope" id="export-send-wrap" hidden>
+        <legend>Send to</legend>
+        <div id="export-send" class="stream-picks"></div>
+      </fieldset>
+      <p class="sub" id="export-send-note" hidden>Copies start after this export finishes. A retry replaces the files at each selected destination.</p>
     </div>
     <label for="export-title">Title
       <input id="export-title" maxlength="200" autocomplete="off" placeholder="Optional">
@@ -872,8 +878,9 @@
       if (can && (j.status === "queued" || j.status === "running") && Number(j.cancel_requested) !== 1) {
         bits.push('<button type="button" data-act="export_cancel" data-id="' + esc(j.id) + '">Cancel</button>');
       }
-      if (can && (j.status === "error" || j.status === "cancelled")) {
-        bits.push('<button type="button" data-act="export_retry" data-id="' + esc(j.id) + '">Retry</button>');
+      if (can && (j.status === "error" || j.status === "cancelled" || j.status === "done")) {
+        var again = j.status === "done" ? "Re-run" : "Retry";
+        bits.push('<button type="button" data-act="export_retry" data-id="' + esc(j.id) + '">' + again + "</button>");
       }
       if (can && j.status !== "running") {
         bits.push('<button type="button" data-act="export_remove" data-id="' + esc(j.id) + '">Remove</button>');
@@ -1309,8 +1316,37 @@
     document.getElementById("export-quality").value = "full";
     setScopeMode("one");
     paintStreamPicks();
+    loadSendTo();
     dialogMsg("");
     if (!dialog.open) dialog.showModal();
+  }
+
+  function loadSendTo() {
+    var wrap = document.getElementById("export-send-wrap");
+    var note = document.getElementById("export-send-note");
+    var box = document.getElementById("export-send");
+    var submit = document.getElementById("export-submit");
+    wrap.hidden = true;
+    note.hidden = true;
+    box.innerHTML = "";
+    submit.disabled = true;
+    NexRecAuth.recApi("destinations_list", { enabled: "1" }).then(function (d) {
+      var rows = (d.destinations || []).filter(function (row) { return row.enabled; });
+      if (!rows.length) {
+        box.innerHTML = '<span class="meta">No destinations yet. An admin adds them on Transfers.</span>';
+      } else {
+        box.innerHTML = rows.map(function (row) {
+          return '<label class="check"><input type="checkbox" value="' + esc(row.id) + '"> ' +
+            esc(row.name) + ' <span class="meta">' + esc(row.protocol) + "</span></label>";
+        }).join("");
+      }
+      wrap.hidden = false;
+      note.hidden = false;
+      submit.disabled = false;
+    }).catch(function () {
+      wrap.hidden = true;
+      submit.disabled = false;
+    });
   }
 
   function exportFieldPayload() {
@@ -1359,7 +1395,14 @@
       scope: mode,
       title: fields.title,
       description: fields.description,
-      auth_required: fields.auth_required
+      auth_required: fields.auth_required,
+      destination_ids: (function () {
+        var ids = [];
+        document.querySelectorAll("#export-send input[type=checkbox]:checked").forEach(function (el) {
+          ids.push(el.value);
+        });
+        return ids;
+      })()
     }).then(function (d) {
       submit.disabled = false;
       document.getElementById("export-dialog").close();

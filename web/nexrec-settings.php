@@ -379,6 +379,7 @@ function nexrec_settings_secret_env_keys(): array {
         'NEXCLIP_API_KEY' => 'Legacy NexClip API key',
         'NEXCLIP_NODE_TOKEN' => 'NexClip node bearer after register',
         'NEXREC_PUBLISH_JWT' => 'MediaMTX publish JWT',
+        'NEXREC_DEST_KEY' => 'Send-to password encryption key',
         'NEXREC_HTTP_PORT' => 'HTTP listen port (process bootstrap)',
         'NEXREC_ALLOW_HTTP' => 'Allow plain HTTP (demo bootstrap)',
     ];

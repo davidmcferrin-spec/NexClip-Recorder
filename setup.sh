@@ -32,7 +32,7 @@ NEXREC_STOPPED_UNITS=()
 
 nexrec_active_worker_units() {
   local unit listed
-  printf '%s\n' nexrec-export.service nexrec-analyze.service
+  printf '%s\n' nexrec-export.service nexrec-deliver.service nexrec-analyze.service
   listed="$(systemctl list-units --type=service --state=active --no-legend --plain \
     'nexrec-record@*' 'nexrec-preview@*' 2>/dev/null || true)"
   while read -r unit _; do
@@ -252,7 +252,7 @@ fi
 nexrec_grant_www_data
 
 systemctl daemon-reload
-systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
+systemctl enable --now nexrec-export.service nexrec-deliver.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
 nexrec_start_workers
 
 # Hourly as-run import. cron.d must be root-owned and not writable by group/other.

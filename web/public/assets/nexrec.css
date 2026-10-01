@@ -285,6 +285,7 @@ tr.asrun-sqz { background: rgba(192, 132, 252, .20); }
 .thresh-row > div { min-width: 140px; }
 .lkfs-wrap { position: relative; height: 150px; background: #05080c; border-radius: 6px; border: 1px solid var(--edge); }
 .lkfs-wrap svg { width: 100%; height: 100%; display: block; }
+dialog.nx-dialog.wide { width: min(640px, calc(100vw - 32px)); }
 dialog.nx-dialog {
   width: min(440px, calc(100vw - 32px));
   max-height: min(90vh, 720px);

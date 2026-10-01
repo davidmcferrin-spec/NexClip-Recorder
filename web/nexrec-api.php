@@ -8,6 +8,7 @@ require_once __DIR__ . '/nexrec-auth-lib.php';
 require_once __DIR__ . '/nexrec-decklink.php';
 require_once __DIR__ . '/nexrec-forecast.php';
 require_once __DIR__ . '/nexrec-asrun.php';
+require_once __DIR__ . '/nexrec-deliver.php';
 
 function nexrec_api_fail(int $status, string $message): never {
     if (!headers_sent()) {
@@ -756,6 +757,11 @@ try {
         $description = nexrec_share_description((string) ($body['description'] ?? ''));
         $authRequired = nexrec_flag($body, 'auth_required', 0);
         $protected = !empty($body['protected']) ? 1 : 0;
+        $destinationIds = $body['destination_ids'] ?? [];
+        if (!is_array($destinationIds)) {
+            nexrec_api_fail(400, 'destination_ids must be a list');
+        }
+        $destinationIds = nexrec_deliver_ids($destinationIds);
         $expires = $protected ? null : gmdate('Y-m-d\TH:i:s\Z', time() + $days * 86400);
         $st = nexrec_db()->prepare(
             "INSERT INTO exports (id,status,input_ids,t_in,t_out,quality,scope,path,size_bytes,protected,error,created_by,created_at,expires_at,nexclip_schedule_id,title,description,auth_required,share_token)
@@ -776,6 +782,7 @@ try {
         $st->bindValue(':auth', $authRequired, SQLITE3_INTEGER);
         $st->bindValue(':token', $token, SQLITE3_TEXT);
         $st->execute();
+        nexrec_deliver_attach($expId, $destinationIds);
         nexrec_api_ok(['export_id' => $expId, 'share_token' => $token]);
     }
 
@@ -861,6 +868,7 @@ try {
             $up->bindValue(':t', nexrec_now_iso(), SQLITE3_TEXT);
             $up->bindValue(':id', $id, SQLITE3_TEXT);
             $up->execute();
+            nexrec_deliver_cancel_waiting($id);
         } elseif ($status === 'running') {
             $up = nexrec_db()->prepare('UPDATE exports SET cancel_requested=1 WHERE id=:id AND status=\'running\'');
             $up->bindValue(':id', $id, SQLITE3_TEXT);
@@ -874,14 +882,25 @@ try {
     if ($action === 'export_retry') {
         nexrec_require_roles(['admin', 'operator']);
         $id = (string) ($body['id'] ?? '');
+        $st = nexrec_db()->prepare('SELECT status FROM exports WHERE id=:id');
+        $st->bindValue(':id', $id, SQLITE3_TEXT);
+        $row = nexrec_row($st->execute());
+        if ($row === null) {
+            nexrec_api_fail(404, 'not found');
+        }
+        $status = (string) ($row['status'] ?? '');
+        if (!in_array($status, ['error', 'cancelled', 'done'], true)) {
+            nexrec_api_fail(400, 'not retryable');
+        }
         $up = nexrec_db()->prepare(
             "UPDATE exports SET status='queued', error=NULL, progress_pct=NULL, progress_at=NULL,
              started_at=NULL, finished_at=NULL, encode_mode='', cancel_requested=0, path=NULL, size_bytes=NULL
-             WHERE id=:id AND status IN ('error','cancelled')"
+             WHERE id=:id AND status IN ('error','cancelled','done')"
         );
         $up->bindValue(':id', $id, SQLITE3_TEXT);
         $up->execute();
-        nexrec_api_ok(['id' => $id]);
+        $stopping = nexrec_deliver_hold($id);
+        nexrec_api_ok(['id' => $id, 'transfer_stopping' => $stopping]);
     }
 
     if ($action === 'export_remove') {
@@ -896,6 +915,16 @@ try {
         if ((string) $row['status'] === 'running') {
             nexrec_api_fail(400, 'cancel the running export first');
         }
+        $busy = nexrec_db()->prepare(
+            "SELECT id FROM deliveries WHERE export_id=:id AND status IN ('queued','running') LIMIT 1"
+        );
+        $busy->bindValue(':id', $id, SQLITE3_TEXT);
+        if (nexrec_row($busy->execute()) !== null) {
+            nexrec_api_fail(400, 'cancel the transfer first');
+        }
+        $drop = nexrec_db()->prepare('DELETE FROM deliveries WHERE export_id=:id');
+        $drop->bindValue(':id', $id, SQLITE3_TEXT);
+        $drop->execute();
         $path = (string) ($row['path'] ?? '');
         if ($path !== '' && is_file($path) && nexrec_export_file_allowed($path)) {
             unlink($path);
@@ -1390,6 +1419,41 @@ try {
             }
         }
         nexrec_api_ok(['jobs' => $out]);
+    }
+
+    if ($action === 'destinations_list') {
+        nexrec_require_roles(['admin', 'operator']);
+        $only = (string) ($_GET['enabled'] ?? $body['enabled'] ?? '') === '1';
+        nexrec_api_ok(['destinations' => nexrec_destinations_public($only)]);
+    }
+
+    if ($action === 'destination_save') {
+        $me = nexrec_require_roles(['admin']);
+        $saved = nexrec_destination_save($body, (string) ($me['username'] ?? ''));
+        nexrec_api_ok(['destination' => $saved]);
+    }
+
+    if ($action === 'destination_delete') {
+        nexrec_require_roles(['admin']);
+        nexrec_destination_delete((string) ($body['id'] ?? ''));
+        nexrec_api_ok(['id' => (string) ($body['id'] ?? '')]);
+    }
+
+    if ($action === 'deliveries_list') {
+        nexrec_require_roles(['admin', 'operator']);
+        nexrec_api_ok(['deliveries' => nexrec_deliveries_public()]);
+    }
+
+    if ($action === 'delivery_cancel') {
+        nexrec_require_roles(['admin', 'operator']);
+        nexrec_delivery_cancel((string) ($body['id'] ?? ''));
+        nexrec_api_ok(['id' => (string) ($body['id'] ?? '')]);
+    }
+
+    if ($action === 'delivery_retry') {
+        nexrec_require_roles(['admin', 'operator']);
+        nexrec_delivery_retry((string) ($body['id'] ?? ''));
+        nexrec_api_ok(['id' => (string) ($body['id'] ?? '')]);
     }
 
     nexrec_api_fail(400, 'unknown action');

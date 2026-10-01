@@ -1,0 +1,16 @@
+[Unit]
+Description=NexCLIP Recorder transfer queue
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/nexrec/nexrec.env
+Environment=TZ=UTC
+ExecStart=/usr/bin/python3 /opt/NexClip-Recorder/worker/nexrec-deliver.py --env /etc/nexrec/nexrec.env
+Restart=always
+RestartSec=3
+User=www-data
+Group=www-data
+
+[Install]
+WantedBy=multi-user.target
