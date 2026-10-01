@@ -146,6 +146,9 @@ function nexrec_destination_normalize(array $body, ?array $existing): array {
         }
     }
     $username = trim((string) ($body['username'] ?? ''));
+    if ($username === '') {
+        throw new InvalidArgumentException($protocol === 's3' ? 'access key is required' : 'username is required');
+    }
     if (strlen($username) > 128 || strpbrk($username, "\r\n") !== false) {
         throw new InvalidArgumentException('username is not allowed');
     }

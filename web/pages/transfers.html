@@ -199,6 +199,12 @@ function authBits(row) {
   if (extra.has_key) bits.push("key");
   return bits.length ? bits.join(", ") : "—";
 }
+var destSaved = { secret: false, key: false };
+function setRequired(id, on) {
+  var el = document.getElementById(id);
+  if (on) el.setAttribute("required", "");
+  else el.removeAttribute("required");
+}
 function showProtocolFields() {
   var proto = document.getElementById("d-protocol").value;
   var sftp = proto === "sftp";
@@ -219,9 +225,19 @@ function showProtocolFields() {
   document.getElementById("lab-secret-name").textContent = s3 ? "Secret key" : "Password";
   document.getElementById("d-port").placeholder = ftp ? "21" : (smb ? "445" : "22");
   document.getElementById("d-host").placeholder = s3 ? "https://s3.example" : "files.example";
+  ["d-host", "d-port", "d-user", "d-secret", "d-bucket", "d-share", "d-region", "d-domain", "d-prefix", "d-key-pass", "d-key"].forEach(function (id) {
+    setRequired(id, false);
+  });
+  setRequired("d-user", true);
+  setRequired("d-host", !s3);
+  setRequired("d-bucket", s3);
+  setRequired("d-share", smb);
+  setRequired("d-secret", !sftp && !destSaved.secret);
 }
 function openDest(row) {
   var extra = (row && row.extra) || {};
+  destSaved.secret = !!(row && row.has_secret);
+  destSaved.key = !!extra.has_key;
   document.getElementById("dest-title").textContent = row ? "Edit destination" : "New destination";
   document.getElementById("d-id").value = row ? row.id : "";
   document.getElementById("d-name").value = row ? row.name : "";
@@ -234,7 +250,7 @@ function openDest(row) {
   document.getElementById("d-key-pass").value = "";
   document.getElementById("d-key-note").textContent = extra.has_key
     ? "A key is saved. Choose a file only to replace it."
-    : "";
+    : (destSaved.secret ? "" : "A password or a private key is required.");
   document.getElementById("d-bucket").value = extra.bucket || "";
   document.getElementById("d-region").value = extra.region || "";
   document.getElementById("d-share").value = extra.share || "";
@@ -270,6 +286,16 @@ document.getElementById("dest-form").addEventListener("submit", function (ev) {
   ev.preventDefault();
   var msg = document.getElementById("dest-msg");
   msg.textContent = "";
+  var form = document.getElementById("dest-form");
+  if (!form.reportValidity()) return;
+  var proto = document.getElementById("d-protocol").value;
+  var keyInput = document.getElementById("d-key");
+  var hasFile = keyInput.files && keyInput.files.length > 0;
+  if (proto === "sftp" && !document.getElementById("d-secret").value && !hasFile && !destSaved.secret && !destSaved.key) {
+    msg.style.color = "var(--bad)";
+    msg.textContent = "A password or a private key is required.";
+    return;
+  }
   document.getElementById("dest-save").disabled = true;
   readPrivateKey().then(function (pem) {
     return NexRecAuth.recApi("destination_save", {
