@@ -26,24 +26,57 @@ nexrec_open_parents() {
   done
 }
 
+# Workers keep the Python they imported at start. Stop them before replacing
+# the tree, then start those same units after the new files are in place.
+NEXREC_STOPPED_UNITS=()
+
+nexrec_active_worker_units() {
+  local unit listed
+  printf '%s\n' nexrec-export.service nexrec-analyze.service
+  listed="$(systemctl list-units --type=service --state=active --no-legend --plain \
+    'nexrec-record@*' 'nexrec-preview@*' 2>/dev/null || true)"
+  while read -r unit _; do
+    [[ -n "$unit" ]] || continue
+    printf '%s\n' "$unit"
+  done <<<"$listed"
+}
+
+nexrec_stop_workers() {
+  local unit
+  NEXREC_STOPPED_UNITS=()
+  while read -r unit; do
+    [[ -n "$unit" ]] || continue
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+      log "stop $unit"
+      if systemctl stop "$unit"; then
+        NEXREC_STOPPED_UNITS+=("$unit")
+      else
+        warn "could not stop $unit"
+      fi
+    fi
+  done < <(nexrec_active_worker_units)
+}
+
+nexrec_start_workers() {
+  local unit
+  [[ ${#NEXREC_STOPPED_UNITS[@]} -gt 0 ]] || return 0
+  for unit in "${NEXREC_STOPPED_UNITS[@]}"; do
+    log "start $unit"
+    systemctl start "$unit" || warn "could not start $unit"
+  done
+}
+
 # Already-running workers keep the groups they had at start. usermod -aG
 # does not update them; a restart does, and it also loads a new encoder.
 nexrec_restart_encoders() {
-  local unit listed
-  if systemctl is-active --quiet nexrec-export.service; then
-    log "restart nexrec-export.service"
-    systemctl restart nexrec-export.service || warn "could not restart nexrec-export.service"
-  fi
-  listed="$(systemctl list-units --type=service --state=active --no-legend --plain \
-    'nexrec-record@*' 'nexrec-preview@*' 2>/dev/null || true)"
-  if [[ -z "${listed//[[:space:]]/}" ]]; then
-    return 0
-  fi
-  while read -r unit _; do
+  local unit
+  while read -r unit; do
     [[ -n "$unit" ]] || continue
-    log "restart $unit"
-    systemctl restart "$unit" || warn "could not restart $unit"
-  done <<<"$listed"
+    if systemctl is-active --quiet "$unit" 2>/dev/null; then
+      log "restart $unit"
+      systemctl restart "$unit" || warn "could not restart $unit"
+    fi
+  done < <(nexrec_active_worker_units)
 }
 
 nexrec_grant_www_data() {
@@ -168,10 +201,16 @@ if [[ ! -f "$ETC/inputs/demo.env" ]]; then
   cp "$ROOT/inputs-example.env" "$ETC/inputs/demo.env"
 fi
 
-# Deploy tree (copy, do not clobber a git clone if APP_ROOT is the clone).
+# Stop workers that have the Python tree loaded, then replace the install
+# copy. Running this script from the install tree itself has nothing else to
+# copy; the stop/start still reloads the files already in that directory.
+nexrec_stop_workers
 if [[ "$ROOT" != "$APP_ROOT" ]]; then
+  log "replace $APP_ROOT from $ROOT"
   mkdir -p "$APP_ROOT"
   rsync -a --exclude '.git' --exclude 'data' --exclude 'demo-out' "$ROOT/" "$APP_ROOT/"
+else
+  log "install tree is $ROOT; workers will reload these files"
 fi
 
 # mediamtx.service is installed by bin/nexrec-install-media.sh so a foreign
@@ -214,6 +253,7 @@ nexrec_grant_www_data
 
 systemctl daemon-reload
 systemctl enable --now nexrec-export.service nexrec-analyze.service nexrec-cleanup.timer nexrec-metrics.timer || warn "enable units failed"
+nexrec_start_workers
 
 # Hourly as-run import. cron.d must be root-owned and not writable by group/other.
 if [[ -f "$ROOT/cron/nexrec" ]]; then
