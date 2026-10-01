@@ -89,7 +89,7 @@
     <div id="export-create-fields">
       <fieldset class="export-scope">
         <legend>Streams</legend>
-        <label class="check"><input type="radio" name="export-scope" value="one" checked> This stream</label>
+        <label class="check"><input type="radio" name="export-scope" value="one" checked> <span id="export-scope-one">This stream</span></label>
         <label class="check"><input type="radio" name="export-scope" value="all"> All visible streams</label>
         <label class="check"><input type="radio" name="export-scope" value="pick"> Choose streams</label>
         <div id="export-picks" class="stream-picks"></div>
@@ -324,13 +324,21 @@
     return NexRecUI.paneSlotIds(inputs, slotIds);
   }
 
-  function selectedInput() {
-    var id = visibleIds()[selected] || "";
+  function inputBySlot(index) {
+    var id = visibleIds()[index] || "";
     if (!id) return null;
     for (var i = 0; i < inputs.length; i++) {
       if (String(inputs[i].id) === id) return inputs[i];
     }
     return null;
+  }
+
+  function selectedInput() {
+    return inputBySlot(selected);
+  }
+
+  function exportScopeInput() {
+    return selectedInput() || inputBySlot(0);
   }
 
   function isoSec(ms) {
@@ -1228,7 +1236,7 @@
     var box = document.getElementById("export-picks");
     var mode = scopeMode();
     var streams = visibleStreams();
-    var one = selectedInput();
+    var one = exportScopeInput();
     var selectedId = one ? String(one.id) : "";
     var prev = {};
     box.querySelectorAll("input[type=checkbox]").forEach(function (el) {
@@ -1308,6 +1316,11 @@
 
   function openExportDialog() {
     var dialog = document.getElementById("export-dialog");
+    var one = exportScopeInput();
+    var streamName = one ? (one.name || one.id) : "";
+    document.getElementById("export-scope-one").textContent = streamName
+      ? "Selected Stream - " + streamName
+      : "Selected Stream";
     document.getElementById("export-window").textContent =
       "I " + station(markIn) + " → O " + station(markOut);
     document.getElementById("export-title").value = "";

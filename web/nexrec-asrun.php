@@ -784,3 +784,5 @@ function nexrec_asrun_import_tree(?string $dir = null): array {
     }
     return ['imported' => $imported, 'skipped' => $skipped, 'errors' => $errors];
 }
+
+require_once __DIR__ . '/nexrec-asrun-sources.php';

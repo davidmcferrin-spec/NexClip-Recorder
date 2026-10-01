@@ -13,7 +13,7 @@ function nexrec_deliver_now(): string {
 }
 
 function nexrec_dest_key_path(string $id): string {
-    if (preg_match('/^dst_[a-f0-9]{12}$/', $id) !== 1) {
+    if (preg_match('/^(?:dst|asi)_[a-f0-9]{12}$/', $id) !== 1) {
         throw new InvalidArgumentException('invalid id');
     }
     return nexrec_data_dir() . '/keys/' . $id;

@@ -1427,6 +1427,24 @@ try {
         nexrec_api_ok(['id' => $id, 'input_ids' => nexrec_asrun_input_ids($id)]);
     }
 
+    if ($action === 'asrun_sources_list') {
+        nexrec_require_roles(['admin']);
+        nexrec_api_ok(['sources' => nexrec_asrun_sources_public()]);
+    }
+
+    if ($action === 'asrun_source_save') {
+        $me = nexrec_require_roles(['admin']);
+        $saved = nexrec_asrun_source_save($body, (string) ($me['username'] ?? 'admin'));
+        nexrec_api_ok(['source' => $saved]);
+    }
+
+    if ($action === 'asrun_source_delete') {
+        nexrec_require_roles(['admin']);
+        $id = (string) ($body['id'] ?? '');
+        nexrec_asrun_source_delete($id);
+        nexrec_api_ok(['deleted' => $id]);
+    }
+
     if ($action === 'asrun_delete') {
         nexrec_require_roles(['admin', 'operator']);
         $id = (string) ($body['id'] ?? '');

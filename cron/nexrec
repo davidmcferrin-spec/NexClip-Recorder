@@ -4,4 +4,5 @@ SHELL=/bin/sh
 PATH=/usr/sbin:/usr/bin:/sbin:/bin
 
 # Minute 0 of every hour. Host local time; setup.sh sets America/New_York.
+# Imports the local drop folder and every enabled As-run auto-import source.
 0 * * * * www-data /usr/bin/php /opt/NexClip-Recorder/worker/nexrec-asrun-import.php --env /etc/nexrec/nexrec.env >/dev/null

@@ -29,6 +29,7 @@
     <div class="bar">
       <h1 style="margin:0">As-run</h1>
       <a href="/asruns">All logs</a>
+      <button type="button" id="auto-import" hidden>Auto-import</button>
     </div>
     <div class="panel" id="import-panel">
       <h2>Import</h2>
@@ -85,6 +86,62 @@
     </div>
   </div>
 </main>
+<dialog id="source-dialog" class="nx-dialog wide">
+  <h1>Auto-import</h1>
+  <p class="sub">The hourly job searches each enabled source for .asr files. A new or newer file is imported with this zone, day start, and linked inputs. Leave inputs unchecked to keep the links already on that log. Passwords use <code>NEXREC_DEST_KEY</code> and are not shown again.</p>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Protocol</th><th>Folder</th><th>Last scan</th><th></th></tr>
+    </thead>
+    <tbody id="source-rows"></tbody>
+  </table>
+  <p class="sub" id="source-empty">No auto-import sources yet.</p>
+  <div class="bar">
+    <button type="button" class="primary" id="source-new">Add source</button>
+    <button type="button" id="source-close">Close</button>
+  </div>
+  <form id="source-form" hidden>
+    <h2 id="source-form-title">Source</h2>
+    <input type="hidden" id="s-id">
+    <label>Name <input id="s-name" maxlength="80" required autocomplete="off"></label>
+    <label>Protocol
+      <select id="s-protocol">
+        <option value="local">Local</option>
+        <option value="sftp">SFTP</option>
+        <option value="ftp">FTP</option>
+        <option value="s3">S3</option>
+        <option value="smb">SMB</option>
+      </select>
+    </label>
+    <label id="s-lab-local">Folder <input id="s-local" maxlength="400" autocomplete="off" placeholder="/var/lib/nexrec/asruns"></label>
+    <label id="s-lab-host"><span id="s-host-name">Host</span> <input id="s-host" maxlength="255" autocomplete="off"></label>
+    <label id="s-lab-port">Port <input id="s-port" inputmode="numeric" autocomplete="off" placeholder="22"></label>
+    <label id="s-lab-user"><span id="s-user-name">Username</span> <input id="s-user" maxlength="128" autocomplete="off"></label>
+    <label id="s-lab-secret"><span id="s-secret-name">Password</span> <input id="s-secret" type="password" maxlength="512" autocomplete="new-password" placeholder="Leave blank to keep the saved password"></label>
+    <label id="s-lab-key">Private key
+      <input id="s-key" type="file" accept=".pem,.key,.txt">
+      <span class="meta" id="s-key-note"></span>
+    </label>
+    <label id="s-lab-key-pass">Key passphrase <input id="s-key-pass" type="password" maxlength="512" autocomplete="new-password"></label>
+    <label id="s-lab-bucket">Bucket <input id="s-bucket" maxlength="200" autocomplete="off"></label>
+    <label id="s-lab-region">Region <input id="s-region" maxlength="64" autocomplete="off" placeholder="us-east-1"></label>
+    <label id="s-lab-share">Share <input id="s-share" maxlength="200" autocomplete="off"></label>
+    <label id="s-lab-domain">Domain <input id="s-domain" maxlength="64" autocomplete="off"></label>
+    <label class="check" id="s-lab-path"><input type="checkbox" id="s-path"> Path-style URLs</label>
+    <label class="check" id="s-lab-tls"><input type="checkbox" id="s-tls"> Explicit TLS</label>
+    <label id="s-lab-prefix">Remote folder <input id="s-prefix" maxlength="400" autocomplete="off" placeholder="asruns"></label>
+    <label>Zone <input id="s-tz" value="America/New_York" spellcheck="false" autocomplete="off"></label>
+    <label>Day start <input id="s-day" value="04:00:00" spellcheck="false" autocomplete="off"></label>
+    <p class="sub">Link to inputs</p>
+    <div id="source-inputs"></div>
+    <label class="check"><input type="checkbox" id="s-enabled" checked> Enabled</label>
+    <p class="sub" id="source-msg"></p>
+    <div class="bar dialog-actions">
+      <button type="button" id="source-form-cancel">Cancel</button>
+      <button type="submit" class="primary" id="source-save">Save</button>
+    </div>
+  </form>
+</dialog>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 (function () {
@@ -281,6 +338,7 @@
     canEdit = user.role === "admin" || user.role === "operator";
     document.getElementById("import-panel").hidden = !canEdit;
     document.getElementById("link-panel").hidden = !canEdit;
+    document.getElementById("auto-import").hidden = user.role !== "admin";
     return NexRecAuth.recApi("inputs_list");
   }).then(function (data) {
     inputs = data.inputs || [];
@@ -324,6 +382,190 @@
     };
     reader.onerror = function () { err.textContent = "Could not read that file."; };
     reader.readAsText(file);
+  });
+
+  var sourceSaved = { secret: false, key: false };
+  var sourceRows = [];
+  function setReq(id, on) {
+    var el = document.getElementById(id);
+    if (on) el.setAttribute("required", "");
+    else el.removeAttribute("required");
+  }
+  function showSourceFields() {
+    var proto = document.getElementById("s-protocol").value;
+    var local = proto === "local";
+    var sftp = proto === "sftp";
+    var s3 = proto === "s3";
+    var smb = proto === "smb";
+    var ftp = proto === "ftp";
+    document.getElementById("s-lab-local").hidden = !local;
+    document.getElementById("s-lab-host").hidden = local;
+    document.getElementById("s-lab-port").hidden = local || s3;
+    document.getElementById("s-lab-user").hidden = local;
+    document.getElementById("s-lab-secret").hidden = local;
+    document.getElementById("s-lab-key").hidden = !sftp;
+    document.getElementById("s-lab-key-pass").hidden = !sftp;
+    document.getElementById("s-lab-bucket").hidden = !s3;
+    document.getElementById("s-lab-region").hidden = !s3;
+    document.getElementById("s-lab-share").hidden = !smb;
+    document.getElementById("s-lab-domain").hidden = !smb;
+    document.getElementById("s-lab-path").hidden = !s3;
+    document.getElementById("s-lab-tls").hidden = !ftp;
+    document.getElementById("s-lab-prefix").hidden = local;
+    document.getElementById("s-host-name").textContent = s3 ? "Endpoint" : "Host";
+    document.getElementById("s-user-name").textContent = s3 ? "Access key" : "Username";
+    document.getElementById("s-secret-name").textContent = s3 ? "Secret key" : "Password";
+    document.getElementById("s-port").placeholder = ftp ? "21" : (smb ? "445" : "22");
+    ["s-local", "s-host", "s-port", "s-user", "s-secret", "s-bucket", "s-share", "s-region", "s-prefix", "s-key", "s-key-pass"].forEach(function (id) {
+      setReq(id, false);
+    });
+    setReq("s-local", local);
+    setReq("s-host", !local && !s3);
+    setReq("s-user", !local);
+    setReq("s-bucket", s3);
+    setReq("s-share", smb);
+    setReq("s-secret", !local && !sftp && !sourceSaved.secret);
+  }
+  function paintSources() {
+    var body = document.getElementById("source-rows");
+    document.getElementById("source-empty").hidden = sourceRows.length > 0;
+    body.innerHTML = sourceRows.map(function (row) {
+      var folder = row.protocol === "local" ? row.remote_prefix : (row.remote_prefix || row.extra.bucket || row.extra.share || row.host || "");
+      var scan = row.last_scan ? row.last_scan.replace("T", " ").replace("Z", " UTC") : "—";
+      var err = row.last_error ? '<div class="sub">' + esc(row.last_error) + "</div>" : "";
+      return "<tr><td>" + esc(row.name) + (row.enabled ? "" : ' <span class="meta">off</span>') + err + "</td><td>" +
+        esc(row.protocol) + "</td><td>" + esc(folder) + "</td><td>" + esc(scan) + "</td><td>" +
+        '<button type="button" data-edit="' + esc(row.id) + '">Edit</button> ' +
+        '<button type="button" data-del="' + esc(row.id) + '">Delete</button></td></tr>';
+    }).join("");
+  }
+  function loadSources() {
+    return NexRecAuth.recApi("asrun_sources_list").then(function (data) {
+      sourceRows = data.sources || [];
+      paintSources();
+    });
+  }
+  function openSourceForm(row) {
+    var extra = (row && row.extra) || {};
+    sourceSaved.secret = !!(row && row.has_secret);
+    sourceSaved.key = !!(extra.has_key);
+    document.getElementById("source-form").hidden = false;
+    document.getElementById("source-form-title").textContent = row ? "Edit source" : "Add source";
+    document.getElementById("s-id").value = row ? row.id : "";
+    document.getElementById("s-name").value = row ? row.name : "";
+    document.getElementById("s-protocol").value = row ? row.protocol : "local";
+    document.getElementById("s-local").value = row && row.protocol === "local" ? (row.remote_prefix || "") : "";
+    document.getElementById("s-host").value = row && row.protocol !== "local" ? (row.host || "") : "";
+    document.getElementById("s-port").value = row && row.port ? String(row.port) : "";
+    document.getElementById("s-user").value = row ? (row.username || "") : "";
+    document.getElementById("s-secret").value = "";
+    document.getElementById("s-key").value = "";
+    document.getElementById("s-key-pass").value = "";
+    document.getElementById("s-key-note").textContent = extra.has_key
+      ? "A key is saved. Choose a file only to replace it."
+      : "";
+    document.getElementById("s-bucket").value = extra.bucket || "";
+    document.getElementById("s-region").value = extra.region || "";
+    document.getElementById("s-share").value = extra.share || "";
+    document.getElementById("s-domain").value = extra.domain || "";
+    document.getElementById("s-path").checked = !!extra.path_style;
+    document.getElementById("s-tls").checked = !!extra.explicit_tls;
+    document.getElementById("s-prefix").value = row && row.protocol !== "local" ? (row.remote_prefix || "") : "";
+    document.getElementById("s-tz").value = row ? (row.timezone || "America/New_York") : "America/New_York";
+    document.getElementById("s-day").value = row ? (row.day_start || "04:00:00") : "04:00:00";
+    document.getElementById("s-enabled").checked = row ? !!row.enabled : true;
+    checks(document.getElementById("source-inputs"), row ? (row.input_ids || []) : []);
+    document.getElementById("source-msg").textContent = "";
+    showSourceFields();
+  }
+  function readSourceKey() {
+    var input = document.getElementById("s-key");
+    var file = input.files && input.files[0];
+    if (!file) return Promise.resolve("");
+    if (file.size > 32768) return Promise.reject(new Error("private key is too large"));
+    return file.text();
+  }
+  document.getElementById("auto-import").onclick = function () {
+    document.getElementById("source-form").hidden = true;
+    var dialog = document.getElementById("source-dialog");
+    if (!dialog.open) dialog.showModal();
+    loadSources().catch(function (err) {
+      document.getElementById("source-empty").textContent = err.message || "Could not load sources";
+    });
+  };
+  document.getElementById("source-close").onclick = function () {
+    document.getElementById("source-dialog").close();
+  };
+  document.getElementById("source-new").onclick = function () { openSourceForm(null); };
+  document.getElementById("source-form-cancel").onclick = function () {
+    document.getElementById("source-form").hidden = true;
+  };
+  document.getElementById("s-protocol").onchange = showSourceFields;
+  document.getElementById("source-rows").addEventListener("click", function (ev) {
+    var edit = ev.target.getAttribute && ev.target.getAttribute("data-edit");
+    var del = ev.target.getAttribute && ev.target.getAttribute("data-del");
+    if (edit) {
+      var row = sourceRows.filter(function (item) { return item.id === edit; })[0];
+      if (row) openSourceForm(row);
+    }
+    if (del) {
+      if (!confirm("Delete this auto-import source?")) return;
+      NexRecAuth.recApi("asrun_source_delete", { id: del }).then(loadSources).catch(function (err) {
+        document.getElementById("source-empty").hidden = false;
+        document.getElementById("source-empty").textContent = err.message || "Delete failed";
+      });
+    }
+  });
+  document.getElementById("source-form").addEventListener("submit", function (ev) {
+    ev.preventDefault();
+    var msg = document.getElementById("source-msg");
+    msg.textContent = "";
+    var form = document.getElementById("source-form");
+    if (!form.reportValidity()) return;
+    var proto = document.getElementById("s-protocol").value;
+    var keyInput = document.getElementById("s-key");
+    var hasFile = keyInput.files && keyInput.files.length > 0;
+    if (proto === "sftp" && !document.getElementById("s-secret").value && !hasFile && !sourceSaved.secret && !sourceSaved.key) {
+      msg.style.color = "var(--bad)";
+      msg.textContent = "A password or a private key is required.";
+      return;
+    }
+    document.getElementById("source-save").disabled = true;
+    readSourceKey().then(function (pem) {
+      var local = proto === "local";
+      return NexRecAuth.recApi("asrun_source_save", {
+        id: document.getElementById("s-id").value,
+        name: document.getElementById("s-name").value,
+        protocol: proto,
+        host: local ? "" : document.getElementById("s-host").value,
+        port: local ? "" : document.getElementById("s-port").value,
+        username: local ? "" : document.getElementById("s-user").value,
+        secret: local ? "" : document.getElementById("s-secret").value,
+        private_key: pem,
+        key_pass: document.getElementById("s-key-pass").value,
+        remote_prefix: local ? document.getElementById("s-local").value : document.getElementById("s-prefix").value,
+        timezone: document.getElementById("s-tz").value,
+        day_start: document.getElementById("s-day").value,
+        input_ids: checked(document.getElementById("source-inputs")),
+        enabled: document.getElementById("s-enabled").checked,
+        extra: {
+          bucket: document.getElementById("s-bucket").value,
+          region: document.getElementById("s-region").value,
+          share: document.getElementById("s-share").value,
+          domain: document.getElementById("s-domain").value,
+          path_style: document.getElementById("s-path").checked ? 1 : 0,
+          explicit_tls: document.getElementById("s-tls").checked ? 1 : 0
+        }
+      });
+    }).then(function () {
+      document.getElementById("source-save").disabled = false;
+      document.getElementById("source-form").hidden = true;
+      return loadSources();
+    }).catch(function (err) {
+      document.getElementById("source-save").disabled = false;
+      msg.style.color = "var(--bad)";
+      msg.textContent = err.message || "Save failed";
+    });
   });
 })();
 </script>

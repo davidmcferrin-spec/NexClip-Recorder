@@ -93,7 +93,8 @@ h1 { font-size: 16px; margin: 0 0 12px; color: var(--acc); }
 }
 label { display: block; font-size: 12px; color: var(--muted); margin: 8px 0 4px; }
 dialog.nx-dialog label[hidden],
-#export-auth-wrap[hidden] { display: none; }
+#export-auth-wrap[hidden],
+#source-form[hidden] { display: none; }
 input, select, textarea, button {
   background: var(--bg); color: var(--text); border: 1px solid var(--edge);
   border-radius: 6px; padding: 8px 10px; font: inherit;

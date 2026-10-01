@@ -148,6 +148,79 @@ if ($moved !== '2026-09-28T08:00:02.567Z') {
     exit(1);
 }
 
+try {
+    nexrec_asrun_local_folder('/var/log/../etc');
+    fwrite(STDERR, "local folder accepted ..\n");
+    exit(1);
+} catch (InvalidArgumentException $e) {
+    if ($e->getMessage() === '') {
+        fwrite(STDERR, "local folder error was empty\n");
+        exit(1);
+    }
+}
+if (nexrec_asrun_local_folder('/var/lib/nexrec/asruns/') !== '/var/lib/nexrec/asruns') {
+    fwrite(STDERR, "local folder was not trimmed\n");
+    exit(1);
+}
+$listed = nexrec_asrun_parse_lsf("2026-10-01 18:00:00|ANTVX/day.asr\n2026-10-01 18:00:00|../skip.asr\n");
+if (count($listed) !== 1 || $listed[0]['path'] !== 'ANTVX/day.asr' || $listed[0]['mtime'] <= 0) {
+    fwrite(STDERR, "lsf parse\n");
+    exit(1);
+}
+$pub = nexrec_asrun_source_public([
+    'id' => 'asi_0123456789ab',
+    'name' => 'Bay',
+    'protocol' => 'ftp',
+    'host' => 'files.example',
+    'remote_prefix' => 'logs',
+    'username' => 'edit',
+    'secret_cipher' => 'not-the-password',
+    'input_ids' => '["cam"]',
+    'extra' => '{"explicit_tls":1}',
+    'enabled' => 1,
+    'timezone' => 'America/New_York',
+    'day_start' => '04:00:00',
+]);
+$pubJson = json_encode($pub);
+if (!is_string($pubJson) || str_contains($pubJson, 'not-the-password') || ($pub['input_ids'][0] ?? '') !== 'cam') {
+    fwrite(STDERR, "source public leaked a secret\n");
+    exit(1);
+}
+if ((int) ($pub['extra']['explicit_tls'] ?? 0) !== 1) {
+    fwrite(STDERR, "source tls flag\n");
+    exit(1);
+}
+$cfg = nexrec_asrun_rclone_config([
+    'protocol' => 'ftp',
+    'host' => 'files.example',
+    'username' => 'edit',
+    'port' => 21,
+    'extra' => ['explicit_tls' => 1],
+], 'OBSCURED', '');
+if (str_contains($cfg, 'hunter2') || !str_contains($cfg, 'pass = OBSCURED') || !str_contains($cfg, 'explicit_tls = true')) {
+    fwrite(STDERR, "rclone config\n");
+    exit(1);
+}
+$local = nexrec_asrun_source_normalize([
+    'name' => 'Drop',
+    'protocol' => 'local',
+    'remote_prefix' => '/var/lib/nexrec/asruns',
+    'timezone' => 'America/New_York',
+    'day_start' => '04:00:00',
+    'input_ids' => [],
+], null);
+if ($local['protocol'] !== 'local' || $local['secret_cipher'] !== '' || $local['remote_prefix'] !== '/var/lib/nexrec/asruns') {
+    fwrite(STDERR, "local source normalize\n");
+    exit(1);
+}
+$page = (string) file_get_contents(dirname(__DIR__) . '/web/pages/asruns.html');
+foreach (['id="auto-import"', 'Auto-import', 'id="s-protocol"', 'value="local"', 'asrun_source_save'] as $needle) {
+    if (!str_contains($page, $needle)) {
+        fwrite(STDERR, "as-run page missing {$needle}\n");
+        exit(1);
+    }
+}
+
 nexrec_migrate();
 $saved = nexrec_asrun_import($fixture, [
     'filename' => 'ANTVX_N260928.asr',

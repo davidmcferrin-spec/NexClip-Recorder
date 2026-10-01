@@ -322,6 +322,29 @@ CREATE TABLE IF NOT EXISTS asrun_inputs (
 
 CREATE INDEX IF NOT EXISTS idx_asrun_inputs_input ON asrun_inputs(input_id);
 
+-- Places the hourly job searches for .asr files. secret_cipher uses NEXREC_DEST_KEY.
+CREATE TABLE IF NOT EXISTS asrun_sources (
+  id TEXT PRIMARY KEY,
+  name TEXT NOT NULL,
+  protocol TEXT NOT NULL,
+  host TEXT NOT NULL DEFAULT '',
+  port INTEGER,
+  remote_prefix TEXT NOT NULL DEFAULT '',
+  username TEXT NOT NULL DEFAULT '',
+  secret_cipher TEXT NOT NULL DEFAULT '',
+  extra TEXT NOT NULL DEFAULT '{}',
+  timezone TEXT NOT NULL DEFAULT 'America/New_York',
+  day_start TEXT NOT NULL DEFAULT '04:00:00',
+  input_ids TEXT NOT NULL DEFAULT '[]',
+  enabled INTEGER NOT NULL DEFAULT 1,
+  last_error TEXT NOT NULL DEFAULT '',
+  last_imported INTEGER NOT NULL DEFAULT 0,
+  last_scan TEXT,
+  created_by TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS asrun_events (
   id TEXT PRIMARY KEY,
   asrun_id TEXT NOT NULL,
