@@ -18,7 +18,15 @@ if HERE not in sys.path:
 from nexrec_db import chunks_overlapping, connect, fetchall, fetchone, migrate, overlay_app_settings  # noqa: E402
 from nexrec_deliver import export_transfer_busy, promote_deliveries  # noqa: E402
 from nexrec_ffmpeg import export_concat_argv, parse_export_progress, pin_video_encoder  # noqa: E402
-from nexrec_util import data_paths, iso_z, load_env_file, parse_iso, pin_process_utc, utcnow  # noqa: E402
+from nexrec_util import (  # noqa: E402
+    data_paths,
+    export_file_basenames,
+    iso_z,
+    load_env_file,
+    parse_iso,
+    pin_process_utc,
+    utcnow,
+)
 
 
 def write_concat(paths: list[str], dest: str) -> None:
@@ -143,6 +151,60 @@ def chunk_raster(chunks: list) -> tuple[int, int, float]:
     return 0, 0, 0.0
 
 
+def input_label(conn, input_id: str) -> str:
+    row = fetchone(conn, "SELECT name FROM inputs WHERE id=?", (input_id,))
+    if row and str(row.get("name") or "").strip():
+        return str(row["name"]).strip()
+    return input_id
+
+
+def _under_dir(dest_dir: str, path: str) -> bool:
+    if not path or not os.path.isfile(path):
+        return False
+    root = os.path.realpath(dest_dir)
+    candidate = os.path.realpath(path)
+    return candidate == root or candidate.startswith(root + os.sep)
+
+
+def previous_export_files(job: dict, dest_dir: str, input_ids: list) -> list[str]:
+    """Files this export may already have written, including the old id-based names."""
+    found: list[str] = []
+    stored = str(job.get("path") or "")
+    if stored:
+        found.append(stored)
+    raw = job.get("file_names") or ""
+    names: dict = {}
+    if isinstance(raw, dict):
+        names = raw
+    elif str(raw).strip():
+        try:
+            parsed = json.loads(str(raw))
+            if isinstance(parsed, dict):
+                names = parsed
+        except json.JSONDecodeError:
+            names = {}
+    for value in names.values():
+        base = os.path.basename(str(value))
+        if base:
+            found.append(os.path.join(dest_dir, base))
+    eid = str(job.get("id") or "")
+    if eid:
+        found.append(os.path.join(dest_dir, eid + ".mp4"))
+        for iid in input_ids:
+            found.append(os.path.join(dest_dir, f"{eid}_{iid}.mp4"))
+    kept: list[str] = []
+    seen: set[str] = set()
+    for path in found:
+        if not _under_dir(dest_dir, path):
+            continue
+        real = os.path.realpath(path)
+        if real in seen:
+            continue
+        seen.add(real)
+        kept.append(path)
+    return kept
+
+
 def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
     paths = data_paths(env)
     input_ids = json.loads(job["input_ids"])
@@ -155,6 +217,16 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
     os.makedirs(dest_dir, exist_ok=True)
     tmp_dir = env.get("NEXREC_SCRATCH_DIR") or os.path.join(paths["storage"], "tmp")
     os.makedirs(tmp_dir, exist_ok=True)
+    labels = [(str(iid), input_label(conn, str(iid))) for iid in input_ids]
+    names = export_file_basenames(
+        str(job["id"]),
+        labels,
+        str(job["t_in"]),
+        str(job["t_out"]),
+        quality,
+        str(env.get("NEXREC_TIMEZONE") or ""),
+    )
+    stale = previous_export_files(job, dest_dir, input_ids)
 
     produced: list[str] = []
     total = max(1, len(input_ids))
@@ -168,8 +240,7 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
         concat_path = os.path.join(tmp_dir, f"{job['id']}_{iid}.concat.txt")
         write_concat([c["path"] for c in chunks], concat_path)
         ss, dur = trim_offsets(chunks, job["t_in"], job["t_out"])
-        suffix = f"_{iid}" if len(input_ids) > 1 else ""
-        dest = os.path.join(dest_dir, f"{job['id']}{suffix}.mp4")
+        dest = os.path.join(dest_dir, names[str(iid)])
         use_copy = copy and not force_tx
         width, height, fps = chunk_raster(chunks)
         proxy = quality == "proxy"
@@ -197,11 +268,20 @@ def run_export(conn, env: dict, job: dict, copy: bool = True) -> None:
     primary = produced[0]
     size = os.path.getsize(primary) if os.path.isfile(primary) else 0
     done = conn.execute(
-        """UPDATE exports SET status='done', progress_pct=100, finished_at=?, path=?, size_bytes=?, error=NULL
+        """UPDATE exports SET status='done', progress_pct=100, finished_at=?, path=?, file_names=?, size_bytes=?, error=NULL
            WHERE id=? AND status='running'""",
-        (iso_z(), primary, size, job["id"]),
+        (iso_z(), primary, json.dumps(names, separators=(",", ":")), size, job["id"]),
     )
     conn.commit()
+    if int(done.rowcount or 0) > 0:
+        produced_real = {os.path.realpath(path) for path in produced if os.path.isfile(path)}
+        for old in stale:
+            if os.path.realpath(old) in produced_real:
+                continue
+            try:
+                os.unlink(old)
+            except OSError as exc:
+                print(f"export {job['id']} stale file: {exc}", file=sys.stderr, flush=True)
     if int(done.rowcount or 0) > 0:
         try:
             queued = promote_deliveries(conn, job["id"])

@@ -167,3 +167,85 @@ def wallclock_timecode(when: datetime | None = None, fps: float = 30.0) -> str:
 
 def json_ready(obj: Any) -> Any:
     return obj
+
+
+_EXPORT_SLUG = re.compile(r"[^A-Za-z0-9]+")
+
+
+def export_zone(name: str):
+    """Station zone for export filenames. UTC if the name is not a real zone."""
+    from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+    raw = (name or "").strip() or "America/New_York"
+    try:
+        return ZoneInfo(raw)
+    except ZoneInfoNotFoundError:
+        pass
+    try:
+        return ZoneInfo("America/New_York")
+    except ZoneInfoNotFoundError:
+        return timezone.utc
+
+
+def export_name_slug(name: str, fallback: str) -> str:
+    """Filesystem-safe camera name. Spaces and punctuation become underscores."""
+    slug = _EXPORT_SLUG.sub("_", (name or "").strip()).strip("_")
+    slug = re.sub(r"_+", "_", slug)
+    if slug == "":
+        slug = _EXPORT_SLUG.sub("_", (fallback or "").strip()).strip("_")
+    if slug == "":
+        slug = "input"
+    return slug[:60]
+
+
+def export_short_id(export_id: str) -> str:
+    match = re.fullmatch(r"exp_([A-Fa-f0-9]{12})", export_id or "")
+    if match:
+        return match.group(1).lower()
+    cleaned = re.sub(r"[^A-Za-z0-9]+", "", export_id or "")
+    return (cleaned or "export")[:12]
+
+
+def export_time_span(t_in: str, t_out: str, tz_name: str) -> str:
+    """Station-time stamp. The end date is included when the trim crosses midnight."""
+    zone = export_zone(tz_name)
+    start = parse_iso(t_in).astimezone(zone)
+    end = parse_iso(t_out).astimezone(zone)
+    left = start.strftime("%Y%m%d_%H%M%S")
+    if start.date() == end.date():
+        return f"{left}-{end.strftime('%H%M%S')}"
+    return f"{left}-{end.strftime('%Y%m%d_%H%M%S')}"
+
+
+def export_file_basenames(
+    export_id: str,
+    inputs: list[tuple[str, str]],
+    t_in: str,
+    t_out: str,
+    quality: str,
+    tz_name: str,
+) -> dict[str, str]:
+    """Readable MP4 names. The short export id keeps a re-run on the same file.
+
+    Charlie_20261001_145122-150122_a8c98ff5ed73.mp4
+    A proxy adds _proxy. Two cameras that slug to the same name get the input id.
+    """
+    span = export_time_span(t_in, t_out, tz_name)
+    short = export_short_id(export_id)
+    proxy = "_proxy" if (quality or "full") == "proxy" else ""
+    slugs = [(str(iid), export_name_slug(str(label), str(iid))) for iid, label in inputs]
+    counts: dict[str, int] = {}
+    for _iid, slug in slugs:
+        counts[slug] = counts.get(slug, 0) + 1
+    out: dict[str, str] = {}
+    for iid, slug in slugs:
+        piece = slug
+        if counts[slug] > 1:
+            piece = f"{slug}_{export_name_slug(iid, 'input')}"
+        base = f"{piece}_{span}{proxy}_{short}.mp4"
+        if len(base) > 180:
+            extra = len(base) - 180
+            piece = piece[: max(1, len(piece) - extra)].strip("_") or "input"
+            base = f"{piece}_{span}{proxy}_{short}.mp4"
+        out[iid] = base
+    return out

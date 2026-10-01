@@ -339,8 +339,36 @@ function nexrec_export_input_ids(array $row): array {
     return $out;
 }
 
+function nexrec_export_basename_ok(string $base): bool {
+    return preg_match('/^[A-Za-z0-9._@_-]{1,196}\\.mp4$/', $base) === 1
+        && !str_contains($base, '..');
+}
+
+/** @return array<string, string> */
+function nexrec_export_file_names(array $row): array {
+    $raw = $row['file_names'] ?? '';
+    if (is_string($raw)) {
+        $decoded = json_decode($raw, true);
+    } else {
+        $decoded = $raw;
+    }
+    if (!is_array($decoded)) {
+        return [];
+    }
+    $out = [];
+    foreach ($decoded as $key => $value) {
+        $base = (string) $value;
+        $id = (string) $key;
+        if ($id !== '' && nexrec_export_basename_ok($base)) {
+            $out[$id] = $base;
+        }
+    }
+    return $out;
+}
+
 /**
- * One MP4 per input. Several inputs use {id}_{input}.mp4 beside the stored path.
+ * One MP4 per input. file_names holds the readable basename written at encode time.
+ * Older rows still use {id}.mp4 or {id}_{input}.mp4 beside the stored path.
  *
  * @return list<array{input_id:string,path:string}>
  */
@@ -358,18 +386,27 @@ function nexrec_export_output_files(array $row): array {
             $dir = $parent;
         }
     }
+    $names = nexrec_export_file_names($row);
     if (count($ids) <= 1) {
-        $path = $stored !== '' ? $stored : ($dir . DIRECTORY_SEPARATOR . $id . '.mp4');
-        return [['input_id' => $ids[0] ?? '', 'path' => $path]];
+        $iid = $ids[0] ?? '';
+        if ($stored !== '') {
+            $path = $stored;
+        } elseif ($iid !== '' && isset($names[$iid])) {
+            $path = $dir . DIRECTORY_SEPARATOR . $names[$iid];
+        } else {
+            $path = $dir . DIRECTORY_SEPARATOR . $id . '.mp4';
+        }
+        return [['input_id' => $iid, 'path' => $path]];
     }
     $out = [];
     foreach ($ids as $iid) {
         if (preg_match('/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/', $iid) !== 1) {
             continue;
         }
+        $base = $names[$iid] ?? ($id . '_' . $iid . '.mp4');
         $out[] = [
             'input_id' => $iid,
-            'path' => $dir . DIRECTORY_SEPARATOR . $id . '_' . $iid . '.mp4',
+            'path' => $dir . DIRECTORY_SEPARATOR . $base,
         ];
     }
     return $out;
@@ -906,7 +943,7 @@ try {
     if ($action === 'export_remove') {
         nexrec_require_roles(['admin', 'operator']);
         $id = (string) ($body['id'] ?? '');
-        $st = nexrec_db()->prepare('SELECT status, path FROM exports WHERE id=:id');
+        $st = nexrec_db()->prepare('SELECT * FROM exports WHERE id=:id');
         $st->bindValue(':id', $id, SQLITE3_TEXT);
         $row = $st->execute()->fetchArray(SQLITE3_ASSOC);
         if (!$row) {
@@ -925,9 +962,11 @@ try {
         $drop = nexrec_db()->prepare('DELETE FROM deliveries WHERE export_id=:id');
         $drop->bindValue(':id', $id, SQLITE3_TEXT);
         $drop->execute();
-        $path = (string) ($row['path'] ?? '');
-        if ($path !== '' && is_file($path) && nexrec_export_file_allowed($path)) {
-            unlink($path);
+        foreach (nexrec_export_output_files($row) as $file) {
+            $path = (string) ($file['path'] ?? '');
+            if ($path !== '' && is_file($path) && nexrec_export_file_allowed($path)) {
+                unlink($path);
+            }
         }
         $del = nexrec_db()->prepare('DELETE FROM exports WHERE id=:id AND status<>\'running\'');
         $del->bindValue(':id', $id, SQLITE3_TEXT);

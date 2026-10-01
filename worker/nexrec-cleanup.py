@@ -13,7 +13,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
-from nexrec_deliver import release_export  # noqa: E402
+from nexrec_deliver import export_media_files, release_export  # noqa: E402
 from nexrec_index import backfill_thumbs, thumb_path_for  # noqa: E402
 from nexrec_util import (  # noqa: E402
     data_paths,
@@ -69,6 +69,23 @@ def unlink_quiet(path: str) -> bool:
         return False
 
 
+def unlink_export_files(row: dict) -> None:
+    paths: list[str] = []
+    try:
+        paths.extend(path for _base, path in export_media_files(row))
+    except Exception:  # noqa: BLE001 — still remove the stored primary
+        pass
+    stored = str(row.get("path") or "")
+    if stored:
+        paths.append(stored)
+    seen: set[str] = set()
+    for path in paths:
+        if path in seen:
+            continue
+        seen.add(path)
+        unlink_quiet(path)
+
+
 def expire_exports(conn, now_iso: str) -> int:
     rows = fetchall(
         conn,
@@ -85,8 +102,7 @@ def expire_exports(conn, now_iso: str) -> int:
     for row in rows:
         if not release_export(conn, str(row["id"])):
             continue
-        if row.get("path"):
-            unlink_quiet(row["path"])
+        unlink_export_files(row)
         conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))
         n += 1
     conn.commit()
@@ -183,7 +199,7 @@ def free_space_pass(conn, storage: str, floor: int, max_used_pct: float = 0) -> 
             break
         if not release_export(conn, str(row["id"])):
             break
-        unlink_quiet(row["path"])
+        unlink_export_files(row)
         conn.execute("DELETE FROM exports WHERE id=?", (row["id"],))
         conn.commit()
         n += 1

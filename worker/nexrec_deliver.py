@@ -35,7 +35,7 @@ def _fetchall(conn, sql: str, args: tuple = ()):
 
 _EXPORT_ID = re.compile(r"^[A-Za-z0-9_-]+$")
 _INPUT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$")
-_SAFE_SEG = re.compile(r"^[A-Za-z0-9._@-]{1,200}$")
+_SAFE_SEG = re.compile(r"^[A-Za-z0-9._@_-]{1,200}$")
 
 
 def _extra(dest: dict[str, Any]) -> dict[str, Any]:
@@ -61,6 +61,29 @@ def _prefix_parts(prefix: str) -> list[str]:
     return parts
 
 
+def stored_file_names(job: dict[str, Any]) -> dict[str, str]:
+    """input id -> basename written at encode time. Empty for older exports."""
+    raw = job.get("file_names") or ""
+    if isinstance(raw, dict):
+        data = raw
+    else:
+        text = str(raw).strip()
+        if text == "":
+            return {}
+        try:
+            data = json.loads(text)
+        except json.JSONDecodeError:
+            return {}
+    if not isinstance(data, dict):
+        return {}
+    out: dict[str, str] = {}
+    for key, value in data.items():
+        base = str(value)
+        if _SAFE_SEG.match(base) and base.endswith(".mp4") and ".." not in base:
+            out[str(key)] = base
+    return out
+
+
 def export_media_files(job: dict[str, Any]) -> list[tuple[str, str]]:
     """Basename and absolute path for each MP4 this export produced."""
     eid = str(job.get("id") or "")
@@ -75,8 +98,15 @@ def export_media_files(job: dict[str, Any]) -> list[tuple[str, str]]:
         ids = []
     stored = str(job.get("path") or "")
     directory = os.path.dirname(stored) if stored else ""
+    names = stored_file_names(job)
     if len(ids) <= 1:
-        path = stored or (os.path.join(directory, eid + ".mp4") if directory else "")
+        if stored:
+            return [(os.path.basename(stored), stored)]
+        iid = str(ids[0]) if ids else ""
+        named = names.get(iid, "")
+        if named and directory:
+            return [(named, os.path.join(directory, named))]
+        path = os.path.join(directory, eid + ".mp4") if directory else ""
         if path == "":
             raise RuntimeError("export file missing")
         return [(os.path.basename(path), path)]
@@ -85,7 +115,7 @@ def export_media_files(job: dict[str, Any]) -> list[tuple[str, str]]:
         iid_s = str(iid)
         if not _INPUT_ID.match(iid_s):
             continue
-        base = f"{eid}_{iid_s}.mp4"
+        base = names.get(iid_s) or f"{eid}_{iid_s}.mp4"
         out.append((base, os.path.join(directory, base)))
     if not out:
         raise RuntimeError("no export files")

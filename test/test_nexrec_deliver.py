@@ -108,6 +108,30 @@ class TestRemote(unittest.TestCase):
             ["exp_abc_cam.mp4", "exp_abc_studio.mp4"],
         )
 
+    def test_stored_file_names_are_what_gets_copied(self):
+        cam = "Charlie_20261001_145122-150122_a8c98ff5ed73.mp4"
+        studio = "Delta_20261001_145122-150122_a8c98ff5ed73.mp4"
+        job = {
+            "id": "exp_a8c98ff5ed73",
+            "input_ids": json.dumps(["cam", "studio"]),
+            "path": "/var/lib/nexrec/storage/exports/" + cam,
+            "file_names": json.dumps({"cam": cam, "studio": studio}),
+        }
+        files = export_media_files(job)
+        self.assertEqual([base for base, _path in files], [cam, studio])
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        src = os.path.join(tmp.name, "src.mp4")
+        with open(src, "wb") as fh:
+            fh.write(b"media")
+        stage = os.path.join(tmp.name, "stage")
+        source, files_from = prepare_source([(cam, src)], stage)
+        if files_from is None:
+            self.assertEqual(os.listdir(source), [cam])
+        else:
+            listed = open(files_from, encoding="utf-8").read().split()
+            self.assertEqual(listed, [cam])
+
     def test_stage_contains_only_this_export(self):
         tmp = tempfile.TemporaryDirectory()
         self.addCleanup(tmp.cleanup)

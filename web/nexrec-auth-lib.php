@@ -347,6 +347,7 @@ function nexrec_ensure_input_feature_columns(): void {
         'description' => "TEXT NOT NULL DEFAULT ''",
         'auth_required' => 'INTEGER NOT NULL DEFAULT 0',
         'share_token' => 'TEXT',
+        'file_names' => "TEXT NOT NULL DEFAULT '{}'",
     ];
     foreach ($exportCols as $name => $decl) {
         if (empty($expHave[$name])) {

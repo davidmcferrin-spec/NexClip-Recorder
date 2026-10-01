@@ -139,5 +139,20 @@ if (($listed['files'][1]['href'] ?? '') !== '/api/share/' . $token . '/studio') 
     fwrite(STDERR, "multi share href\n");
     exit(1);
 }
+$named = $many;
+$named['path'] = $storage . '/exports/Charlie_20261001_145122-150122_a8c98ff5ed73.mp4';
+$named['file_names'] = json_encode([
+    'cam' => 'Charlie_20261001_145122-150122_a8c98ff5ed73.mp4',
+    'studio' => 'Delta_20261001_145122-150122_a8c98ff5ed73.mp4',
+], JSON_UNESCAPED_SLASHES);
+$resolved = nexrec_export_output_files($named);
+$resolvedNames = array_map(static fn (array $file): string => basename((string) $file['path']), $resolved);
+if ($resolvedNames !== [
+    'Charlie_20261001_145122-150122_a8c98ff5ed73.mp4',
+    'Delta_20261001_145122-150122_a8c98ff5ed73.mp4',
+]) {
+    fwrite(STDERR, "readable export names were not used\n");
+    exit(1);
+}
 
 echo "test_nexrec_share.php ok\n";

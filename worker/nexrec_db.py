@@ -301,6 +301,7 @@ def ensure_input_feature_columns(conn: PgConn) -> None:
         ("description", "TEXT NOT NULL DEFAULT ''"),
         ("auth_required", "INTEGER NOT NULL DEFAULT 0"),
         ("share_token", "TEXT"),
+        ("file_names", "TEXT NOT NULL DEFAULT '{}'"),
     ):
         if name not in exp_cols:
             conn.execute(f"ALTER TABLE exports ADD COLUMN {name} {decl}")

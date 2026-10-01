@@ -89,6 +89,7 @@ CREATE TABLE IF NOT EXISTS exports (
   quality TEXT NOT NULL DEFAULT 'full',
   scope TEXT NOT NULL DEFAULT 'one',
   path TEXT,
+  file_names TEXT NOT NULL DEFAULT '{}',
   size_bytes INTEGER,
   protected INTEGER NOT NULL DEFAULT 0,
   error TEXT,
