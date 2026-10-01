@@ -148,6 +148,38 @@
     });
   }
 
+  function lineupInputs(linked) {
+    var set = {};
+    linked.forEach(function (id) { set[String(id)] = true; });
+    var out = [];
+    inputs.forEach(function (inp) {
+      if (set[String(inp.id)]) out.push(inp);
+    });
+    linked.forEach(function (id) {
+      var known = out.some(function (inp) { return String(inp.id) === String(id); });
+      if (!known) out.push({ id: id, asrun_offset_s: 0, asrun_offset_frames: 0 });
+    });
+    return out;
+  }
+
+  function offsetSeconds(inp) {
+    var sec = parseInt(inp && inp.asrun_offset_s, 10);
+    var frames = parseInt(inp && inp.asrun_offset_frames, 10);
+    if (!isFinite(sec)) sec = 0;
+    if (!isFinite(frames)) frames = 0;
+    if (sec > 86400) sec = 86400;
+    if (sec < -86400) sec = -86400;
+    if (frames > 29) frames = 29;
+    if (frames < -29) frames = -29;
+    return sec + frames / 30;
+  }
+
+  function shiftStamp(iso, seconds) {
+    var t = Date.parse(iso);
+    if (!isFinite(t) || !seconds) return iso;
+    return new Date(t + Math.round(seconds * 1000)).toISOString();
+  }
+
   function typeLabel(ev) {
     var parts = [];
     if (ev.status === "C") return "note";
@@ -210,8 +242,12 @@
               document.getElementById("solo-err").textContent = "Link this log to an input first.";
               return;
             }
-            location.href = "/export?inputs=" + encodeURIComponent(linked.join(",")) +
-              "&t=" + encodeURIComponent(ev.start_at);
+            var line = lineupInputs(linked);
+            var first = line[0];
+            var t = shiftStamp(ev.start_at, offsetSeconds(first));
+            location.href = "/export?inputs=" + encodeURIComponent(line.map(function (inp) {
+              return inp.id;
+            }).join(",")) + "&t=" + encodeURIComponent(t);
           });
         }
         body.appendChild(tr);

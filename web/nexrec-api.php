@@ -83,6 +83,7 @@ function nexrec_storage_forecast_now(): array {
             $inputs[] = [
                 'id' => $id,
                 'name' => (string) ($row['name'] ?? $id),
+                'path' => nexrec_input_record_dir($id),
                 'enabled' => (int) ($row['enabled'] ?? 0) === 1,
                 'retention_days' => (int) ($row['retention_days'] ?? 0),
                 'video_bitrate' => $row['video_bitrate'] ?? '',
@@ -107,6 +108,13 @@ function nexrec_storage_forecast_now(): array {
             'default_audio' => nexrec_setting('ffmpeg.audio_bitrate') ?: '192k',
         ]
     );
+}
+
+function nexrec_input_record_dir(string $id): string {
+    if (!nexrec_valid_input_id($id)) {
+        return '';
+    }
+    return rtrim(nexrec_storage_dir(), '/\\') . '/inputs/' . $id . '/native';
 }
 
 function nexrec_storage_dir(): string {
@@ -542,10 +550,11 @@ try {
                video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,
                feat_scte,feat_av_anomaly,feat_captions,feat_transcribe,feat_nielsen,feat_monitors,
                thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,nexclip_slot,
+               asrun_offset_s,asrun_offset_frames,
                created_at,updated_at)
              VALUES (
                :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:ki,:vb,:ab,:rd,:pp,:pe,
-               :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:c,:u)
+               :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:aos,:aof,:c,:u)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, source_type=excluded.source_type, url=excluded.url,
                decklink_device=excluded.decklink_device, decklink_format=excluded.decklink_format,
@@ -561,6 +570,7 @@ try {
                thresh_freeze_s=excluded.thresh_freeze_s, thresh_black_s=excluded.thresh_black_s,
                thresh_bars_s=excluded.thresh_bars_s, transcribe_engine=excluded.transcribe_engine,
                nexclip_slot=excluded.nexclip_slot,
+               asrun_offset_s=excluded.asrun_offset_s, asrun_offset_frames=excluded.asrun_offset_frames,
                updated_at=excluded.updated_at'
         );
         $st->bindValue(':id', $id, SQLITE3_TEXT);
@@ -644,6 +654,10 @@ try {
         } else {
             $st->bindValue(':slot', $slot, SQLITE3_INTEGER);
         }
+        $offS = max(-86400, min(86400, (int) ($body['asrun_offset_s'] ?? 0)));
+        $offF = max(-29, min(29, (int) ($body['asrun_offset_frames'] ?? 0)));
+        $st->bindValue(':aos', $offS, SQLITE3_INTEGER);
+        $st->bindValue(':aof', $offF, SQLITE3_INTEGER);
         $st->bindValue(':c', $now, SQLITE3_TEXT);
         $st->bindValue(':u', $now, SQLITE3_TEXT);
         $st->execute();

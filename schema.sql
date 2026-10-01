@@ -50,6 +50,8 @@ CREATE TABLE IF NOT EXISTS inputs (
   thresh_bars_s DOUBLE PRECISION NOT NULL DEFAULT 5.0,
   transcribe_engine TEXT,
   nexclip_slot INTEGER,
+  asrun_offset_s INTEGER NOT NULL DEFAULT 0,
+  asrun_offset_frames INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL,
   updated_at TEXT NOT NULL
 );

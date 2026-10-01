@@ -47,9 +47,9 @@
     <input type="text" class="range-time" id="range-start" spellcheck="false" autocomplete="off" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Timeline start, station time">
     <span class="meta">to</span>
     <input type="text" class="range-time" id="range-end" spellcheck="false" autocomplete="off" placeholder="YYYY-MM-DD HH:MM:SS" aria-label="Timeline end, station time">
-    <button type="button" id="range-apply">Apply</button>
-    <button type="button" id="range-hour">Last hour</button>
-    <button type="button" id="range-all">All loaded</button>
+    <button type="button" id="range-apply" title="Set the timeline to the start and end times above, in station time.">Apply</button>
+    <button type="button" id="range-hour" title="Show the last hour of the loaded archive.">Last hour</button>
+    <button type="button" id="range-all" title="Stretch the timeline across every chunk this page has already fetched. Opening Export loads the newest 500 chunks. An as-run or copied link loads the window around that time.">All loaded</button>
   </div>
   <div class="timeline" id="timeline" title="Scrub the range. Each colored line is one input. Pictures are the selected input.">
     <div class="playhead range" id="playhead-range" hidden></div>

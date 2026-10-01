@@ -52,7 +52,7 @@
     <p class="sub" id="runway-summary">Each input’s days left is how long that input alone would take to fill the space remaining before purge. The system line is all enabled inputs writing together.</p>
     <table>
       <thead>
-        <tr><th>Input</th><th>Rate</th><th>On disk</th><th>Retention</th><th>Days left alone</th></tr>
+        <tr><th>Input</th><th>Rate</th><th>Space used</th><th>On disk</th><th>Retention</th><th>Days left alone</th></tr>
       </thead>
       <tbody id="runway"></tbody>
     </table>
@@ -255,23 +255,26 @@ function paintRunway(data) {
     ". A row’s days left is that input alone. Purge starts at " + (data.max_used_percent || "—") +
     "% used, and the warning bar appears " + (data.warn_points || "—") + " points sooner.";
   if (!rows.length) {
-    body.innerHTML = '<tr><td colspan="5">No inputs yet.</td></tr>';
+    body.innerHTML = '<tr><td colspan="6">No inputs yet.</td></tr>';
     return;
   }
   var html = rows.map(function (r) {
-    return "<tr><td>" + esc(r.name || r.id) + "</td><td>" + esc(rateLabel(r.rate_bps, r.rate_source)) +
+    var name = esc(r.name || r.id);
+    var cell = r.path ? '<td class="input-path" title="' + esc(r.path) + '">' + name + "</td>" : "<td>" + name + "</td>";
+    return "<tr>" + cell + "<td>" + esc(rateLabel(r.rate_bps, r.rate_source)) +
+      "</td><td>" + esc(gib(r.stored_bytes)) +
       "</td><td>" + esc(daysLabel(r.days_on_disk)) + "</td><td>" + esc(r.retention_days) +
       "</td><td>" + esc(daysLabel(r.days_left)) + "</td></tr>";
   }).join("");
   html += "<tr><td>All inputs</td><td>" + esc(rateLabel(data.system_rate_bps, "")) +
-    "</td><td>—</td><td>—</td><td>" + esc(sys) + "</td></tr>";
+    "</td><td>—</td><td>—</td><td>—</td><td>" + esc(sys) + "</td></tr>";
   body.innerHTML = html;
 }
 function loadForecast() {
   if (!window.NexRecAuth || !NexRecAuth.recApi) return;
   NexRecAuth.recApi("storage_forecast").then(paintRunway).catch(function () {
     var body = document.getElementById("runway");
-    if (body) body.innerHTML = '<tr><td colspan="5">Days left unavailable.</td></tr>';
+    if (body) body.innerHTML = '<tr><td colspan="6">Days left unavailable.</td></tr>';
   });
 }
 function load() {

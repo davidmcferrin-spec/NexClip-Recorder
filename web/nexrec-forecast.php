@@ -103,6 +103,7 @@ function nexrec_storage_forecast(array $disk, array $inputs, array $policy): arr
             'enabled' => $enabled,
             'retention_days' => max(0, (int) ($inp['retention_days'] ?? 0)),
             'stored_bytes' => $stored,
+            'path' => (string) ($inp['path'] ?? ''),
             'rate_bps' => $rate,
             'rate_source' => $source,
             'days_on_disk' => $daysOnDisk,

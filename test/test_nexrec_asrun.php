@@ -130,6 +130,24 @@ if (nexrec_asrun_rel($drop, $channelDir . DIRECTORY_SEPARATOR . 'ANTVX_N260928.a
     exit(1);
 }
 
+if (abs(nexrec_asrun_offset_seconds(2, 15) - 2.5) > 0.0001) {
+    fwrite(STDERR, "offset 2s+15f\n");
+    exit(1);
+}
+if (abs(nexrec_asrun_offset_seconds(-1, -10) - (-1 - 10 / 30)) > 0.0001) {
+    fwrite(STDERR, "negative offset\n");
+    exit(1);
+}
+if (nexrec_asrun_offset_seconds(0, 40) !== nexrec_asrun_offset_seconds(0, 29)) {
+    fwrite(STDERR, "frames should clamp at 29\n");
+    exit(1);
+}
+$moved = nexrec_asrun_add_seconds('2026-09-28T08:00:00.067Z', nexrec_asrun_offset_seconds(2, 15));
+if ($moved !== '2026-09-28T08:00:02.567Z') {
+    fwrite(STDERR, "shifted open got {$moved}\n");
+    exit(1);
+}
+
 nexrec_migrate();
 $saved = nexrec_asrun_import($fixture, [
     'filename' => 'ANTVX_N260928.asr',
@@ -166,6 +184,21 @@ if (in_array('TER304-05', $houses, true) || in_array('NSML7100', $houses, true))
     fwrite(STDERR, "band included a tied squeeze row\n");
     exit(1);
 }
+
+$db->exec("UPDATE inputs SET asrun_offset_s = 2, asrun_offset_frames = 15 WHERE id = 'antv'");
+$shifted = nexrec_asrun_band('antv', '2026-09-28T08:00:00Z', '2026-09-28T09:30:00Z');
+$shiftedOpen = null;
+foreach ($shifted as $row) {
+    if ($row['house_id'] === 'TER301-01') {
+        $shiftedOpen = $row;
+        break;
+    }
+}
+if ($shiftedOpen === null || $shiftedOpen['start_at'] !== '2026-09-28T08:00:02.567Z') {
+    fwrite(STDERR, "band offset got " . ($shiftedOpen['start_at'] ?? 'missing') . "\n");
+    exit(1);
+}
+$db->exec("UPDATE inputs SET asrun_offset_s = 0, asrun_offset_frames = 0 WHERE id = 'antv'");
 
 $loaded = nexrec_asrun_events($saved['id']);
 if (count($loaded) !== $saved['event_count']) {

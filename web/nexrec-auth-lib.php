@@ -317,6 +317,8 @@ function nexrec_ensure_input_feature_columns(): void {
         'transcribe_engine' => 'TEXT',
         'nexclip_slot' => 'INTEGER',
         'keep_interlace' => 'INTEGER',
+        'asrun_offset_s' => 'INTEGER NOT NULL DEFAULT 0',
+        'asrun_offset_frames' => 'INTEGER NOT NULL DEFAULT 0',
     ];
     $have = [];
     $res = nexrec_db()->query('PRAGMA table_info(inputs)');

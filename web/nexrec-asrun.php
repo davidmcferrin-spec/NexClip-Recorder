@@ -126,6 +126,38 @@ function nexrec_asrun_wall_utc(string $airDate, string $tc, string $tz, string $
     return $local->setTimezone(new DateTimeZone('UTC'))->format('Y-m-d\TH:i:s.v\Z');
 }
 
+/** Seconds plus frames at the as-run log rate of 30 fps. Frames are -29..29. */
+function nexrec_asrun_offset_seconds(int $seconds, int $frames): float
+{
+    if ($frames > 29) {
+        $frames = 29;
+    } elseif ($frames < -29) {
+        $frames = -29;
+    }
+    if ($seconds > 86400) {
+        $seconds = 86400;
+    } elseif ($seconds < -86400) {
+        $seconds = -86400;
+    }
+    return $seconds + ($frames / 30.0);
+}
+
+function nexrec_input_asrun_offset_seconds(string $inputId): float
+{
+    $st = nexrec_db()->prepare(
+        'SELECT asrun_offset_s, asrun_offset_frames FROM inputs WHERE id = :i'
+    );
+    $st->bindValue(':i', $inputId, SQLITE3_TEXT);
+    $row = nexrec_row($st->execute());
+    if ($row === null) {
+        return 0.0;
+    }
+    return nexrec_asrun_offset_seconds(
+        (int) ($row['asrun_offset_s'] ?? 0),
+        (int) ($row['asrun_offset_frames'] ?? 0)
+    );
+}
+
 function nexrec_asrun_add_seconds(string $isoUtc, float $seconds): string {
     $dt = new DateTimeImmutable($isoUtc);
     $ms = (int) round($seconds * 1000);
@@ -507,6 +539,9 @@ function nexrec_asrun_list(): array {
  * @return list<array<string,mixed>>
  */
 function nexrec_asrun_band(string $inputId, string $from, string $to): array {
+    $offset = nexrec_input_asrun_offset_seconds($inputId);
+    $fromQ = $offset == 0.0 ? $from : nexrec_asrun_add_seconds($from, -$offset);
+    $toQ = $offset == 0.0 ? $to : nexrec_asrun_add_seconds($to, -$offset);
     $st = nexrec_db()->prepare(
         'SELECT e.id, e.start_at, e.end_at, e.content_type, e.title, e.house_id, e.machine
          FROM asrun_events e
@@ -520,15 +555,21 @@ function nexrec_asrun_band(string $inputId, string $from, string $to): array {
          ORDER BY e.start_at'
     );
     $st->bindValue(':i', $inputId, SQLITE3_TEXT);
-    $st->bindValue(':t_to', $to, SQLITE3_TEXT);
-    $st->bindValue(':t_from', $from, SQLITE3_TEXT);
+    $st->bindValue(':t_to', $toQ, SQLITE3_TEXT);
+    $st->bindValue(':t_from', $fromQ, SQLITE3_TEXT);
     $res = $st->execute();
     $out = [];
     while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $start = (string) $row['start_at'];
+        $end = (string) $row['end_at'];
+        if ($offset != 0.0) {
+            $start = nexrec_asrun_add_seconds($start, $offset);
+            $end = nexrec_asrun_add_seconds($end, $offset);
+        }
         $out[] = [
             'id' => $row['id'],
-            'start_at' => $row['start_at'],
-            'end_at' => $row['end_at'],
+            'start_at' => $start,
+            'end_at' => $end,
             'content_type' => $row['content_type'],
             'title' => $row['title'],
             'house_id' => $row['house_id'],

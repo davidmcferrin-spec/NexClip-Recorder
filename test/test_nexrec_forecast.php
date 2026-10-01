@@ -56,6 +56,7 @@ $measured = nexrec_storage_forecast(
         'retention_days' => 28,
         'stored_bytes' => $day,
         'span_seconds' => $day,
+        'path' => '/var/lib/nexrec/storage/inputs/in1/native',
         'video_bitrate' => '12M',
         'audio_bitrate' => '192k',
     ]],
@@ -72,6 +73,15 @@ if (!$measured['warn'] || !$measured['cuts_retention']) {
 }
 if ($measured['inputs'][0]['rate_source'] !== 'measured') {
     fail('a day of chunks should use measured rate');
+}
+if (($quiet['inputs'][0]['path'] ?? 'x') !== '') {
+    fail('path should stay empty when the caller did not set one');
+}
+if ($measured['inputs'][0]['path'] !== '/var/lib/nexrec/storage/inputs/in1/native') {
+    fail('forecast should keep the recording folder');
+}
+if ($measured['inputs'][0]['stored_bytes'] !== $day) {
+    fail('stored bytes were dropped');
 }
 if (abs($measured['inputs'][0]['days_on_disk'] - 1.0) > 0.01) {
     fail('days on disk got ' . $measured['inputs'][0]['days_on_disk']);

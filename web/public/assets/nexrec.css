@@ -259,6 +259,7 @@ tr.asrun-hit { cursor: pointer; }
 tr.asrun-hit:hover { filter: brightness(1.25); }
 tr.asrun-tied td:first-child { padding-left: 44px; }
 tr.asrun-note { color: var(--dim); }
+td.input-path { cursor: help; }
 tr.asrun-ent { background: rgba(62, 207, 142, .18); }
 tr.asrun-cm { background: rgba(232, 168, 56, .20); }
 tr.asrun-pro { background: rgba(120, 144, 180, .24); }

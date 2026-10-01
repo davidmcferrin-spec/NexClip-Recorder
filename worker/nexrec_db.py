@@ -39,6 +39,8 @@ INPUT_FEATURE_COLUMNS: list[tuple[str, str]] = [
     ("transcribe_engine", "TEXT"),
     ("nexclip_slot", "INTEGER"),
     ("keep_interlace", "INTEGER"),
+    ("asrun_offset_s", "INTEGER NOT NULL DEFAULT 0"),
+    ("asrun_offset_frames", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
