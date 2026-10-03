@@ -389,6 +389,14 @@
       try { document.removeEventListener("visibilitychange", st._onVis); } catch (e) {}
       st._onVis = null;
     }
+    if (st._onPageShow) {
+      try { global.removeEventListener("pageshow", st._onPageShow); } catch (e) {}
+      st._onPageShow = null;
+    }
+    if (st._onResume) {
+      try { global.removeEventListener("resume", st._onResume); } catch (e) {}
+      st._onResume = null;
+    }
     whepTearPc(st);
     whepClearMedia(videoEl);
     try { videoEl._nexrecWhep = null; } catch (e) {}
@@ -425,6 +433,7 @@
       lastFrames: 0,
       lastFrameAt: 0,
       gotFrame: false,
+      hiddenAt: 0,
       sess: null,
       connecting: false,
     };
@@ -613,20 +622,41 @@
       });
     }
 
-    // Tab wake: if frames have gone quiet, force a reconnect instead of a blank pane.
-    function onVis() {
-      if (st.closed || document.visibilityState !== "visible") return;
+    // Background tabs and idle/sleep hosts commonly freeze WHEP. On wake, prefer a
+    // clean re-offer instead of a black pane that needs a manual source cycle.
+    function onWake(reason) {
+      if (st.closed) return;
       if (!st.pc) {
-        if (!st.retryTimer && !st.connecting) scheduleRetry("visible");
+        if (!st.retryTimer && !st.connecting) scheduleRetry(reason || "wake");
         return;
       }
-      if (st.gotFrame && st.lastFrameAt && Date.now() - st.lastFrameAt > WHEP_STALL_MS) {
-        recover("visible-stall");
+      var hiddenFor = st.hiddenAt ? Date.now() - st.hiddenAt : 0;
+      st.hiddenAt = 0;
+      if (hiddenFor >= WHEP_STALL_MS || (st.gotFrame && st.lastFrameAt && Date.now() - st.lastFrameAt > WHEP_STALL_MS)) {
+        recover(reason || "wake");
       }
+    }
+    function onVis() {
+      if (st.closed) return;
+      if (document.visibilityState === "hidden") {
+        st.hiddenAt = Date.now();
+        return;
+      }
+      onWake("visible");
+    }
+    function onPageShow(ev) {
+      if (ev && ev.persisted) onWake("pageshow");
+    }
+    function onResume() {
+      onWake("resume");
     }
     try {
       document.addEventListener("visibilitychange", onVis);
+      global.addEventListener("pageshow", onPageShow);
+      global.addEventListener("resume", onResume);
       st._onVis = onVis;
+      st._onPageShow = onPageShow;
+      st._onResume = onResume;
     } catch (e) {}
 
     return connectOnce();

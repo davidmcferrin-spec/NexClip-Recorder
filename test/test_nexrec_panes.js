@@ -112,6 +112,8 @@ assert.strictEqual(authSrc.includes("whepClose"), true);
 assert.strictEqual(authSrc.includes("reconnecting"), true);
 assert.strictEqual(authSrc.includes("framesDecoded"), true);
 assert.strictEqual(authSrc.includes("visibilitychange"), true);
+assert.strictEqual(authSrc.includes("pageshow"), true);
+assert.strictEqual(authSrc.includes("onWake"), true);
 assert.strictEqual(liveSrc.includes("nexrec-whep-track"), true);
 assert.strictEqual(liveSrc.includes("nexrec-whep-state"), true);
 assert.strictEqual(liveSrc.includes("whepClose"), true);
