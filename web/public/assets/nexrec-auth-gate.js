@@ -320,50 +320,316 @@
     }
   }
 
+  var WHEP_STALL_MS = 9000;
+  var WHEP_WATCH_MS = 3000;
+  var WHEP_DISC_GRACE_MS = 4000;
+  var WHEP_RETRY_BASE_MS = 1000;
+  var WHEP_RETRY_MAX_MS = 15000;
+
+  function whepState(videoEl) {
+    return videoEl && videoEl._nexrecWhep ? videoEl._nexrecWhep : null;
+  }
+
+  function whepClearMedia(videoEl) {
+    if (!videoEl) return;
+    var stream = videoEl.srcObject;
+    if (stream && stream.getTracks) {
+      try {
+        stream.getTracks().forEach(function (t) {
+          try { t.stop(); } catch (e) {}
+        });
+      } catch (e) {}
+    }
+    try { videoEl.srcObject = null; } catch (e) {}
+  }
+
+  function whepDeleteSession(url) {
+    if (!url) return;
+    try {
+      fetch(url, { method: "DELETE", credentials: "omit", cache: "no-store" }).catch(function () {});
+    } catch (e) {}
+  }
+
+  function whepTearPc(st) {
+    if (!st) return;
+    if (st.discTimer) {
+      clearTimeout(st.discTimer);
+      st.discTimer = null;
+    }
+    if (st.watchTimer) {
+      clearInterval(st.watchTimer);
+      st.watchTimer = null;
+    }
+    if (st.pc) {
+      try { st.pc.ontrack = null; } catch (e) {}
+      try { st.pc.onconnectionstatechange = null; } catch (e) {}
+      try { st.pc.oniceconnectionstatechange = null; } catch (e) {}
+      try { st.pc.close(); } catch (e) {}
+      st.pc = null;
+    }
+    whepDeleteSession(st.sessionUrl);
+    st.sessionUrl = null;
+    st.lastFrames = 0;
+    st.lastFrameAt = 0;
+    st.gotFrame = false;
+  }
+
+  function whepClose(videoEl) {
+    var st = whepState(videoEl);
+    if (!st) {
+      whepClearMedia(videoEl);
+      return;
+    }
+    st.closed = true;
+    if (st.retryTimer) {
+      clearTimeout(st.retryTimer);
+      st.retryTimer = null;
+    }
+    if (st._onVis) {
+      try { document.removeEventListener("visibilitychange", st._onVis); } catch (e) {}
+      st._onVis = null;
+    }
+    whepTearPc(st);
+    whepClearMedia(videoEl);
+    try { videoEl._nexrecWhep = null; } catch (e) {}
+    try {
+      videoEl.dispatchEvent(new CustomEvent("nexrec-whep-state", { detail: { state: "closed" } }));
+    } catch (e) {}
+  }
+
+  function whepEmit(videoEl, state, detail) {
+    try {
+      videoEl.dispatchEvent(new CustomEvent("nexrec-whep-state", {
+        detail: Object.assign({ state: state }, detail || {}),
+      }));
+    } catch (e) {}
+  }
+
+  function whepBackoff(attempt) {
+    var exp = Math.min(WHEP_RETRY_MAX_MS, WHEP_RETRY_BASE_MS * Math.pow(2, Math.max(0, attempt)));
+    return exp + Math.floor(Math.random() * 250);
+  }
+
   function whepConnect(videoEl, path) {
-    return api("whep_jwt", { path: path }).then(function (sess) {
-      var url = sess.whep_url;
-      if (!url || !global.RTCPeerConnection) {
-        return sess;
+    if (!videoEl || !path) return Promise.resolve(null);
+    whepClose(videoEl);
+    var st = {
+      closed: false,
+      path: path,
+      pc: null,
+      sessionUrl: null,
+      retryTimer: null,
+      watchTimer: null,
+      discTimer: null,
+      attempt: 0,
+      lastFrames: 0,
+      lastFrameAt: 0,
+      gotFrame: false,
+      sess: null,
+      connecting: false,
+    };
+    videoEl._nexrecWhep = st;
+
+    function scheduleRetry(reason) {
+      if (st.closed) return;
+      if (st.retryTimer) return;
+      var delay = whepBackoff(st.attempt);
+      st.attempt += 1;
+      whepEmit(videoEl, "reconnecting", { reason: reason || "retry", attempt: st.attempt, delay: delay });
+      st.retryTimer = setTimeout(function () {
+        st.retryTimer = null;
+        connectOnce();
+      }, delay);
+    }
+
+    function recover(reason) {
+      if (st.closed || st.connecting) return;
+      whepTearPc(st);
+      whepClearMedia(videoEl);
+      scheduleRetry(reason);
+    }
+
+    function armWatchdog(pc) {
+      if (st.watchTimer) clearInterval(st.watchTimer);
+      st.watchTimer = setInterval(function () {
+        if (st.closed || st.pc !== pc) return;
+        var cs = pc.connectionState;
+        var ice = pc.iceConnectionState;
+        if (cs === "failed" || ice === "failed") {
+          recover("failed");
+          return;
+        }
+        if (typeof pc.getStats !== "function") return;
+        pc.getStats().then(function (report) {
+          if (st.closed || st.pc !== pc) return;
+          var frames = null;
+          report.forEach(function (row) {
+            if (row && row.type === "inbound-rtp" && (row.kind === "video" || row.mediaType === "video")) {
+              if (typeof row.framesDecoded === "number") frames = row.framesDecoded;
+            }
+          });
+          var now = Date.now();
+          if (frames == null) {
+            // No inbound video yet after connect — keep waiting; offer path retries on failed.
+            if (st.gotFrame && st.lastFrameAt && now - st.lastFrameAt > WHEP_STALL_MS) {
+              recover("silent");
+            }
+            return;
+          }
+          if (frames > st.lastFrames) {
+            st.lastFrames = frames;
+            st.lastFrameAt = now;
+            st.gotFrame = true;
+            st.attempt = 0;
+            return;
+          }
+          if (st.gotFrame && st.lastFrameAt && now - st.lastFrameAt > WHEP_STALL_MS) {
+            recover("stalled");
+          }
+        }).catch(function () {});
+      }, WHEP_WATCH_MS);
+    }
+
+    function bindPcLifecycle(pc) {
+      function onState() {
+        if (st.closed || st.pc !== pc) return;
+        var cs = pc.connectionState;
+        var ice = pc.iceConnectionState;
+        if (cs === "failed" || ice === "failed") {
+          recover("failed");
+          return;
+        }
+        if (cs === "disconnected" || ice === "disconnected") {
+          if (st.discTimer) return;
+          st.discTimer = setTimeout(function () {
+            st.discTimer = null;
+            if (st.closed || st.pc !== pc) return;
+            var stillBad = pc.connectionState === "disconnected" ||
+              pc.connectionState === "failed" ||
+              pc.iceConnectionState === "disconnected" ||
+              pc.iceConnectionState === "failed";
+            if (stillBad) recover("disconnected");
+          }, WHEP_DISC_GRACE_MS);
+          return;
+        }
+        if (st.discTimer && (cs === "connected" || ice === "connected" || ice === "completed")) {
+          clearTimeout(st.discTimer);
+          st.discTimer = null;
+        }
       }
-      var pc = new RTCPeerConnection({ iceServers: sess.ice_servers || [] });
-      pc.addTransceiver("video", { direction: "recvonly" });
-      pc.addTransceiver("audio", { direction: "recvonly" });
-      // Video and audio arrive as separate tracks, often on separate streams.
-      // Keeping only the last stream drops whichever track arrived first.
-      pc.ontrack = function (ev) {
-        if (!videoEl || !ev.track) return;
-        var stream = videoEl.srcObject;
-        if (!stream || typeof stream.addTrack !== "function" || typeof stream.getTracks !== "function") {
-          stream = new MediaStream();
-          videoEl.srcObject = stream;
+      pc.onconnectionstatechange = onState;
+      pc.oniceconnectionstatechange = onState;
+    }
+
+    function connectOnce() {
+      if (st.closed) return Promise.resolve(null);
+      if (st.connecting) return Promise.resolve(st.sess);
+      st.connecting = true;
+      whepEmit(videoEl, "connecting", { attempt: st.attempt, path: path });
+      return api("whep_jwt", { path: path }).then(function (sess) {
+        st.sess = sess;
+        var url = sess.whep_url;
+        if (st.closed) return sess;
+        if (!url || !global.RTCPeerConnection) {
+          st.connecting = false;
+          whepEmit(videoEl, "unavailable", {});
+          return sess;
         }
-        var tracks = stream.getTracks();
-        for (var i = 0; i < tracks.length; i++) {
-          if (tracks[i].id === ev.track.id) return;
-        }
-        stream.addTrack(ev.track);
-        try {
-          videoEl.dispatchEvent(new Event("nexrec-whep-track"));
-        } catch (e) { /* the Live page also polls srcObject */ }
-      };
-      return pc.createOffer().then(function (offer) {
-        return pc.setLocalDescription(offer).then(function () { return offer; });
-      }).then(function (offer) {
-        var q = url.indexOf("?") >= 0 ? "&" : "?";
-        var whep = sess.jwt && sess.jwt !== "local" ? url + q + "jwt=" + encodeURIComponent(sess.jwt) : url;
-        return fetch(whep, {
-          method: "POST",
-          headers: { "Content-Type": "application/sdp" },
-          body: offer.sdp,
-        }).then(function (res) {
-          if (!res.ok) throw new Error("WHEP " + res.status);
-          return res.text();
-        }).then(function (sdp) {
-          return pc.setRemoteDescription({ type: "answer", sdp: sdp });
-        }).then(function () { return sess; });
-      }).catch(function () { return sess; });
-    });
+        whepTearPc(st);
+        whepClearMedia(videoEl);
+        var pc = new RTCPeerConnection({ iceServers: sess.ice_servers || [] });
+        st.pc = pc;
+        pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
+        // Video and audio arrive as separate tracks, often on separate streams.
+        // Keeping only the last stream drops whichever track arrived first.
+        pc.ontrack = function (ev) {
+          if (st.closed || !videoEl || !ev.track || st.pc !== pc) return;
+          var stream = videoEl.srcObject;
+          if (!stream || typeof stream.addTrack !== "function" || typeof stream.getTracks !== "function") {
+            stream = new MediaStream();
+            videoEl.srcObject = stream;
+          }
+          var tracks = stream.getTracks();
+          for (var i = 0; i < tracks.length; i++) {
+            if (tracks[i].id === ev.track.id) return;
+          }
+          stream.addTrack(ev.track);
+          try {
+            ev.track.addEventListener("ended", function () {
+              if (st.closed || st.pc !== pc) return;
+              recover("track-ended");
+            });
+          } catch (e) {}
+          try {
+            videoEl.dispatchEvent(new Event("nexrec-whep-track"));
+          } catch (e) { /* the Live page also polls srcObject */ }
+          whepEmit(videoEl, "track", { kind: ev.track.kind });
+        };
+        bindPcLifecycle(pc);
+        return pc.createOffer().then(function (offer) {
+          return pc.setLocalDescription(offer).then(function () { return offer; });
+        }).then(function (offer) {
+          var q = url.indexOf("?") >= 0 ? "&" : "?";
+          var whep = sess.jwt && sess.jwt !== "local" ? url + q + "jwt=" + encodeURIComponent(sess.jwt) : url;
+          return fetch(whep, {
+            method: "POST",
+            headers: { "Content-Type": "application/sdp" },
+            body: offer.sdp,
+          }).then(function (res) {
+            if (!res.ok) throw new Error("WHEP " + res.status);
+            var loc = res.headers && res.headers.get ? res.headers.get("Location") : null;
+            if (loc) {
+              try { st.sessionUrl = new URL(loc, whep).toString(); } catch (e) { st.sessionUrl = loc; }
+              if (sess.jwt && sess.jwt !== "local" && st.sessionUrl.indexOf("jwt=") < 0) {
+                st.sessionUrl += (st.sessionUrl.indexOf("?") >= 0 ? "&" : "?") + "jwt=" + encodeURIComponent(sess.jwt);
+              }
+            }
+            return res.text();
+          }).then(function (sdp) {
+            if (st.closed || st.pc !== pc) return sess;
+            return pc.setRemoteDescription({ type: "answer", sdp: sdp }).then(function () {
+              armWatchdog(pc);
+              st.connecting = false;
+              st.lastFrameAt = Date.now();
+              whepEmit(videoEl, "connected", { attempt: st.attempt });
+              try { videoEl.play().catch(function () {}); } catch (e) {}
+              return sess;
+            });
+          });
+        }).catch(function (err) {
+          st.connecting = false;
+          if (st.closed) return sess;
+          whepTearPc(st);
+          whepClearMedia(videoEl);
+          scheduleRetry((err && err.message) || "offer");
+          return sess;
+        });
+      }).catch(function () {
+        st.connecting = false;
+        if (st.closed) return null;
+        scheduleRetry("auth");
+        return null;
+      });
+    }
+
+    // Tab wake: if frames have gone quiet, force a reconnect instead of a blank pane.
+    function onVis() {
+      if (st.closed || document.visibilityState !== "visible") return;
+      if (!st.pc) {
+        if (!st.retryTimer && !st.connecting) scheduleRetry("visible");
+        return;
+      }
+      if (st.gotFrame && st.lastFrameAt && Date.now() - st.lastFrameAt > WHEP_STALL_MS) {
+        recover("visible-stall");
+      }
+    }
+    try {
+      document.addEventListener("visibilitychange", onVis);
+      st._onVis = onVis;
+    } catch (e) {}
+
+    return connectOnce();
   }
 
   global.NexRecAuth = {
@@ -374,6 +640,7 @@
     noteExportReceived: noteExportReceived,
     refreshExports: refreshExports,
     whepConnect: whepConnect,
+    whepClose: whepClose,
     currentUser: function () { return _user; },
   };
 })(window);

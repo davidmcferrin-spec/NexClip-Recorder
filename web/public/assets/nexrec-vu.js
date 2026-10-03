@@ -261,9 +261,10 @@
   }
   armMeterClock();
 
-  function ensureStyles() {
-    if (document.getElementById("nexrec-vu-css")) return;
-    const s = document.createElement("style");
+  function ensureStyles(doc) {
+    doc = doc || document;
+    if (doc.getElementById("nexrec-vu-css")) return;
+    const s = doc.createElement("style");
     s.id = "nexrec-vu-css";
     s.textContent = `
 .nexrec-vu {
@@ -369,7 +370,7 @@
 .nexrec-vu-label { font-size: 9px; color: var(--dim, #98a6b5); }
 .nexrec-vu-ch.solo .nexrec-vu-label { color: var(--acc, #3ecf8e); font-weight: 600; }
 `;
-    document.head.appendChild(s);
+    (doc.head || doc.documentElement).appendChild(s);
   }
 
   function el(tag, className, text) {
@@ -387,10 +388,10 @@
    * @param {boolean} [opts.floatable=true]
    */
   function attach(opts) {
-    ensureStyles();
     const container = opts && opts.container;
     const video = opts && opts.video;
     if (!container || !video) return null;
+    ensureStyles(container.ownerDocument || document);
     const floatable = opts.floatable !== undefined ? !!opts.floatable : true;
 
     const root = el("div", "nexrec-vu");
@@ -488,7 +489,8 @@
       }
       const w = root.offsetWidth || 0;
       const h = root.offsetHeight || 0;
-      const next = clampPos(pos.left, pos.top, w, h, window.innerWidth || 0, window.innerHeight || 0, POS_PAD);
+      const view = (container.ownerDocument && container.ownerDocument.defaultView) || window;
+      const next = clampPos(pos.left, pos.top, w, h, view.innerWidth || 0, view.innerHeight || 0, POS_PAD);
       if (w > 0 && h > 0 && (next.left !== pos.left || next.top !== pos.top)) {
         pos = next;
         setPosPref(pos);
@@ -500,7 +502,8 @@
 
     function applyHost() {
       if (!floatable) return;
-      const parent = (popped && visible) ? (document.body || container) : container;
+      const doc = container.ownerDocument || document;
+      const parent = (popped && visible) ? (doc.body || container) : container;
       if (parent && root.parentNode !== parent) parent.appendChild(root);
       root.classList.toggle("nexrec-vu-pop", !!(visible && popped));
       root.classList.toggle("nexrec-vu-drag", !!(drag && drag.moved));

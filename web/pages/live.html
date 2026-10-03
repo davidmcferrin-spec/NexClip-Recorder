@@ -44,10 +44,25 @@
     <button type="button" class="tgl" id="listen-toggle" aria-pressed="false" title="Play the selected pane's preview in this browser. The picture stays muted.">Listen</button>
     <button type="button" class="tgl" id="cc-toggle" aria-pressed="false" title="Draw 608/708 captions on the selected pane (C). Text comes from the recording after the chunk is indexed, so live words trail the picture.">CC</button>
     <input type="range" id="listen-vol" class="listen-vol" min="0" max="1" step="0.05" value="0.2" aria-label="Preview listen volume">
+    <span class="meta">View</span>
+    <div class="seg" id="view-seg" title="Frameless full window, browser fullscreen, or Picture-in-Picture for the whole multiview. Panes keep their native aspect ratio.">
+      <button type="button" data-view="window" aria-pressed="false" title="Hide chrome; fill the browser window (W)">Window</button>
+      <button type="button" data-view="full" aria-pressed="false" title="Browser fullscreen (F)">Full</button>
+      <button type="button" data-view="pip" aria-pressed="false" title="Picture-in-Picture for the multiview (P)">PiP</button>
+    </div>
     <span class="meta" id="clock">—</span>
     <span class="meta" id="monitor-hint">Confidence monitors follow the selected pane (decoded preview, not the record). Stereo Opus proxy.</span>
   </div>
-  <div class="grid n1" id="grid"></div>
+  <div class="stage-pip-home" id="stage-home" hidden>
+    <span>Live multiview is in Picture-in-Picture.</span>
+    <button type="button" id="stage-pip-return">Return here</button>
+  </div>
+  <div class="stage" id="stage">
+    <div class="grid n1" id="grid"></div>
+    <div class="stage-exit" id="stage-exit" hidden>
+      <button type="button" id="stage-exit-btn" title="Exit frameless view (Esc)">Exit</button>
+    </div>
+  </div>
 </main>
 <script src="/assets/nexrec-scopes.js"></script>
 <script src="/assets/nexrec-vu.js"></script>
@@ -66,10 +81,14 @@
   var ccBox = null;
   var ccTimer = null;
   var ccFetch = 0;
+  var theater = false;
+  var pipWindow = null;
+  var stageParent = null;
   NexRecAuth.requirePage().then(load);
   syncToggles();
   syncListen();
   syncCcButton();
+  syncViewButtons();
 
   function listeningNow() {
     if (monitors && monitors.vu) return monitors.vu.isListening();
@@ -167,7 +186,7 @@
   function bindCc() {
     destroyCc();
     if (!window.NexRecCc) return;
-    var pane = document.querySelector("#grid .pane.selected");
+    var pane = liveRoot().querySelector("#grid .pane.selected");
     if (!pane) return;
     ccBox = NexRecCc.attach({ container: pane });
     ccBox.setVisible(NexRecCc.getOnPref());
@@ -185,7 +204,7 @@
 
   function bindMonitors() {
     destroyMonitors();
-    var pane = document.querySelector("#grid .pane.selected");
+    var pane = liveRoot().querySelector("#grid .pane.selected");
     if (!pane || !window.NexRecScopes || !window.NexRecVu || !window.NexRecSpectrum) {
       syncListen();
       return;
@@ -231,10 +250,14 @@
     return NexRecUI.paneSlotIds(inputs, slotIds);
   }
 
+  function liveRoot() {
+    return gridHostDoc();
+  }
+
   function choosePane(i) {
     if (selected === i) return;
     selected = i;
-    document.querySelectorAll("#grid .pane").forEach(function (p, idx) {
+    liveRoot().querySelectorAll("#grid .pane").forEach(function (p, idx) {
       p.classList.toggle("selected", idx === selected);
     });
     bindMonitors();
@@ -248,12 +271,187 @@
     render();
   }
 
+  function closeAllWhep() {
+    liveRoot().querySelectorAll("#grid video").forEach(function (video) {
+      if (NexRecAuth.whepClose) NexRecAuth.whepClose(video);
+    });
+  }
+
+  function paintPlaceholder(ph, inp, state) {
+    if (!ph) return;
+    if (!inp) {
+      ph.innerHTML = "<span>no input</span>";
+      ph.style.display = "";
+      return;
+    }
+    var path = inp.preview_path || "in0";
+    if (state === "reconnecting" || state === "connecting") {
+      ph.innerHTML = '<span class="rec-dot"></span><span>' + path + " WHEP</span><span>reconnecting…</span>";
+      ph.style.display = "";
+      return;
+    }
+    ph.innerHTML = '<span class="rec-dot"></span><span>' + path + " WHEP</span><span>proxy preview</span>";
+  }
+
+  function hidePlaceholderIfReady(video, ph) {
+    var stream = video.srcObject;
+    if (stream && stream.getVideoTracks && stream.getVideoTracks().length) {
+      ph.style.display = "none";
+      return true;
+    }
+    return false;
+  }
+
+  function gridHostDoc() {
+    return pipWindow && !pipWindow.closed ? pipWindow.document : document;
+  }
+
+  function stageEl() {
+    var doc = gridHostDoc();
+    return doc.getElementById("stage") || document.getElementById("stage");
+  }
+
+  function isFullscreen() {
+    var stage = stageEl();
+    var fs = document.fullscreenElement || document.webkitFullscreenElement;
+    return !!(fs && stage && (fs === stage || stage.contains(fs)));
+  }
+
+  function syncViewButtons() {
+    var fs = isFullscreen();
+    var pip = !!(pipWindow && !pipWindow.closed);
+    var videoPip = !!document.pictureInPictureElement;
+    document.querySelectorAll("#view-seg button[data-view]").forEach(function (btn) {
+      var mode = btn.getAttribute("data-view");
+      var on = (mode === "window" && theater && !fs && !pip) ||
+        (mode === "full" && fs) ||
+        (mode === "pip" && (pip || videoPip));
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    var stage = stageEl();
+    var exit = stage ? stage.querySelector("#stage-exit") : null;
+    if (exit) exit.hidden = !(theater || fs) || pip;
+    document.body.classList.toggle("live-theater", theater && !pip);
+    document.body.classList.toggle("live-pip", pip);
+    var home = document.getElementById("stage-home");
+    if (home) home.hidden = !pip;
+  }
+
+  function setTheater(on) {
+    theater = !!on;
+    syncViewButtons();
+  }
+
+  function exitFullscreen() {
+    var leave = document.exitFullscreen || document.webkitExitFullscreen;
+    if (leave && (document.fullscreenElement || document.webkitFullscreenElement)) {
+      try { leave.call(document); } catch (e) {}
+    }
+  }
+
+  function enterFullscreen() {
+    var stage = stageEl();
+    if (!stage) return Promise.resolve();
+    var req = stage.requestFullscreen || stage.webkitRequestFullscreen;
+    if (!req) return Promise.resolve();
+    return Promise.resolve(req.call(stage)).catch(function () {});
+  }
+
+  function restoreStageFromPip() {
+    var stage = stageEl();
+    var parent = stageParent || document.querySelector("main");
+    if (stage && parent && stage.parentNode !== parent) {
+      parent.appendChild(stage);
+    }
+    try { if (pipWindow && !pipWindow.closed) pipWindow.close(); } catch (e) {}
+    pipWindow = null;
+    stageParent = null;
+    syncViewButtons();
+    bindMonitors();
+    bindCc();
+  }
+
+  function copyStylesTo(targetDoc) {
+    Array.prototype.forEach.call(document.querySelectorAll('link[rel="stylesheet"], style'), function (node) {
+      targetDoc.head.appendChild(node.cloneNode(true));
+    });
+  }
+
+  function enterPip() {
+    if (pipWindow && !pipWindow.closed) {
+      try { pipWindow.focus(); } catch (e) {}
+      return Promise.resolve();
+    }
+    var stage = stageEl();
+    if (!stage) return Promise.resolve();
+    // Prefer document PiP so 2–6 panes stay together. Fall back to selected video PiP.
+    if (window.documentPictureInPicture && documentPictureInPicture.requestWindow) {
+      return documentPictureInPicture.requestWindow({
+        width: Math.max(480, Math.round(window.innerWidth * 0.45)),
+        height: Math.max(270, Math.round(window.innerHeight * 0.45)),
+      }).then(function (win) {
+        pipWindow = win;
+        copyStylesTo(win.document);
+        win.document.documentElement.setAttribute("data-theme", document.documentElement.getAttribute("data-theme") || "dark");
+        win.document.body.className = "stage-page live-theater live-pip-window";
+        stageParent = stage.parentNode;
+        win.document.body.appendChild(stage);
+        win.addEventListener("pagehide", function () {
+          restoreStageFromPip();
+        });
+        win.addEventListener("keydown", function (ev) {
+          if (ev.key === "Escape") {
+            ev.preventDefault();
+            exitStageModes();
+          }
+        });
+        syncViewButtons();
+        bindMonitors();
+        bindCc();
+      }).catch(function () {
+        return enterVideoPip();
+      });
+    }
+    return enterVideoPip();
+  }
+
+  function enterVideoPip() {
+    var root = liveRoot();
+    var pane = root.querySelector("#grid .pane.selected") || root.querySelector("#grid .pane");
+    var video = pane && pane.querySelector("video");
+    if (!video || !document.pictureInPictureEnabled || !video.requestPictureInPicture) {
+      return Promise.resolve();
+    }
+    return video.requestPictureInPicture().then(function () {
+      syncViewButtons();
+    }).catch(function () {});
+  }
+
+  function exitPip() {
+    if (pipWindow && !pipWindow.closed) {
+      restoreStageFromPip();
+      return;
+    }
+    if (document.pictureInPictureElement) {
+      try { document.exitPictureInPicture(); } catch (e) {}
+    }
+  }
+
+  function exitStageModes() {
+    setTheater(false);
+    exitFullscreen();
+    exitPip();
+    syncViewButtons();
+  }
+
   function render() {
     if (selected >= n) selected = 0;
     clearClockTimers();
     destroyMonitors();
     destroyCc();
-    var grid = document.getElementById("grid");
+    closeAllWhep();
+    var grid = gridHostDoc().getElementById("grid") || document.getElementById("grid");
     grid.className = "grid n" + n;
     grid.innerHTML = "";
     var ids = visibleIds();
@@ -295,9 +493,7 @@
       video.playsInline = true;
       var ph = document.createElement("div");
       ph.className = "ph";
-      ph.innerHTML = inp
-        ? '<span class="rec-dot"></span><span>' + (inp.preview_path || "in0") + ' WHEP</span><span>proxy preview</span>'
-        : "<span>no input</span>";
+      paintPlaceholder(ph, inp, "idle");
       pane.appendChild(video);
       pane.appendChild(ph);
       pane.appendChild(pick);
@@ -309,18 +505,25 @@
       grid.appendChild(cell);
       if (inp && inp.preview_path) {
         video.addEventListener("nexrec-whep-track", function () {
-          var stream = video.srcObject;
-          if (stream && stream.getVideoTracks && stream.getVideoTracks().length) {
-            ph.style.display = "none";
+          hidePlaceholderIfReady(video, ph);
+        });
+        video.addEventListener("nexrec-whep-state", function (ev) {
+          var state = ev && ev.detail && ev.detail.state;
+          if (state === "connected" || state === "track") {
+            hidePlaceholderIfReady(video, ph);
+            if (monitors && monitors.video === video && video.srcObject) {
+              monitors.vu.setStream(video.srcObject);
+            }
+            return;
+          }
+          if (state === "reconnecting" || state === "connecting") {
+            paintPlaceholder(ph, inp, state);
           }
         });
         NexRecAuth.whepConnect(video, inp.preview_path).then(function () {
-          var stream = video.srcObject;
-          if (stream && stream.getVideoTracks && stream.getVideoTracks().length) {
-            ph.style.display = "none";
-          }
-          if (monitors && monitors.video === video && stream) {
-            monitors.vu.setStream(stream);
+          hidePlaceholderIfReady(video, ph);
+          if (monitors && monitors.video === video && video.srcObject) {
+            monitors.vu.setStream(video.srcObject);
           }
         });
       }
@@ -341,6 +544,44 @@
     });
     render();
   });
+
+  document.getElementById("view-seg").addEventListener("click", function (ev) {
+    var btn = ev.target.closest("button[data-view]");
+    if (!btn) return;
+    var mode = btn.getAttribute("data-view");
+    if (mode === "window") {
+      if (theater && !isFullscreen()) setTheater(false);
+      else {
+        exitFullscreen();
+        exitPip();
+        setTheater(true);
+      }
+    } else if (mode === "full") {
+      if (isFullscreen()) exitFullscreen();
+      else {
+        setTheater(true);
+        enterFullscreen();
+      }
+    } else if (mode === "pip") {
+      if (pipWindow && !pipWindow.closed) exitPip();
+      else if (document.pictureInPictureElement) exitPip();
+      else {
+        setTheater(true);
+        enterPip();
+      }
+    }
+    syncViewButtons();
+  });
+
+  document.getElementById("stage-exit-btn").addEventListener("click", function () {
+    exitStageModes();
+  });
+  document.getElementById("stage-pip-return").addEventListener("click", function () {
+    exitPip();
+  });
+  document.addEventListener("fullscreenchange", syncViewButtons);
+  document.addEventListener("webkitfullscreenchange", syncViewButtons);
+  document.addEventListener("leavepictureinpicture", syncViewButtons);
 
   document.getElementById("monitor-seg").addEventListener("click", function (ev) {
     var btn = ev.target.closest("button[data-mon]");
@@ -392,9 +633,33 @@
       var type = (el.type || "text").toLowerCase();
       if (type !== "range" && type !== "button" && type !== "checkbox" && type !== "radio") return;
     }
-    if (ev.key !== "c" && ev.key !== "C") return;
-    ev.preventDefault();
-    document.getElementById("cc-toggle").click();
+    var key = ev.key;
+    if (key === "Escape") {
+      if (theater || isFullscreen() || (pipWindow && !pipWindow.closed) || document.pictureInPictureElement) {
+        ev.preventDefault();
+        exitStageModes();
+      }
+      return;
+    }
+    if (key === "c" || key === "C") {
+      ev.preventDefault();
+      document.getElementById("cc-toggle").click();
+      return;
+    }
+    if (key === "w" || key === "W") {
+      ev.preventDefault();
+      document.querySelector('#view-seg button[data-view="window"]').click();
+      return;
+    }
+    if (key === "f" || key === "F") {
+      ev.preventDefault();
+      document.querySelector('#view-seg button[data-view="full"]').click();
+      return;
+    }
+    if (key === "p" || key === "P") {
+      ev.preventDefault();
+      document.querySelector('#view-seg button[data-view="pip"]').click();
+    }
   }, true);
 
   document.getElementById("listen-vol").addEventListener("input", function (ev) {

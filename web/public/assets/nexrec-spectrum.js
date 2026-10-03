@@ -170,9 +170,10 @@
     return String(hz);
   }
 
-  function ensureStyles() {
-    if (document.getElementById("nexrec-spectrum-css")) return;
-    const s = document.createElement("style");
+  function ensureStyles(doc) {
+    doc = doc || document;
+    if (doc.getElementById("nexrec-spectrum-css")) return;
+    const s = doc.createElement("style");
     s.id = "nexrec-spectrum-css";
     s.textContent = `
 .nexrec-spectrum {
@@ -205,7 +206,7 @@
 .nexrec-spectrum canvas { display: block; }
 .nexrec-spectrum:not(.nexrec-spectrum-pop) canvas { width: 100%; height: auto; }
 `;
-    document.head.appendChild(s);
+    (doc.head || doc.documentElement).appendChild(s);
   }
 
   /**
@@ -214,9 +215,10 @@
    * @param {object|null} opts.vu  NexRecVu.attach() handle
    */
   function attach(opts) {
-    ensureStyles();
     const container = opts && opts.container;
     const vu = opts && opts.vu;
+    if (container) ensureStyles(container.ownerDocument || document);
+    else ensureStyles();
     if (!container) return null;
 
     const edges = bandEdges(BANDS, F_MIN, F_MAX);
@@ -275,7 +277,8 @@
     }
 
     function dockHost() {
-      return document.body || container;
+      const doc = container.ownerDocument || document;
+      return doc.body || container;
     }
 
     function applyPosition() {
@@ -287,7 +290,8 @@
       }
       const w = root.offsetWidth || 0;
       const h = root.offsetHeight || 0;
-      const next = clampPos(pos.left, pos.top, w, h, window.innerWidth || 0, window.innerHeight || 0, POS_PAD);
+      const view = (container.ownerDocument && container.ownerDocument.defaultView) || window;
+      const next = clampPos(pos.left, pos.top, w, h, view.innerWidth || 0, view.innerHeight || 0, POS_PAD);
       if (w > 0 && h > 0 && (next.left !== pos.left || next.top !== pos.top)) {
         pos = next;
         setPosPref(pos);

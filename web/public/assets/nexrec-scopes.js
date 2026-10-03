@@ -181,9 +181,19 @@
     return next;
   }
 
-  function ensureStyles() {
-    if (document.getElementById("nexrec-scopes-css")) return;
-    const s = document.createElement("style");
+  function hostDoc(node) {
+    return (node && node.ownerDocument) || document;
+  }
+
+  function hostWin(node) {
+    const doc = hostDoc(node);
+    return doc.defaultView || window;
+  }
+
+  function ensureStyles(doc) {
+    doc = doc || document;
+    if (doc.getElementById("nexrec-scopes-css")) return;
+    const s = doc.createElement("style");
     s.id = "nexrec-scopes-css";
     s.textContent = `
 .nexrec-scopes {
@@ -217,7 +227,7 @@
 }
 .nexrec-scopes canvas { display: block; }
 `;
-    document.head.appendChild(s);
+    (doc.head || doc.documentElement).appendChild(s);
   }
 
   function makeCanvas(w, h) {
@@ -299,10 +309,10 @@
    * @param {HTMLVideoElement} opts.video
    */
   function attach(opts) {
-    ensureStyles();
     const container = opts && opts.container;
     const video = opts && opts.video;
     if (!container || !video) return null;
+    ensureStyles(hostDoc(container));
 
     const targets = barTargets();
     let L = layoutFor(false);
@@ -341,7 +351,8 @@
     let suppressClick = false;
 
     function dockHost() {
-      return document.body || container;
+      const doc = hostDoc(container);
+      return doc.body || container;
     }
 
     function applyPosition() {
@@ -353,8 +364,9 @@
       }
       const w = root.offsetWidth || 0;
       const h = root.offsetHeight || 0;
-      const vw = window.innerWidth || 0;
-      const vh = window.innerHeight || 0;
+      const view = hostWin(container);
+      const vw = view.innerWidth || 0;
+      const vh = view.innerHeight || 0;
       const next = clampPos(pos.left, pos.top, w, h, vw, vh, POS_PAD);
       if (w > 0 && h > 0 && (next.left !== pos.left || next.top !== pos.top)) {
         pos = next;
