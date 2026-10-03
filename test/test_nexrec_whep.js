@@ -173,6 +173,56 @@ first.auth.whepConnect(first.video, "in1").then(function () {
     assert.strictEqual(first.video.srcObject, null);
     console.log("whep reconnect ok");
   });
+}).then(function () {
+  // Background / inactive wake path: hide, age the hidden clock, return to visible.
+  FakePC.instances = [];
+  whepPosts = 0;
+  const second = loadAuth(function (url, opts) {
+    const u = String(url);
+    if (u.indexOf("action=whep_jwt") >= 0) {
+      return Promise.resolve({
+        ok: true,
+        json() {
+          return Promise.resolve({
+            ok: true,
+            whep_url: "http://mtx.test/in2/whep",
+            jwt: "local",
+            ice_servers: [],
+          });
+        },
+      });
+    }
+    if (u.indexOf("/whep") >= 0 && opts && opts.method === "POST") {
+      whepPosts += 1;
+      return Promise.resolve({
+        ok: true,
+        status: 201,
+        headers: { get() { return null; } },
+        text() { return Promise.resolve("v=0"); },
+      });
+    }
+    if (opts && opts.method === "DELETE") {
+      return Promise.resolve({ ok: true, text() { return Promise.resolve(""); } });
+    }
+    return Promise.resolve({ ok: true, json() { return Promise.resolve({ ok: true }); } });
+  });
+  return second.auth.whepConnect(second.video, "in2").then(function () {
+    assert.strictEqual(whepPosts, 1);
+    const st = second.video._nexrecWhep;
+    st.gotFrame = true;
+    st.lastFrameAt = Date.now();
+    second.sandbox.document.visibilityState = "hidden";
+    (second.listeners.visibilitychange || []).forEach(function (fn) { fn(); });
+    assert.ok(st.hiddenAt > 0);
+    st.hiddenAt = Date.now() - 5000;
+    second.sandbox.document.visibilityState = "visible";
+    (second.listeners.visibilitychange || []).forEach(function (fn) { fn(); });
+    return new Promise(function (resolve) { setTimeout(resolve, 400); });
+  }).then(function () {
+    assert.ok(whepPosts >= 2, "expected reconnect after background wake, posts=" + whepPosts);
+    second.auth.whepClose(second.video);
+    console.log("whep background wake ok");
+  });
 }).catch(function (err) {
   console.error(err);
   process.exit(1);

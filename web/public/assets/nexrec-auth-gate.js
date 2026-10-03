@@ -321,6 +321,8 @@
   }
 
   var WHEP_STALL_MS = 9000;
+  // Background tabs and idle hosts freeze WebRTC quickly; reconnect soon after return.
+  var WHEP_WAKE_MS = 2000;
   var WHEP_WATCH_MS = 3000;
   var WHEP_DISC_GRACE_MS = 4000;
   var WHEP_RETRY_BASE_MS = 1000;
@@ -397,6 +399,14 @@
       try { global.removeEventListener("resume", st._onResume); } catch (e) {}
       st._onResume = null;
     }
+    if (st._onFocus) {
+      try { global.removeEventListener("focus", st._onFocus); } catch (e) {}
+      st._onFocus = null;
+    }
+    if (st._onOnline) {
+      try { global.removeEventListener("online", st._onOnline); } catch (e) {}
+      st._onOnline = null;
+    }
     whepTearPc(st);
     whepClearMedia(videoEl);
     try { videoEl._nexrecWhep = null; } catch (e) {}
@@ -434,16 +444,32 @@
       lastFrameAt: 0,
       gotFrame: false,
       hiddenAt: 0,
+      wakeNeeded: false,
+      wakeLockUntil: 0,
       sess: null,
       connecting: false,
     };
     videoEl._nexrecWhep = st;
 
-    function scheduleRetry(reason) {
+    function isHidden() {
+      try { return document.visibilityState === "hidden"; } catch (e) { return false; }
+    }
+
+    function scheduleRetry(reason, immediate) {
       if (st.closed) return;
+      // Background timers are heavily throttled and WHEP often cannot complete there.
+      // Remember the need and reconnect as soon as the page is active again.
+      if (isHidden() && !immediate) {
+        st.wakeNeeded = true;
+        whepEmit(videoEl, "reconnecting", { reason: reason || "hidden", attempt: st.attempt, delay: 0 });
+        return;
+      }
       if (st.retryTimer) return;
-      var delay = whepBackoff(st.attempt);
-      st.attempt += 1;
+      var why = String(reason || "");
+      var wake = immediate || /^(visible|wake|resume|pageshow|focus|online)\b/.test(why);
+      var delay = wake ? Math.floor(Math.random() * 150) : whepBackoff(st.attempt);
+      if (!wake) st.attempt += 1;
+      else st.attempt = Math.max(st.attempt, 1);
       whepEmit(videoEl, "reconnecting", { reason: reason || "retry", attempt: st.attempt, delay: delay });
       st.retryTimer = setTimeout(function () {
         st.retryTimer = null;
@@ -624,39 +650,82 @@
 
     // Background tabs and idle/sleep hosts commonly freeze WHEP. On wake, prefer a
     // clean re-offer instead of a black pane that needs a manual source cycle.
+    function shouldReconnectOnWake() {
+      if (st.wakeNeeded) return true;
+      if (!st.pc && !st.connecting) return true;
+      var hiddenFor = st.hiddenAt ? Date.now() - st.hiddenAt : 0;
+      if (hiddenFor >= WHEP_WAKE_MS) return true;
+      if (st.gotFrame && st.lastFrameAt && Date.now() - st.lastFrameAt > WHEP_WAKE_MS) return true;
+      var cs = st.pc && st.pc.connectionState;
+      var ice = st.pc && st.pc.iceConnectionState;
+      if (cs === "failed" || cs === "disconnected" || cs === "closed") return true;
+      if (ice === "failed" || ice === "disconnected" || ice === "closed") return true;
+      return false;
+    }
     function onWake(reason) {
       if (st.closed) return;
-      if (!st.pc) {
-        if (!st.retryTimer && !st.connecting) scheduleRetry(reason || "wake");
+      if (isHidden()) return;
+      // visibility + focus + online often arrive together after idle/sleep.
+      if (st.wakeLockUntil && Date.now() < st.wakeLockUntil) return;
+      var why = reason || "wake";
+      var hiddenFor = st.hiddenAt ? Date.now() - st.hiddenAt : 0;
+      var needed = shouldReconnectOnWake();
+      st.hiddenAt = 0;
+      st.wakeNeeded = false;
+      if (!needed) {
+        try { videoEl.play().catch(function () {}); } catch (e) {}
         return;
       }
-      var hiddenFor = st.hiddenAt ? Date.now() - st.hiddenAt : 0;
-      st.hiddenAt = 0;
-      if (hiddenFor >= WHEP_STALL_MS || (st.gotFrame && st.lastFrameAt && Date.now() - st.lastFrameAt > WHEP_STALL_MS)) {
-        recover(reason || "wake");
+      st.wakeLockUntil = Date.now() + 1500;
+      if (st.retryTimer) {
+        clearTimeout(st.retryTimer);
+        st.retryTimer = null;
       }
+      if (!st.pc && !st.connecting) {
+        scheduleRetry(why, true);
+        return;
+      }
+      // Re-offer after background/idle. Short hidden periods still count once
+      // MediaMTX/WebRTC has already dropped (failed/disconnected).
+      recover(why + (hiddenFor ? ("-" + Math.round(hiddenFor / 1000) + "s") : ""));
     }
     function onVis() {
       if (st.closed) return;
       if (document.visibilityState === "hidden") {
         st.hiddenAt = Date.now();
+        if (st.retryTimer) {
+          clearTimeout(st.retryTimer);
+          st.retryTimer = null;
+          st.wakeNeeded = true;
+        }
         return;
       }
       onWake("visible");
     }
     function onPageShow(ev) {
       if (ev && ev.persisted) onWake("pageshow");
+      else onWake("pageshow");
     }
     function onResume() {
       onWake("resume");
+    }
+    function onFocus() {
+      onWake("focus");
+    }
+    function onOnline() {
+      onWake("online");
     }
     try {
       document.addEventListener("visibilitychange", onVis);
       global.addEventListener("pageshow", onPageShow);
       global.addEventListener("resume", onResume);
+      global.addEventListener("focus", onFocus);
+      global.addEventListener("online", onOnline);
       st._onVis = onVis;
       st._onPageShow = onPageShow;
       st._onResume = onResume;
+      st._onFocus = onFocus;
+      st._onOnline = onOnline;
     } catch (e) {}
 
     return connectOnce();
