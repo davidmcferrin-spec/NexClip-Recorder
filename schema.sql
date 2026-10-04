@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS inputs (
   retention_days INTEGER NOT NULL DEFAULT 28,
   preview_path TEXT,
   preview_enabled INTEGER NOT NULL DEFAULT 1,
+  live_only INTEGER NOT NULL DEFAULT 0,
   feat_scte INTEGER NOT NULL DEFAULT 0,
   feat_av_anomaly INTEGER NOT NULL DEFAULT 0,
   feat_captions INTEGER NOT NULL DEFAULT 0,

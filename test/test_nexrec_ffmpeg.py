@@ -190,6 +190,32 @@ class TestFfmpeg(unittest.TestCase):
         self.assertFalse(preview_unit_allowed({"source_type": "decklink"}))
         self.assertTrue(preview_unit_allowed({"source_type": "rtsp"}))
 
+    def test_decklink_live_only_publishes_preview_without_segments(self):
+        rtsp = "rtsp://127.0.0.1:8554/in0"
+        cmd = record_argv(
+            {
+                "source_type": "decklink",
+                "decklink_device": "DeckLink Duo (1)",
+                "signal_mode": "1080i59.94",
+                "live_only": 1,
+                "preview_enabled": 1,
+            },
+            "/data/in_%Y%m%dT%H%M%SZ.mp4",
+            segment_seconds=300,
+            preview_rtsp=rtsp,
+        )
+        joined = " ".join(cmd)
+        self.assertEqual(cmd.count("decklink"), 1)
+        self.assertIn(rtsp, cmd)
+        self.assertIn("libopus", cmd)
+        self.assertIn("[vprev]", cmd)
+        self.assertNotIn("segment", joined)
+        self.assertNotIn("/data/in_%Y%m%dT%H%M%SZ.mp4", cmd)
+        self.assertNotIn("aac", joined)
+        self.assertNotIn("[vrec]", joined)
+        at = cmd.index(rtsp)
+        self.assertEqual(cmd[at - 4:at - 2], ["-f", "rtsp"])
+
     def test_decklink_tee_upconvert_deinterlaces_record_only_in_graph(self):
         cmd = record_argv(
             {

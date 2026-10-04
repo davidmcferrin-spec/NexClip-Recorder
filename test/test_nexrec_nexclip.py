@@ -38,6 +38,7 @@ class TestNexclipMode2(unittest.TestCase):
             {"id": "a", "enabled": 1, "nexclip_slot": 2, "name": "A"},
             {"id": "b", "enabled": 1, "nexclip_slot": None, "name": "B"},
             {"id": "c", "enabled": 0, "nexclip_slot": 3, "name": "C"},
+            {"id": "d", "enabled": 1, "live_only": 1, "nexclip_slot": 4, "name": "D"},
         ]
         slots = nc.assigned_slots(rows)
         nums = [s for s, _ in slots]

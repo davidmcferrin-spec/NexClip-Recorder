@@ -234,6 +234,41 @@ function nexrec_ops_preview_input_id(string $unit): ?string {
     return null;
 }
 
+function nexrec_ops_record_input_id(string $unit): ?string {
+    if (preg_match('/^nexrec-record@([a-z0-9][a-z0-9-]{0,31})\.service$/', $unit, $m)) {
+        return $m[1];
+    }
+    return null;
+}
+
+/** @return array<string, true> */
+function nexrec_ops_live_only_ids(): array {
+    $ids = [];
+    if (!function_exists('nexrec_db')) {
+        return $ids;
+    }
+    $res = nexrec_db()->query('SELECT id FROM inputs WHERE live_only=1');
+    if ($res === false) {
+        return $ids;
+    }
+    while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+        $ids[(string) $row['id']] = true;
+    }
+    return $ids;
+}
+
+function nexrec_ops_live_only_ip_record(string $unit): bool {
+    $id = nexrec_ops_record_input_id($unit);
+    if ($id === null) {
+        return false;
+    }
+    $types = nexrec_ops_input_types();
+    if (($types[$id] ?? '') === 'decklink') {
+        return false;
+    }
+    return isset(nexrec_ops_live_only_ids()[$id]);
+}
+
 function nexrec_ops_decklink_preview_unit(string $unit): bool {
     $id = nexrec_ops_preview_input_id($unit);
     if ($id === null) {
@@ -245,6 +280,7 @@ function nexrec_ops_decklink_preview_unit(string $unit): bool {
 
 function nexrec_ops_units_payload(): array {
     $types = nexrec_ops_input_types();
+    $live = nexrec_ops_live_only_ids();
     $out = [];
     foreach (nexrec_ops_unit_names(nexrec_ops_enabled_input_ids()) as $unit) {
         $row = nexrec_ops_query_unit($unit);
@@ -253,6 +289,16 @@ function nexrec_ops_units_payload(): array {
             $row['skipped'] = true;
             $row['active'] = 'skipped';
             $row['note'] = 'Not used. DeckLink preview is teed inside nexrec-record (exclusive-open).';
+        }
+        $recId = nexrec_ops_record_input_id($unit);
+        if ($recId !== null && isset($live[$recId])) {
+            if (($types[$recId] ?? '') === 'decklink') {
+                $row['note'] = 'Live only. This unit publishes the preview and does not write segments.';
+            } else {
+                $row['skipped'] = true;
+                $row['active'] = 'skipped';
+                $row['note'] = 'Live only. Preview is nexrec-preview@. This unit does not record.';
+            }
         }
         $out[] = $row;
     }
@@ -286,6 +332,17 @@ function nexrec_ops_control(string $verb, string $unit): array {
             'via' => 'policy',
             'output' => '',
             'error' => 'DeckLink preview is teed inside nexrec-record (exclusive-open). Do not start nexrec-preview@ for this input.',
+        ];
+    }
+    if (in_array($verb, ['start', 'restart', 'enable'], true) && nexrec_ops_live_only_ip_record($unit)) {
+        return [
+            'ok' => false,
+            'verb' => $verb,
+            'unit' => $unit,
+            'rc' => 1,
+            'via' => 'policy',
+            'output' => '',
+            'error' => 'Live only IP inputs are not recorded. Start nexrec-preview@ for the Live page.',
         ];
     }
     $ran = nexrec_ops_wrapper($verb, $unit, null);

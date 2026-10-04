@@ -47,7 +47,7 @@
   </div>
   <div class="panel">
     <h2>Signal</h2>
-    <p class="sub">SDI lock comes from <code>nexrec-decklink-status</code> (<code>NEXREC_DECKLINK_STATUS_BIN</code> or Setup). The helper prints JSON per sub-device (<code>input_locked</code>, <code>input_mode</code>, <code>busy</code>). A busy connector — the recorder already has it open — still reports lock and format. Without the helper the row stays unknown and keeps the last format the record worker stored. DeckLink preview units are skipped; the proxy is teed inside <code>nexrec-record</code>. IP rows use the worker heartbeat and last chunk time.</p>
+    <p class="sub">SDI lock comes from <code>nexrec-decklink-status</code> (<code>NEXREC_DECKLINK_STATUS_BIN</code> or Setup). The helper prints JSON per sub-device (<code>input_locked</code>, <code>input_mode</code>, <code>busy</code>). A busy connector — the recorder already has it open — still reports lock and format. Without the helper the row stays unknown and keeps the last format the record worker stored. DeckLink preview units are skipped; the proxy is teed inside <code>nexrec-record</code>. A Live only IP input skips <code>nexrec-record@</code> and keeps <code>nexrec-preview@</code>. A Live only DeckLink input keeps <code>nexrec-record@</code> for the preview and does not write segments. IP rows use the worker heartbeat and last chunk time.</p>
     <table>
       <thead>
         <tr><th>Input</th><th>Type</th><th>Signal</th><th>SDI lock</th><th>Format</th><th>Last chunk</th><th>Last seen</th><th>Detail</th></tr>

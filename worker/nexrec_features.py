@@ -317,6 +317,9 @@ def analyze_chunk(
 ) -> dict[str, Any]:
     """Best-effort sidecar analyze of a closed native chunk. Never raises to caller."""
     stats = {"events": 0, "captions": 0, "skipped": []}
+    if flag_on(source, "live_only"):
+        stats["skipped"].append("live_only")
+        return stats
     path = chunk.get("path") or ""
     iid = source.get("id") or chunk.get("input_id") or ""
     fps = float(chunk.get("fps") or 30.0) or 30.0

@@ -121,11 +121,15 @@ def assigned_slots(inputs: list[dict]) -> list[tuple[int, dict]]:
     """(slot 1-8, input row) for inputs with an explicit nexclip_slot.
 
     Unmapped enabled inputs stay local-only and do not appear on the hub.
+    Live only inputs are preview-only and are not capture sources.
     Duplicate slots: first enabled input in id order wins.
     """
     out: list[tuple[int, dict]] = []
     used: set[int] = set()
-    enabled = [i for i in inputs if int(i.get("enabled") or 0)]
+    enabled = [
+        i for i in inputs
+        if int(i.get("enabled") or 0) and not int(i.get("live_only") or 0)
+    ]
     enabled.sort(key=lambda r: (r.get("id") or ""))
     for inp in enabled:
         raw = inp.get("nexclip_slot")

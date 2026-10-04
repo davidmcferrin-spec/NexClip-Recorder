@@ -71,6 +71,8 @@
       <label>As-run offset (frames)</label><input id="asrun_offset_frames" type="number" value="0" step="1" min="-29" max="29">
       <p class="sub">Added when this input is the first channel in an as-run lineup. Positive moves the Export playhead later. Frames are 30 fps, from −29 to 29.</p>
       <label><input type="checkbox" id="enabled" checked> Enabled</label>
+      <label><input type="checkbox" id="live_only"> Live only</label>
+      <p class="sub">Shows this input on the Live page. Recording, analysis, Export, and NexClip capture stay off. IP inputs use the preview service. A DeckLink input keeps the record service open for that preview and does not write segments. Restart the input's services after saving.</p>
       <label><input type="checkbox" id="live_transcode"> Live transcode to MP4</label>
       <label><input type="checkbox" id="copy_native" checked> Copy native bitstream when possible</label>
       <label><input type="checkbox" id="upconvert_1080i"> Upconvert 1080i → 1080p only</label>
@@ -80,6 +82,7 @@
   <div class="panel feat-panel" style="max-width:1100px">
     <h1>Monitoring / intelligence (per input)</h1>
     <p class="meta">Sidecar logs and displays. Does not change the Premiere/FCPX record path. See docs/FEATURES.md.</p>
+    <p class="sub" id="live-only-feat" hidden>Analysis runs on recorded segments. Turn Live only off to analyze this input. Confidence monitors still use the Live preview.</p>
     <div class="feat-grid">
       <label><input type="checkbox" id="feat_scte"> Log SCTE-35 / SCTE-104 / SCTE-224</label>
       <label><input type="checkbox" id="feat_av_anomaly"> Log freeze / color bars / black (duration thresholds)</label>
@@ -121,6 +124,13 @@
 <script>
 NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(refresh);
 function val(id) { return document.getElementById(id); }
+function syncLiveOnly() {
+  var on = val("live_only").checked;
+  ["feat_scte", "feat_av_anomaly", "feat_captions", "feat_transcribe", "feat_nielsen"].forEach(function (id) {
+    val(id).disabled = on;
+  });
+  document.getElementById("live-only-feat").hidden = !on;
+}
 function refresh() {
   return NexRecAuth.recApi("inputs_list").then(function (d) {
     var tb = document.getElementById("rows");
@@ -131,6 +141,7 @@ function refresh() {
         return [r.feat_scte, r.feat_av_anomaly, r.feat_captions, r.feat_transcribe, r.feat_nielsen, r.feat_monitors][i];
       }).join(" ") || "—";
       tr.innerHTML = "<td>" + r.id + "</td><td>" + r.name + "</td><td>" + r.source_type +
+        (Number(r.live_only) ? " · live only" : "") +
         "</td><td>" + (r.preview_path || "") + "</td><td>" + (r.nexclip_slot || "—") +
         "</td><td>" + r.retention_days + "d</td><td>" + intel + "</td><td></td>";
       var btn = document.createElement("button");
@@ -147,6 +158,8 @@ function refresh() {
         val("asrun_offset_s").value = r.asrun_offset_s || 0;
         val("asrun_offset_frames").value = r.asrun_offset_frames || 0;
         val("enabled").checked = !!r.enabled;
+        val("live_only").checked = !!Number(r.live_only);
+        syncLiveOnly();
         val("live_transcode").checked = !!r.live_transcode;
         val("copy_native").checked = !!r.copy_native;
         val("upconvert_1080i").checked = !!r.upconvert_1080i;
@@ -176,7 +189,8 @@ val("save").onclick = function () {
     retention_days: Number(val("retention_days").value),
     asrun_offset_s: Number(val("asrun_offset_s").value) || 0,
     asrun_offset_frames: Number(val("asrun_offset_frames").value) || 0,
-    enabled: val("enabled").checked, live_transcode: val("live_transcode").checked,
+    enabled: val("enabled").checked, live_only: val("live_only").checked,
+    live_transcode: val("live_transcode").checked,
     copy_native: val("copy_native").checked, upconvert_1080i: val("upconvert_1080i").checked,
     feat_scte: val("feat_scte").checked, feat_av_anomaly: val("feat_av_anomaly").checked,
     feat_captions: val("feat_captions").checked, feat_transcribe: val("feat_transcribe").checked,
@@ -239,6 +253,8 @@ val("decklink_refresh").onclick = function () {
     }
   }).catch(function (e) { hint.textContent = e.message; });
 };
+val("live_only").addEventListener("change", syncLiveOnly);
+syncLiveOnly();
 val("decklink_formats").onclick = function () {
   var hint = document.getElementById("decklink_hint");
   var device = val("decklink_device").value;

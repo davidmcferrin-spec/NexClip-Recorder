@@ -182,7 +182,7 @@
       NexRecAuth.recApi("exports_list"),
     ]);
   }).then(function (all) {
-    inputs = all[0].inputs || [];
+    inputs = (all[0].inputs || []).filter(function (inp) { return !Number(inp.live_only); });
     if (jump && jump.ids) {
       slotIds = NexRecUI.exportViewSlots(jump);
     } else if (slotIds == null) {
@@ -194,10 +194,13 @@
         b.classList.toggle("active", b.getAttribute("data-n") === String(n));
       });
     }
-    (all[1].chunks || []).forEach(function (c) {
+    var recordable = {};
+    inputs.forEach(function (inp) { recordable[inp.id] = true; });
+    var recordedChunks = (all[1].chunks || []).filter(function (c) { return recordable[c.input_id]; });
+    recordedChunks.forEach(function (c) {
       (chunksByInput[c.input_id] = chunksByInput[c.input_id] || []).push(c);
     });
-    var allc = all[1].chunks || [];
+    var allc = recordedChunks;
     if (allc.length) {
       archive0 = Date.parse(allc[allc.length - 1].start_at);
       archive1 = Date.parse(allc[0].end_at || allc[0].start_at);

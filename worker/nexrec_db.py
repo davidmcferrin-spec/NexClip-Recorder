@@ -41,6 +41,7 @@ INPUT_FEATURE_COLUMNS: list[tuple[str, str]] = [
     ("keep_interlace", "INTEGER"),
     ("asrun_offset_s", "INTEGER NOT NULL DEFAULT 0"),
     ("asrun_offset_frames", "INTEGER NOT NULL DEFAULT 0"),
+    ("live_only", "INTEGER NOT NULL DEFAULT 0"),
 ]
 
 INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
@@ -56,6 +57,7 @@ INPUT_FEATURE_DEFAULTS: dict[str, Any] = {
     "transcribe_engine": "",
     "nexclip_slot": None,
     "keep_interlace": None,
+    "live_only": 0,
 }
 
 def _safe_schema(name: str) -> str:
@@ -371,7 +373,7 @@ def upsert_input(conn: PgConn, rec: dict[str, Any]) -> None:
           id, name, source_type, url, decklink_device, decklink_format,
           enabled, live_transcode, copy_native, upconvert_1080i, keep_interlace,
           video_bitrate, audio_bitrate, retention_days, preview_path,
-          preview_enabled,
+          preview_enabled, live_only,
           feat_scte, feat_av_anomaly, feat_captions, feat_transcribe,
           feat_nielsen, feat_monitors, thresh_freeze_s, thresh_black_s,
           thresh_bars_s, transcribe_engine, nexclip_slot,
@@ -380,7 +382,7 @@ def upsert_input(conn: PgConn, rec: dict[str, Any]) -> None:
           :id, :name, :source_type, :url, :decklink_device, :decklink_format,
           :enabled, :live_transcode, :copy_native, :upconvert_1080i, :keep_interlace,
           :video_bitrate, :audio_bitrate, :retention_days, :preview_path,
-          :preview_enabled,
+          :preview_enabled, :live_only,
           :feat_scte, :feat_av_anomaly, :feat_captions, :feat_transcribe,
           :feat_nielsen, :feat_monitors, :thresh_freeze_s, :thresh_black_s,
           :thresh_bars_s, :transcribe_engine, :nexclip_slot,
@@ -402,6 +404,7 @@ def upsert_input(conn: PgConn, rec: dict[str, Any]) -> None:
           retention_days=excluded.retention_days,
           preview_path=excluded.preview_path,
           preview_enabled=excluded.preview_enabled,
+          live_only=excluded.live_only,
           feat_scte=excluded.feat_scte,
           feat_av_anomaly=excluded.feat_av_anomaly,
           feat_captions=excluded.feat_captions,

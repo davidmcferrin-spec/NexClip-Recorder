@@ -26,7 +26,7 @@ from nexrec_decklink import (  # noqa: E402
     resolve_status_bin,
 )
 from nexrec_features import analyze_chunk  # noqa: E402
-from nexrec_ffmpeg import pin_video_encoder, preview_publish_url, record_argv  # noqa: E402
+from nexrec_ffmpeg import is_live_only, pin_video_encoder, preview_publish_url, record_argv  # noqa: E402
 from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
 from nexrec_index import backfill_thumbs, open_segment_basename, scan_dir  # noqa: E402
 from nexrec_util import (  # noqa: E402
@@ -48,6 +48,17 @@ def _stop(_signum=None, _frame=None) -> None:
     STOP = True
 
 
+def idle_until_stop(message: str) -> int:
+    """Stay up until SIGTERM. Restart=always would flap if this process exited."""
+    print(message, flush=True)
+    signal.signal(signal.SIGTERM, _stop)
+    signal.signal(signal.SIGINT, _stop)
+    while not STOP:
+        time.sleep(1.0)
+    print("stopped", flush=True)
+    return 0
+
+
 def input_from_env(env: dict[str, str], input_id: str) -> dict:
     # Prefer DB row; fall back to INPUT_* keys (systemd EnvironmentFile).
     return {
@@ -66,6 +77,7 @@ def input_from_env(env: dict[str, str], input_id: str) -> dict:
         "retention_days": int(env.get("RETENTION_DAYS") or 28),
         "preview_path": env.get("PREVIEW_PATH") or "in0",
         "preview_enabled": 0 if env.get("PREVIEW_ENABLED", "1") in ("0", "false", "no") else 1,
+        "live_only": 1 if env.get("LIVE_ONLY", "0") in ("1", "true", "yes") else 0,
         "keep_interlace": None if "KEEP_INTERLACE" not in env else (
             1 if env.get("KEEP_INTERLACE", "0") in ("1", "true", "yes") else 0
         ),
@@ -160,6 +172,10 @@ def main(argv: list[str] | None = None) -> int:
     if not int(source.get("enabled") or 0):
         print(f"input {args.input_id} disabled", file=sys.stderr)
         return 0
+    if is_live_only(source) and (source.get("source_type") or "").lower() != "decklink":
+        return idle_until_stop(
+            f"live only: {args.input_id} is not recorded; nexrec-preview serves the Live page"
+        )
 
     seg = args.segment_seconds or env_int(env, "NEXREC_SEGMENT_SECONDS", 300)
     today = utcnow()
@@ -212,7 +228,14 @@ def main(argv: list[str] | None = None) -> int:
         per_on = True if per is None or per == "" else str(per).strip().lower() not in ("0", "false", "no")
         if station_on and per_on:
             preview_rtsp = preview_publish_url(str(source.get("preview_path") or "in0"), env)
-            print(f"decklink preview tee {preview_rtsp}", flush=True)
+            if is_live_only(source):
+                print(f"decklink live only preview {preview_rtsp}", flush=True)
+            else:
+                print(f"decklink preview tee {preview_rtsp}", flush=True)
+        elif is_live_only(source):
+            return idle_until_stop(
+                f"live only: {args.input_id} has preview off, so the DeckLink card stays closed"
+            )
 
     env, encoder = pin_video_encoder(env, paths["ffmpeg"])
     print(f"video encoder {encoder}", flush=True)
@@ -258,6 +281,8 @@ def main(argv: list[str] | None = None) -> int:
                 if rec["path"] not in indexed:
                     indexed.add(rec["path"])
                     print(f"indexed {rec['path']} duration={rec.get('duration_s')}", flush=True)
+                    if is_live_only(source):
+                        continue
                     try:
                         st = analyze_chunk(
                             conn,

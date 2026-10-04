@@ -260,6 +260,20 @@ def preview_publish_url(preview_path: str, env: dict[str, str] | None = None) ->
     return rtsp
 
 
+def is_live_only(source: dict[str, Any]) -> bool:
+    return _explicit_flag(source, "live_only") is True
+
+
+def decklink_preview_filter(_source: dict[str, Any]) -> str:
+    """Proxy labels only. Live only DeckLink does not split a record branch."""
+    prev = (
+        f"yadif=mode=0:parity=-1:deint=interlaced,"
+        f"scale={PREVIEW_SIZE}:force_original_aspect_ratio=decrease,"
+        f"fps=30,format=yuv420p"
+    )
+    return f"[0:v]{prev}[vprev];[0:a]anull[aprev]"
+
+
 def decklink_filter_complex(source: dict[str, Any]) -> str:
     """One DeckLink input, two outputs: record raster + proxy preview."""
     prev = (
@@ -581,6 +595,20 @@ def _decklink_tee_argv(
     return argv
 
 
+def decklink_preview_argv(
+    source: dict[str, Any],
+    preview_rtsp: str,
+    env: dict[str, str] | None = None,
+    ffmpeg: str = "ffmpeg",
+) -> list[str]:
+    """One DeckLink open, proxy RTSP only. No segment muxer."""
+    argv = [ffmpeg]
+    argv += input_args(source)
+    argv += ["-filter_complex", decklink_preview_filter(source)]
+    argv += _preview_output_args(preview_rtsp, env or {})
+    return argv
+
+
 def record_argv(
     source: dict[str, Any],
     out_pattern: str,
@@ -591,6 +619,12 @@ def record_argv(
     preview_rtsp: str | None = None,
 ) -> list[str]:
     env = env or {}
+    if (
+        preview_rtsp
+        and is_live_only(source)
+        and (source.get("source_type") or "").lower() == "decklink"
+    ):
+        return decklink_preview_argv(source, preview_rtsp, env, ffmpeg)
     if preview_rtsp and (source.get("source_type") or "").lower() == "decklink":
         return _decklink_tee_argv(
             source, out_pattern, preview_rtsp, env, ffmpeg, segment_seconds, when,

@@ -339,6 +339,25 @@ function nexrec_export_input_ids(array $row): array {
     return $out;
 }
 
+/** @param list<mixed> $ids @return list<string> */
+function nexrec_live_only_ids(array $ids): array {
+    $bad = [];
+    foreach ($ids as $id) {
+        $id = strtolower(trim((string) $id));
+        if (!nexrec_valid_input_id($id)) {
+            continue;
+        }
+        $st = nexrec_db()->prepare('SELECT live_only FROM inputs WHERE id=:id');
+        $st->bindValue(':id', $id, SQLITE3_TEXT);
+        $res = $st->execute();
+        $row = $res ? $res->fetchArray(SQLITE3_ASSOC) : false;
+        if (is_array($row) && (int) ($row['live_only'] ?? 0) === 1) {
+            $bad[] = $id;
+        }
+    }
+    return $bad;
+}
+
 function nexrec_export_basename_ok(string $base): bool {
     return preg_match('/^[A-Za-z0-9._@_-]{1,196}\\.mp4$/', $base) === 1
         && !str_contains($base, '..');
@@ -585,13 +604,13 @@ try {
         $st = nexrec_db()->prepare(
             'INSERT INTO inputs (
                id,name,source_type,url,decklink_device,decklink_format,enabled,live_transcode,copy_native,upconvert_1080i,keep_interlace,
-               video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,
+               video_bitrate,audio_bitrate,retention_days,preview_path,preview_enabled,live_only,
                feat_scte,feat_av_anomaly,feat_captions,feat_transcribe,feat_nielsen,feat_monitors,
                thresh_freeze_s,thresh_black_s,thresh_bars_s,transcribe_engine,nexclip_slot,
                asrun_offset_s,asrun_offset_frames,
                created_at,updated_at)
              VALUES (
-               :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:ki,:vb,:ab,:rd,:pp,:pe,
+               :id,:name,:t,:url,:dd,:df,:en,:lt,:cn,:up,:ki,:vb,:ab,:rd,:pp,:pe,:lo,
                :scte,:ava,:cc,:tr,:ni,:mon,:tf,:tb,:tbar,:teng,:slot,:aos,:aof,:c,:u)
              ON CONFLICT(id) DO UPDATE SET
                name=excluded.name, source_type=excluded.source_type, url=excluded.url,
@@ -602,6 +621,7 @@ try {
                video_bitrate=excluded.video_bitrate, audio_bitrate=excluded.audio_bitrate,
                retention_days=excluded.retention_days, preview_path=excluded.preview_path,
                preview_enabled=excluded.preview_enabled,
+               live_only=excluded.live_only,
                feat_scte=excluded.feat_scte, feat_av_anomaly=excluded.feat_av_anomaly,
                feat_captions=excluded.feat_captions, feat_transcribe=excluded.feat_transcribe,
                feat_nielsen=excluded.feat_nielsen, feat_monitors=excluded.feat_monitors,
@@ -656,7 +676,13 @@ try {
         }
         $st->bindValue(':rd', $rd, SQLITE3_INTEGER);
         $st->bindValue(':pp', $body['preview_path'] ?? ('in' . min($n, 9)), SQLITE3_TEXT);
-        $st->bindValue(':pe', $pick('preview_enabled', 'defaults.preview_enabled', 1), SQLITE3_INTEGER);
+        $liveOnly = !empty($body['live_only']) ? 1 : 0;
+        $pe = $pick('preview_enabled', 'defaults.preview_enabled', 1);
+        if ($liveOnly === 1) {
+            $pe = 1;
+        }
+        $st->bindValue(':pe', $pe, SQLITE3_INTEGER);
+        $st->bindValue(':lo', $liveOnly, SQLITE3_INTEGER);
         $feat = static function (string $key, string $setting) use ($body, $isNew): int {
             if (array_key_exists($key, $body)) {
                 return nexrec_flag($body, $key);
@@ -773,6 +799,9 @@ try {
         $ids = $body['input_ids'] ?? [];
         if (!is_array($ids) || $ids === []) {
             nexrec_api_fail(400, 'input_ids required');
+        }
+        if (nexrec_live_only_ids($ids) !== []) {
+            nexrec_api_fail(400, 'live only inputs are not recorded');
         }
         $tIn = (string) ($body['t_in'] ?? '');
         $tOut = (string) ($body['t_out'] ?? '');
@@ -1259,6 +1288,9 @@ try {
         $iid = strtolower(trim((string) ($body['input_id'] ?? '')));
         if (!nexrec_valid_input_id($iid)) {
             nexrec_api_fail(400, 'input_id required');
+        }
+        if (nexrec_live_only_ids([$iid]) !== []) {
+            nexrec_api_fail(400, 'live only inputs are not analyzed');
         }
         $tIn = (string) ($body['t_in'] ?? '');
         $tOut = (string) ($body['t_out'] ?? '');

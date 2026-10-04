@@ -76,12 +76,24 @@ if (nexrec_decklink_ffmpeg_enabled("Unknown input format: 'decklink'\n")) {
     fail('stock ffmpeg should not look decklink-enabled');
 }
 
+$inputsPage = (string) file_get_contents($root . '/web/pages/inputs.html');
+if (!str_contains($inputsPage, 'id="live_only"') || !str_contains($inputsPage, 'Live only')) {
+    fail('inputs page needs a Live only checkbox');
+}
+$exportPage = (string) file_get_contents($root . '/web/pages/export.html');
+if (!str_contains($exportPage, 'live_only')) {
+    fail('export page must leave Live only inputs out');
+}
+
 nexrec_migrate();
 $db = nexrec_db();
 $db->exec("INSERT INTO inputs (id,name,source_type,decklink_device,enabled,live_transcode,copy_native,upconvert_1080i,retention_days,preview_enabled,created_at,updated_at)
   VALUES ('sdi1','SDI 1','decklink','DeckLink Quad 2 (1)',1,1,0,0,28,1,'2026-09-22T00:00:00Z','2026-09-22T00:00:00Z')");
 $db->exec("INSERT INTO inputs (id,name,source_type,url,enabled,live_transcode,copy_native,upconvert_1080i,retention_days,preview_enabled,created_at,updated_at)
   VALUES ('cam','Cam','rtsp','rtsp://example/stream',1,0,1,0,28,1,'2026-09-22T00:00:00Z','2026-09-22T00:00:00Z')");
+$db->exec("INSERT INTO inputs (id,name,source_type,decklink_device,enabled,live_transcode,copy_native,upconvert_1080i,retention_days,preview_enabled,created_at,updated_at)
+  VALUES ('sdi-live','SDI live','decklink','DeckLink Duo (1)',1,1,0,0,28,1,'2026-09-22T00:00:00Z','2026-09-22T00:00:00Z')");
+$db->exec("UPDATE inputs SET live_only=1 WHERE id IN ('cam','sdi-live')");
 
 if (!nexrec_ops_decklink_preview_unit('nexrec-preview@sdi1.service')) {
     fail('decklink preview unit must be blocked');
@@ -109,6 +121,35 @@ foreach ($units as $u) {
 }
 if ($skipped === null || empty($skipped['skipped']) || ($skipped['active'] ?? '') !== 'skipped') {
     fail('services should mark decklink preview skipped');
+}
+if (!nexrec_ops_live_only_ip_record('nexrec-record@cam.service')) {
+    fail('live only IP record unit must be blocked');
+}
+if (nexrec_ops_live_only_ip_record('nexrec-record@sdi1.service')) {
+    fail('a recording DeckLink input is not live only');
+}
+if (nexrec_ops_live_only_ip_record('nexrec-record@sdi-live.service')) {
+    fail('live only DeckLink still uses the record unit');
+}
+$refused = nexrec_ops_control('start', 'nexrec-record@cam.service');
+if (!empty($refused['ok']) || ($refused['via'] ?? '') !== 'policy') {
+    fail('start of a live only IP record unit must be refused');
+}
+$byUnit = [];
+foreach ($units as $u) {
+    $byUnit[(string) ($u['unit'] ?? '')] = $u;
+}
+$ipRec = $byUnit['nexrec-record@cam.service'] ?? null;
+if ($ipRec === null || empty($ipRec['skipped'])) {
+    fail('services should skip a live only IP record unit');
+}
+$ipPrev = $byUnit['nexrec-preview@cam.service'] ?? null;
+if ($ipPrev === null || !empty($ipPrev['skipped'])) {
+    fail('live only IP preview must stay available');
+}
+$sdiLive = $byUnit['nexrec-record@sdi-live.service'] ?? null;
+if ($sdiLive === null || !empty($sdiLive['skipped']) || !str_contains((string) ($sdiLive['note'] ?? ''), 'does not write segments')) {
+    fail('live only DeckLink record unit should say it does not write segments');
 }
 
 $probe = nexrec_ops_decklink_probe('DeckLink Quad 2 (1)');
