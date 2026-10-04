@@ -78,10 +78,9 @@
         <option value="tcp">TCP</option>
         <option value="rtp">RTP</option>
         <option value="decklink">DeckLink SDI</option>
-        <option value="testsrc">testsrc (demo)</option>
       </select>
       <label>Name</label><input id="name" placeholder="Studio A">
-      <label>ID (slug)</label><input id="id" placeholder="studio-a" autocomplete="off">
+      <input id="id" type="hidden">
       <div id="ip-fields">
         <label>URL</label><input id="url" placeholder="rtsp://encoder:554/stream">
       </div>
@@ -107,7 +106,7 @@
       </div>
     </div>
     <div>
-      <label>Preview path</label><input id="preview_path" placeholder="in1">
+      <input id="preview_path" type="hidden">
       <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
       <label>As-run offset (seconds)</label><input id="asrun_offset_s" type="number" value="0" step="1" min="-86400" max="86400">
       <label>As-run offset (frames)</label><input id="asrun_offset_frames" type="number" value="0" step="1" min="-29" max="29">
@@ -158,6 +157,7 @@ var TYPE_LABEL = {
 };
 var inputs = [];
 var keepSlot = null;
+var editingId = "";
 
 function val(id) { return document.getElementById(id); }
 function esc(s) {
@@ -192,6 +192,40 @@ function syncType() {
 function syncLiveOnly() {
   val("intel-block").hidden = val("live_only").checked;
 }
+function slugFromName(name) {
+  var slug = String(name || "").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+  if (slug.length > 32) slug = slug.slice(0, 32).replace(/-+$/g, "");
+  return slug;
+}
+function idTaken(id) {
+  return inputs.some(function (row) { return String(row.id) === id; });
+}
+function idForNew(name) {
+  var base = slugFromName(name);
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(base)) return "";
+  if (!idTaken(base)) return base;
+  if (!keepSlot) return "";
+  var suffix = "-" + String(keepSlot);
+  var cut = base.slice(0, 32 - suffix.length).replace(/-+$/g, "");
+  var candidate = cut + suffix;
+  if (/^[a-z0-9][a-z0-9-]{0,31}$/.test(candidate) && !idTaken(candidate)) return candidate;
+  return "";
+}
+function previewForSlot() {
+  if (keepSlot >= 1 && keepSlot <= 8) return "in" + keepSlot;
+  return val("preview_path").value || "";
+}
+function ensureTestsrcOption(show) {
+  var sel = val("source_type");
+  var opt = sel.querySelector('option[value="testsrc"]');
+  if (show && !opt) {
+    opt = document.createElement("option");
+    opt.value = "testsrc";
+    opt.textContent = "testsrc (demo)";
+    sel.appendChild(opt);
+  }
+  if (!show && opt) opt.remove();
+}
 function dialogMsg(text) {
   var el = val("dialog-msg");
   el.textContent = text || "";
@@ -199,9 +233,10 @@ function dialogMsg(text) {
 }
 function blankForm(slot) {
   val("input-dialog-title").textContent = "Configure slot " + slot;
+  editingId = "";
   val("id").value = "";
-  val("id").readOnly = false;
   val("name").value = "";
+  ensureTestsrcOption(false);
   val("source_type").value = "rtsp";
   val("url").value = "";
   val("decklink_device").value = "";
@@ -229,9 +264,10 @@ function blankForm(slot) {
 }
 function fillForm(row) {
   val("input-dialog-title").textContent = "Edit " + (row.name || row.id);
-  val("id").value = row.id;
-  val("id").readOnly = true;
+  editingId = row.id || "";
+  val("id").value = editingId;
   val("name").value = row.name || "";
+  ensureTestsrcOption(row.source_type === "testsrc");
   val("source_type").value = row.source_type || "rtsp";
   val("url").value = row.url || "";
   val("decklink_device").value = row.decklink_device || "";
@@ -343,12 +379,19 @@ val("source_type").onchange = syncType;
 val("live_only").addEventListener("change", syncLiveOnly);
 val("input-cancel").onclick = function () { val("input-dialog").close(); };
 val("save").onclick = function () {
-  var id = String(val("id").value || "").trim().toLowerCase();
-  val("id").value = id;
-  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
-    dialogMsg("ID is a lowercase slug: letters, numbers, and hyphens.");
+  var name = String(val("name").value || "").trim();
+  val("name").value = name;
+  if (!name) {
+    dialogMsg("Name is required.");
     return;
   }
+  var id = editingId || idForNew(name);
+  if (!id) {
+    dialogMsg(slugFromName(name) ? "That name is already used. Pick another." : "Name needs a letter or number.");
+    return;
+  }
+  val("id").value = id;
+  val("preview_path").value = previewForSlot();
   var t = val("source_type").value;
   var ip = !!IP_TYPES[t];
   var deck = t === "decklink";

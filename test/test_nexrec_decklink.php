@@ -86,6 +86,12 @@ if (!str_contains($inputsPage, 'id="input-dialog"') || !str_contains($inputsPage
 if (!str_contains($inputsPage, 'id="intel-block"')) {
     fail('monitoring belongs in the input modal');
 }
+if (!str_contains($inputsPage, 'id="id" type="hidden"') || !str_contains($inputsPage, 'id="preview_path" type="hidden"')) {
+    fail('id and preview path are generated, not typed');
+}
+if (preg_match('/<option value="testsrc">/', $inputsPage)) {
+    fail('testsrc is not a station input type');
+}
 $exportPage = (string) file_get_contents($root . '/web/pages/export.html');
 if (!str_contains($exportPage, 'live_only')) {
     fail('export page must leave Live only inputs out');
