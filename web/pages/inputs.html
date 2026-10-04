@@ -26,13 +26,50 @@
 </nav>
 <main>
   <div class="bar">
-    <h1 style="margin:0">Inputs (max 10)</h1>
+    <h1 style="margin:0">Inputs</h1>
     <span class="ok-msg" id="msg"></span>
   </div>
-  <div class="panel form-grid" id="form">
+  <div class="panel input-roster">
+    <p class="sub">Slots 1–8. An empty row stays off until you configure it. The slot number is the NexClip slot.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th><th>Name</th><th>Type</th><th>Source</th><th>Enabled</th><th>Live only</th><th>Preview</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="panel" id="extra-panel" hidden>
+    <h2>Other inputs</h2>
+    <p class="sub">These inputs are outside slots 1–8, or they share a slot with the row above. Editing keeps the current slot.</p>
+    <div class="table-scroll">
+      <table>
+        <thead>
+          <tr>
+            <th>Slot</th><th>Name</th><th>Type</th><th>Source</th><th>Enabled</th><th>Live only</th><th>Preview</th><th></th>
+          </tr>
+        </thead>
+        <tbody id="extra-rows"></tbody>
+      </table>
+    </div>
+  </div>
+  <div class="panel" style="max-width:1100px">
+    <h1>Caption / transcript search</h1>
+    <div class="bar">
+      <select id="search-input"><option value="">All inputs</option></select>
+      <input id="q" placeholder="natural language…" style="flex:1;min-width:160px">
+      <button type="button" id="search">Search FTS</button>
+    </div>
+    <ul class="search-hits" id="hits"></ul>
+  </div>
+</main>
+<dialog id="input-dialog" class="nx-dialog input-dialog">
+  <h1 id="input-dialog-title">Configure input</h1>
+  <div class="form-grid">
     <div>
-      <label>ID (slug)</label><input id="id" placeholder="studio-a">
-      <label>Name</label><input id="name" placeholder="Studio A">
       <label>Type</label>
       <select id="source_type">
         <option value="rtsp">RTSP</option>
@@ -43,189 +80,333 @@
         <option value="decklink">DeckLink SDI</option>
         <option value="testsrc">testsrc (demo)</option>
       </select>
+      <label>Name</label><input id="name" placeholder="Studio A">
+      <label>ID (slug)</label><input id="id" placeholder="studio-a" autocomplete="off">
       <div id="ip-fields">
         <label>URL</label><input id="url" placeholder="rtsp://encoder:554/stream">
       </div>
-      <div id="decklink-fields" style="display:none">
+      <div id="decklink-fields" hidden>
         <label>DeckLink sub-device</label>
         <div class="bar">
           <select id="decklink_pick"><option value="">Select from this host…</option></select>
           <button type="button" id="decklink_refresh">Refresh devices</button>
         </div>
         <input id="decklink_device" placeholder="DeckLink Quad 2 (1)">
-        <p class="sub" id="decklink_hint">FFmpeg uses the display name (Duo / Quad 2 style: <code>DeckLink Quad 2 (1)</code>). A number is the sub-device index from <code>ffmpeg -f decklink -list_devices</code>.</p>
+        <p class="sub" id="decklink_hint">FFmpeg uses the display name, such as <code>DeckLink Quad 2 (1)</code>. Preview is teed inside the record process.</p>
         <label>Format code (optional)</label>
         <div class="bar">
           <select id="decklink_format_pick"><option value="">Auto-detect</option></select>
           <button type="button" id="decklink_formats">List formats</button>
         </div>
         <input id="decklink_format" placeholder="Hi59">
-        <p class="sub">Preview is teed inside the record process (one exclusive open). Do not start <code>nexrec-preview@</code> for this input. SDI is encoded to H.264+AAC in the locked scan: progressive stays progressive, 1080i stays interlaced. Upconvert is the only deinterlace.</p>
+      </div>
+      <div id="encode-fields">
+        <div id="copy-native-wrap"><label class="check"><input type="checkbox" id="copy_native" checked> Copy native bitstream when possible</label></div>
+        <div id="live-tx-wrap"><label class="check"><input type="checkbox" id="live_transcode"> Live transcode to MP4</label></div>
+        <div id="upconvert-wrap"><label class="check"><input type="checkbox" id="upconvert_1080i"> Upconvert 1080i → 1080p only</label></div>
       </div>
     </div>
     <div>
-      <label>Preview path</label><input id="preview_path" placeholder="in0">
-      <label>NexClip slot (1–8, Mode 2)</label><input id="nexclip_slot" type="number" min="1" max="8" placeholder="none">
+      <label>Preview path</label><input id="preview_path" placeholder="in1">
       <label>Retention (days)</label><input id="retention_days" type="number" value="28" min="1" max="365">
       <label>As-run offset (seconds)</label><input id="asrun_offset_s" type="number" value="0" step="1" min="-86400" max="86400">
       <label>As-run offset (frames)</label><input id="asrun_offset_frames" type="number" value="0" step="1" min="-29" max="29">
       <p class="sub">Added when this input is the first channel in an as-run lineup. Positive moves the Export playhead later. Frames are 30 fps, from −29 to 29.</p>
-      <label><input type="checkbox" id="enabled" checked> Enabled</label>
-      <label><input type="checkbox" id="live_only"> Live only</label>
-      <p class="sub">Shows this input on the Live page. Recording, analysis, Export, and NexClip capture stay off. IP inputs use the preview service. A DeckLink input keeps the record service open for that preview and does not write segments. Restart the input's services after saving.</p>
-      <label><input type="checkbox" id="live_transcode"> Live transcode to MP4</label>
-      <label><input type="checkbox" id="copy_native" checked> Copy native bitstream when possible</label>
-      <label><input type="checkbox" id="upconvert_1080i"> Upconvert 1080i → 1080p only</label>
-      <button type="button" class="primary" id="save">Save input</button>
-    </div>
-  </div>
-  <div class="panel feat-panel" style="max-width:1100px">
-    <h1>Monitoring / intelligence (per input)</h1>
-    <p class="meta">Sidecar logs and displays. Does not change the Premiere/FCPX record path. See docs/FEATURES.md.</p>
-    <p class="sub" id="live-only-feat" hidden>Analysis runs on recorded segments. Turn Live only off to analyze this input. Confidence monitors still use the Live preview.</p>
-    <div class="feat-grid">
-      <label><input type="checkbox" id="feat_scte"> Log SCTE-35 / SCTE-104 / SCTE-224</label>
-      <label><input type="checkbox" id="feat_av_anomaly"> Log freeze / color bars / black (duration thresholds)</label>
-      <label><input type="checkbox" id="feat_captions"> Closed captions 608/708 (extract + FTS search)</label>
-      <label><input type="checkbox" id="feat_transcribe"> Audio transcription + diarization (off unless engine set)</label>
-      <label title="Logs whether a Nielsen watermark appears present or absent on the recording timeline (NTP/wall-clock timecode). Best-effort stub. Not audit-grade decode. Does not report SID, watermark time, or layer. No Nielsen Decoder SDK."><input type="checkbox" id="feat_nielsen"> Log Nielsen watermark presence (best-effort; not a decode)</label>
-      <label title="Marks this input for live confidence monitors. Scopes stay off until enabled on the Live page (this browser). Drawn from the WHEP preview, not the record. VU/RTA follow the stereo Opus proxy; 64-channel SDI/AES metering is not included."><input type="checkbox" id="feat_monitors"> Live confidence monitors (WFM, vectorscope, VU, 64-band RTA)</label>
-    </div>
-    <div class="thresh-row">
-      <div><label>Freeze ≥ seconds</label><input id="thresh_freeze_s" type="number" value="2" min="0.1" step="0.1"></div>
-      <div><label>Black ≥ seconds</label><input id="thresh_black_s" type="number" value="2" min="0.1" step="0.1"></div>
-      <div><label>Color bars ≥ seconds</label><input id="thresh_bars_s" type="number" value="5" min="0.1" step="0.1"></div>
-      <div><label>Transcribe engine</label>
-        <select id="transcribe_engine">
-          <option value="">Station default / none</option>
-          <option value="whisper.cpp">whisper.cpp</option>
-          <option value="faster-whisper">faster-whisper</option>
-          <option value="none">none</option>
-        </select>
+      <label class="check"><input type="checkbox" id="enabled" checked> Enabled</label>
+      <label class="check"><input type="checkbox" id="live_only"> Live only</label>
+      <p class="sub">Shows this input on the Live page. Recording, analysis, Export, and NexClip capture stay off. Restart this input's services after saving.</p>
+      <div id="intel-block">
+        <h2>Monitoring / intelligence</h2>
+        <p class="meta">Sidecar logs and displays. Does not change the recorded file.</p>
+        <div class="feat-grid">
+          <label class="check"><input type="checkbox" id="feat_scte"> Log SCTE-35 / SCTE-104 / SCTE-224</label>
+          <label class="check"><input type="checkbox" id="feat_av_anomaly"> Log freeze / color bars / black</label>
+          <label class="check"><input type="checkbox" id="feat_captions"> Closed captions 608/708</label>
+          <label class="check"><input type="checkbox" id="feat_transcribe"> Audio transcription + diarization</label>
+          <label class="check" title="Logs whether a Nielsen watermark appears present or absent. Best-effort. Not a decode."><input type="checkbox" id="feat_nielsen"> Log Nielsen watermark presence</label>
+          <label class="check" title="Marks this input for live confidence monitors. Scopes stay off until enabled on the Live page."><input type="checkbox" id="feat_monitors"> Live confidence monitors</label>
+        </div>
+        <div class="thresh-row">
+          <div><label>Freeze ≥ seconds</label><input id="thresh_freeze_s" type="number" value="2" min="0.1" step="0.1"></div>
+          <div><label>Black ≥ seconds</label><input id="thresh_black_s" type="number" value="2" min="0.1" step="0.1"></div>
+          <div><label>Color bars ≥ seconds</label><input id="thresh_bars_s" type="number" value="5" min="0.1" step="0.1"></div>
+          <div><label>Transcribe engine</label>
+            <select id="transcribe_engine">
+              <option value="">Station default / none</option>
+              <option value="whisper.cpp">whisper.cpp</option>
+              <option value="faster-whisper">faster-whisper</option>
+              <option value="none">none</option>
+            </select>
+          </div>
+        </div>
       </div>
     </div>
   </div>
-  <div class="panel" style="max-width:1100px">
-    <h1>Caption / transcript search</h1>
-    <div class="bar">
-      <input id="q" placeholder="natural language…" style="flex:1;min-width:160px">
-      <button type="button" id="search">Search FTS</button>
-    </div>
-    <ul class="search-hits" id="hits"></ul>
+  <p class="sub" id="dialog-msg"></p>
+  <div class="dialog-actions">
+    <button type="button" id="input-cancel">Close</button>
+    <button type="button" class="primary" id="save">Save</button>
   </div>
-  <div class="panel">
-    <table>
-      <thead><tr><th>ID</th><th>Name</th><th>Type</th><th>Preview</th><th>Slot</th><th>Retention</th><th>Intel</th><th></th></tr></thead>
-      <tbody id="rows"></tbody>
-    </table>
-  </div>
-</main>
+</dialog>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
 NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(refresh);
+var IP_TYPES = { rtsp: 1, srt: 1, udp: 1, tcp: 1, rtp: 1 };
+var TYPE_LABEL = {
+  rtsp: "RTSP", srt: "SRT", udp: "UDP", tcp: "TCP", rtp: "RTP",
+  decklink: "DeckLink", testsrc: "testsrc"
+};
+var inputs = [];
+var keepSlot = null;
+
 function val(id) { return document.getElementById(id); }
-function syncLiveOnly() {
-  var on = val("live_only").checked;
-  ["feat_scte", "feat_av_anomaly", "feat_captions", "feat_transcribe", "feat_nielsen"].forEach(function (id) {
-    val(id).disabled = on;
+function esc(s) {
+  return String(s == null ? "" : s).replace(/[&<>"]/g, function (c) {
+    return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c];
   });
-  document.getElementById("live-only-feat").hidden = !on;
+}
+function onFlag(v) { return !!Number(v); }
+function slotOf(row) {
+  var n = Number(row && row.nexclip_slot);
+  return n >= 1 && n <= 8 ? n : 0;
+}
+function sourceText(row) {
+  if (!row) return "";
+  if (row.source_type === "decklink") return row.decklink_device || "";
+  return row.url || "";
+}
+function badge(on, yes, no) {
+  return '<span class="badge' + (on ? " on" : "") + '">' + (on ? yes : no) + "</span>";
+}
+function syncType() {
+  var t = val("source_type").value;
+  var ip = !!IP_TYPES[t];
+  var deck = t === "decklink";
+  val("ip-fields").hidden = !ip;
+  val("decklink-fields").hidden = !deck;
+  val("encode-fields").hidden = !(ip || deck);
+  val("copy-native-wrap").hidden = !ip;
+  val("live-tx-wrap").hidden = !ip;
+  val("upconvert-wrap").hidden = !(ip || deck);
+}
+function syncLiveOnly() {
+  val("intel-block").hidden = val("live_only").checked;
+}
+function dialogMsg(text) {
+  var el = val("dialog-msg");
+  el.textContent = text || "";
+  el.style.color = text ? "var(--bad)" : "";
+}
+function blankForm(slot) {
+  val("input-dialog-title").textContent = "Configure slot " + slot;
+  val("id").value = "";
+  val("id").readOnly = false;
+  val("name").value = "";
+  val("source_type").value = "rtsp";
+  val("url").value = "";
+  val("decklink_device").value = "";
+  val("decklink_format").value = "";
+  val("preview_path").value = "in" + slot;
+  val("retention_days").value = 28;
+  val("asrun_offset_s").value = 0;
+  val("asrun_offset_frames").value = 0;
+  val("enabled").checked = false;
+  val("live_only").checked = false;
+  val("copy_native").checked = true;
+  val("live_transcode").checked = false;
+  val("upconvert_1080i").checked = false;
+  ["feat_scte", "feat_av_anomaly", "feat_captions", "feat_transcribe", "feat_nielsen", "feat_monitors"].forEach(function (id) {
+    val(id).checked = false;
+  });
+  val("thresh_freeze_s").value = 2;
+  val("thresh_black_s").value = 2;
+  val("thresh_bars_s").value = 5;
+  val("transcribe_engine").value = "";
+  keepSlot = slot;
+  syncType();
+  syncLiveOnly();
+  dialogMsg("");
+}
+function fillForm(row) {
+  val("input-dialog-title").textContent = "Edit " + (row.name || row.id);
+  val("id").value = row.id;
+  val("id").readOnly = true;
+  val("name").value = row.name || "";
+  val("source_type").value = row.source_type || "rtsp";
+  val("url").value = row.url || "";
+  val("decklink_device").value = row.decklink_device || "";
+  val("decklink_format").value = row.decklink_format || "";
+  val("preview_path").value = row.preview_path || "";
+  val("retention_days").value = row.retention_days || 28;
+  val("asrun_offset_s").value = row.asrun_offset_s || 0;
+  val("asrun_offset_frames").value = row.asrun_offset_frames || 0;
+  val("enabled").checked = onFlag(row.enabled);
+  val("live_only").checked = onFlag(row.live_only);
+  val("copy_native").checked = onFlag(row.copy_native);
+  val("live_transcode").checked = onFlag(row.live_transcode);
+  val("upconvert_1080i").checked = onFlag(row.upconvert_1080i);
+  val("feat_scte").checked = onFlag(row.feat_scte);
+  val("feat_av_anomaly").checked = onFlag(row.feat_av_anomaly);
+  val("feat_captions").checked = onFlag(row.feat_captions);
+  val("feat_transcribe").checked = onFlag(row.feat_transcribe);
+  val("feat_nielsen").checked = onFlag(row.feat_nielsen);
+  val("feat_monitors").checked = onFlag(row.feat_monitors);
+  val("thresh_freeze_s").value = row.thresh_freeze_s || 2;
+  val("thresh_black_s").value = row.thresh_black_s || 2;
+  val("thresh_bars_s").value = row.thresh_bars_s || 5;
+  val("transcribe_engine").value = row.transcribe_engine || "";
+  keepSlot = slotOf(row) || (Number(row.nexclip_slot) > 0 ? Number(row.nexclip_slot) : null);
+  syncType();
+  syncLiveOnly();
+  dialogMsg("");
+}
+function openDialog() {
+  var dialog = val("input-dialog");
+  if (!dialog.open) dialog.showModal();
+}
+function openSlot(slot, row) {
+  if (row) fillForm(row);
+  else blankForm(slot);
+  openDialog();
+}
+function rowCells(row) {
+  var live = onFlag(row.live_only);
+  return "<td>" + esc(row.name || row.id) + "</td><td>" + esc(TYPE_LABEL[row.source_type] || row.source_type) +
+    "</td><td class=\"src-cell\" title=\"" + esc(sourceText(row)) + "\">" + esc(sourceText(row) || "—") +
+    "</td><td>" + badge(onFlag(row.enabled), "On", "Off") + "</td><td>" +
+    (live ? badge(true, "Live only", "") : "—") + "</td><td>" + esc(row.preview_path || "—") + "</td><td></td>";
+}
+function placeInputs(list) {
+  var taken = {};
+  var extras = [];
+  list.slice().sort(function (a, b) {
+    return String(a.id).localeCompare(String(b.id));
+  }).forEach(function (row) {
+    var slot = slotOf(row);
+    if (slot && !taken[slot]) taken[slot] = row;
+    else extras.push(row);
+  });
+  return { taken: taken, extras: extras };
 }
 function refresh() {
   return NexRecAuth.recApi("inputs_list").then(function (d) {
-    var tb = document.getElementById("rows");
+    inputs = d.inputs || [];
+    var placed = placeInputs(inputs);
+    var tb = val("rows");
     tb.innerHTML = "";
-    (d.inputs || []).forEach(function (r) {
+    for (var slot = 1; slot <= 8; slot++) {
+      var row = placed.taken[slot];
       var tr = document.createElement("tr");
-      var intel = ["scte","av","cc","asr","nielsen","mon"].filter(function (_, i) {
-        return [r.feat_scte, r.feat_av_anomaly, r.feat_captions, r.feat_transcribe, r.feat_nielsen, r.feat_monitors][i];
-      }).join(" ") || "—";
-      tr.innerHTML = "<td>" + r.id + "</td><td>" + r.name + "</td><td>" + r.source_type +
-        (Number(r.live_only) ? " · live only" : "") +
-        "</td><td>" + (r.preview_path || "") + "</td><td>" + (r.nexclip_slot || "—") +
-        "</td><td>" + r.retention_days + "d</td><td>" + intel + "</td><td></td>";
+      if (!row) {
+        tr.className = "slot-empty";
+        tr.innerHTML = "<td>" + slot + "</td><td>—</td><td>—</td><td>—</td><td>" +
+          badge(false, "On", "Off") + "</td><td>—</td><td>—</td><td></td>";
+      } else {
+        tr.innerHTML = "<td>" + slot + "</td>" + rowCells(row);
+      }
       var btn = document.createElement("button");
-      btn.textContent = "Load";
-      btn.onclick = function () {
-        val("id").value = r.id; val("name").value = r.name;
-        val("source_type").value = r.source_type; val("url").value = r.url || "";
-        val("decklink_device").value = r.decklink_device || "";
-        val("decklink_format").value = r.decklink_format || "";
-        syncType();
-        val("preview_path").value = r.preview_path || "";
-        val("nexclip_slot").value = r.nexclip_slot || "";
-        val("retention_days").value = r.retention_days;
-        val("asrun_offset_s").value = r.asrun_offset_s || 0;
-        val("asrun_offset_frames").value = r.asrun_offset_frames || 0;
-        val("enabled").checked = !!r.enabled;
-        val("live_only").checked = !!Number(r.live_only);
-        syncLiveOnly();
-        val("live_transcode").checked = !!r.live_transcode;
-        val("copy_native").checked = !!r.copy_native;
-        val("upconvert_1080i").checked = !!r.upconvert_1080i;
-        val("feat_scte").checked = !!r.feat_scte;
-        val("feat_av_anomaly").checked = !!r.feat_av_anomaly;
-        val("feat_captions").checked = !!r.feat_captions;
-        val("feat_transcribe").checked = !!r.feat_transcribe;
-        val("feat_nielsen").checked = !!r.feat_nielsen;
-        val("feat_monitors").checked = !!r.feat_monitors;
-        val("thresh_freeze_s").value = r.thresh_freeze_s || 2;
-        val("thresh_black_s").value = r.thresh_black_s || 2;
-        val("thresh_bars_s").value = r.thresh_bars_s || 5;
-        val("transcribe_engine").value = r.transcribe_engine || "";
-      };
+      btn.type = "button";
+      btn.textContent = row ? "Edit" : "Configure";
+      btn.onclick = (function (s, r) {
+        return function () { openSlot(s, r); };
+      })(slot, row);
       tr.lastChild.appendChild(btn);
       tb.appendChild(tr);
+    }
+    var extraPanel = val("extra-panel");
+    var extraBody = val("extra-rows");
+    extraBody.innerHTML = "";
+    extraPanel.hidden = placed.extras.length === 0;
+    placed.extras.forEach(function (row) {
+      var tr = document.createElement("tr");
+      tr.innerHTML = "<td>" + esc(slotOf(row) || "—") + "</td>" + rowCells(row);
+      var btn = document.createElement("button");
+      btn.type = "button";
+      btn.textContent = "Edit";
+      btn.onclick = function () { openSlot(slotOf(row), row); };
+      tr.lastChild.appendChild(btn);
+      extraBody.appendChild(tr);
     });
+    var searchSel = val("search-input");
+    var prev = searchSel.value;
+    searchSel.innerHTML = '<option value="">All inputs</option>';
+    inputs.forEach(function (row) {
+      var opt = document.createElement("option");
+      opt.value = row.id;
+      opt.textContent = (row.name || row.id) + " (" + row.id + ")";
+      searchSel.appendChild(opt);
+    });
+    if (prev) searchSel.value = prev;
   });
 }
+val("source_type").onchange = syncType;
+val("live_only").addEventListener("change", syncLiveOnly);
+val("input-cancel").onclick = function () { val("input-dialog").close(); };
 val("save").onclick = function () {
+  var id = String(val("id").value || "").trim().toLowerCase();
+  val("id").value = id;
+  if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(id)) {
+    dialogMsg("ID is a lowercase slug: letters, numbers, and hyphens.");
+    return;
+  }
+  var t = val("source_type").value;
+  var ip = !!IP_TYPES[t];
+  var deck = t === "decklink";
   NexRecAuth.recApi("input_put", {
-    id: val("id").value, name: val("name").value, source_type: val("source_type").value,
-    url: val("url").value, decklink_device: val("decklink_device").value,
-    decklink_format: val("decklink_format").value,
+    id: id,
+    name: val("name").value || id,
+    source_type: t,
+    url: ip ? val("url").value : "",
+    decklink_device: deck ? val("decklink_device").value : "",
+    decklink_format: deck ? val("decklink_format").value : "",
     keep_interlace: 0,
-    preview_path: val("preview_path").value, nexclip_slot: Number(val("nexclip_slot").value) || null,
+    preview_path: val("preview_path").value,
+    nexclip_slot: keepSlot,
     retention_days: Number(val("retention_days").value),
     asrun_offset_s: Number(val("asrun_offset_s").value) || 0,
     asrun_offset_frames: Number(val("asrun_offset_frames").value) || 0,
-    enabled: val("enabled").checked, live_only: val("live_only").checked,
-    live_transcode: val("live_transcode").checked,
-    copy_native: val("copy_native").checked, upconvert_1080i: val("upconvert_1080i").checked,
-    feat_scte: val("feat_scte").checked, feat_av_anomaly: val("feat_av_anomaly").checked,
-    feat_captions: val("feat_captions").checked, feat_transcribe: val("feat_transcribe").checked,
-    feat_nielsen: val("feat_nielsen").checked, feat_monitors: val("feat_monitors").checked,
+    enabled: val("enabled").checked,
+    live_only: val("live_only").checked,
+    live_transcode: deck ? true : (ip && val("live_transcode").checked),
+    copy_native: ip && val("copy_native").checked,
+    upconvert_1080i: (ip || deck) && val("upconvert_1080i").checked,
+    feat_scte: val("feat_scte").checked,
+    feat_av_anomaly: val("feat_av_anomaly").checked,
+    feat_captions: val("feat_captions").checked,
+    feat_transcribe: val("feat_transcribe").checked,
+    feat_nielsen: val("feat_nielsen").checked,
+    feat_monitors: val("feat_monitors").checked,
     thresh_freeze_s: Number(val("thresh_freeze_s").value),
     thresh_black_s: Number(val("thresh_black_s").value),
     thresh_bars_s: Number(val("thresh_bars_s").value),
-    transcribe_engine: val("transcribe_engine").value,
-  }).then(function () { document.getElementById("msg").textContent = "saved"; return refresh(); })
-    .catch(function (e) { document.getElementById("msg").textContent = e.message; });
+    transcribe_engine: val("transcribe_engine").value
+  }).then(function () {
+    val("input-dialog").close();
+    val("msg").textContent = "saved";
+    val("msg").style.color = "";
+    return refresh();
+  }).catch(function (e) {
+    dialogMsg(e.message);
+  });
 };
 val("search").onclick = function () {
   var q = val("q").value;
-  NexRecAuth.recApi("search_text", { q: q, input_id: val("id").value || undefined }).then(function (d) {
-    var ul = document.getElementById("hits");
+  var inputId = val("search-input").value || undefined;
+  NexRecAuth.recApi("search_text", { q: q, input_id: inputId }).then(function (d) {
+    var ul = val("hits");
     ul.innerHTML = "";
     (d.hits || []).forEach(function (h) {
       var li = document.createElement("li");
       var when = h.t_start ? NexRecUI.formatStation(h.t_start, true) : "";
-      li.innerHTML = "<span class=\"meta\">" + when + " " + (h.kind || "") +
-        (h.speaker ? " " + h.speaker : "") + "</span> " + (h.text || "");
+      li.innerHTML = "<span class=\"meta\">" + esc(when) + " " + esc(h.kind || "") +
+        (h.speaker ? " " + esc(h.speaker) : "") + "</span> " + esc(h.text || "");
       ul.appendChild(li);
     });
     if (!(d.hits || []).length) {
-      ul.innerHTML = "<li class=\"meta\">no hits (" + (d.engine || "") + ")</li>";
+      ul.innerHTML = "<li class=\"meta\">no hits (" + esc(d.engine || "") + ")</li>";
     }
-  }).catch(function (e) { document.getElementById("msg").textContent = e.message; });
+  }).catch(function (e) { val("msg").textContent = e.message; val("msg").style.color = "var(--bad)"; });
 };
-function syncType() {
-  var deck = val("source_type").value === "decklink";
-  document.getElementById("ip-fields").style.display = deck ? "none" : "";
-  document.getElementById("decklink-fields").style.display = deck ? "" : "none";
-}
-val("source_type").onchange = syncType;
-syncType();
 val("decklink_pick").onchange = function () {
   if (val("decklink_pick").value) val("decklink_device").value = val("decklink_pick").value;
 };
@@ -233,7 +414,7 @@ val("decklink_format_pick").onchange = function () {
   val("decklink_format").value = val("decklink_format_pick").value;
 };
 val("decklink_refresh").onclick = function () {
-  var hint = document.getElementById("decklink_hint");
+  var hint = val("decklink_hint");
   hint.textContent = "listing DeckLink devices…";
   NexRecAuth.recApi("decklink_devices").then(function (d) {
     var sel = val("decklink_pick");
@@ -244,19 +425,13 @@ val("decklink_refresh").onclick = function () {
       opt.textContent = dev.index + " — " + dev.name;
       sel.appendChild(opt);
     });
-    if (!d.decklink_enabled) {
-      hint.textContent = d.message || "ffmpeg is not built with DeckLink";
-    } else if (!(d.devices || []).length) {
-      hint.textContent = d.message || "no sub-devices listed";
-    } else {
-      hint.textContent = (d.devices.length) + " sub-device(s). Names look like DeckLink Quad 2 (1) or DeckLink Duo (1).";
-    }
+    if (!d.decklink_enabled) hint.textContent = d.message || "ffmpeg is not built with DeckLink";
+    else if (!(d.devices || []).length) hint.textContent = d.message || "no sub-devices listed";
+    else hint.textContent = d.devices.length + " sub-device(s). Names look like DeckLink Quad 2 (1).";
   }).catch(function (e) { hint.textContent = e.message; });
 };
-val("live_only").addEventListener("change", syncLiveOnly);
-syncLiveOnly();
 val("decklink_formats").onclick = function () {
-  var hint = document.getElementById("decklink_hint");
+  var hint = val("decklink_hint");
   var device = val("decklink_device").value;
   if (!device || /^[0-9]{1,2}$/.test(device)) {
     hint.textContent = "pick a display name before listing formats";

@@ -396,6 +396,19 @@ tr.asrun-sqz { background: rgba(192, 132, 252, .20); }
 .lkfs-wrap { position: relative; height: 150px; background: #05080c; border-radius: 6px; border: 1px solid var(--edge); }
 .lkfs-wrap svg { width: 100%; height: 100%; display: block; }
 dialog.nx-dialog.wide { width: min(640px, calc(100vw - 32px)); }
+dialog.nx-dialog.input-dialog {
+  width: min(880px, calc(100vw - 32px));
+  max-height: min(92vh, 900px);
+}
+#input-dialog [hidden] { display: none; }
+#input-dialog .form-grid { max-width: none; }
+#input-dialog .feat-grid { grid-template-columns: 1fr; }
+#input-dialog .feat-grid input,
+#input-dialog label.check input { width: auto; }
+#extra-panel[hidden] { display: none; }
+.table-scroll { overflow-x: auto; }
+.src-cell { max-width: 280px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+tr.slot-empty td { color: var(--dim); }
 dialog.nx-dialog {
   width: min(440px, calc(100vw - 32px));
   max-height: min(90vh, 720px);

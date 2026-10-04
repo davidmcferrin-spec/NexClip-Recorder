@@ -80,6 +80,12 @@ $inputsPage = (string) file_get_contents($root . '/web/pages/inputs.html');
 if (!str_contains($inputsPage, 'id="live_only"') || !str_contains($inputsPage, 'Live only')) {
     fail('inputs page needs a Live only checkbox');
 }
+if (!str_contains($inputsPage, 'id="input-dialog"') || !str_contains($inputsPage, 'Configure')) {
+    fail('inputs page should edit from a modal');
+}
+if (!str_contains($inputsPage, 'id="intel-block"')) {
+    fail('monitoring belongs in the input modal');
+}
 $exportPage = (string) file_get_contents($root . '/web/pages/export.html');
 if (!str_contains($exportPage, 'live_only')) {
     fail('export page must leave Live only inputs out');
