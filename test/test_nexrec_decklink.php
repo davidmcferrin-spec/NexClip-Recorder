@@ -92,6 +92,17 @@ if (!str_contains($inputsPage, 'id="id" type="hidden"') || !str_contains($inputs
 if (preg_match('/<option value="testsrc">/', $inputsPage)) {
     fail('testsrc is not a station input type');
 }
+foreach ([
+    'rtsp://encoder:554/stream',
+    'srt://encoder:9000',
+    'udp://239.1.1.1:5000',
+    'tcp://encoder:1234',
+    'rtp://239.1.1.1:5004',
+] as $hint) {
+    if (!str_contains($inputsPage, $hint)) {
+        fail('url hint missing: ' . $hint);
+    }
+}
 $exportPage = (string) file_get_contents($root . '/web/pages/export.html');
 if (!str_contains($exportPage, 'live_only')) {
     fail('export page must leave Live only inputs out');

@@ -151,6 +151,13 @@
 <script>
 NexRecAuth.requirePage({ roles: ["admin", "operator"] }).then(refresh);
 var IP_TYPES = { rtsp: 1, srt: 1, udp: 1, tcp: 1, rtp: 1 };
+var URL_HINT = {
+  rtsp: "rtsp://encoder:554/stream",
+  srt: "srt://encoder:9000",
+  udp: "udp://239.1.1.1:5000",
+  tcp: "tcp://encoder:1234",
+  rtp: "rtp://239.1.1.1:5004"
+};
 var TYPE_LABEL = {
   rtsp: "RTSP", srt: "SRT", udp: "UDP", tcp: "TCP", rtp: "RTP",
   decklink: "DeckLink", testsrc: "testsrc"
@@ -188,6 +195,7 @@ function syncType() {
   val("copy-native-wrap").hidden = !ip;
   val("live-tx-wrap").hidden = !ip;
   val("upconvert-wrap").hidden = !(ip || deck);
+  if (URL_HINT[t]) val("url").placeholder = URL_HINT[t];
 }
 function syncLiveOnly() {
   val("intel-block").hidden = val("live_only").checked;
