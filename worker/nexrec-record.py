@@ -2,16 +2,20 @@
 """FFmpeg segment recorder: IP and DeckLink → 5-minute MP4 chunks.
 
 Watches the output directory and indexes closed files. The in-progress
-segment is skipped (newest mtime while ffmpeg is alive).
+segment is skipped (newest filename timestamp while ffmpeg is alive).
+The chunk row is written before stills or analyze, so a slow filmstrip
+cannot leave the closed file unrecorded.
 """
 
 from __future__ import annotations
 
 import argparse
 import os
+import queue
 import signal
 import subprocess
 import sys
+import threading
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -28,7 +32,7 @@ from nexrec_decklink import (  # noqa: E402
 from nexrec_features import analyze_chunk  # noqa: E402
 from nexrec_ffmpeg import is_live_only, pin_video_encoder, preview_publish_url, record_argv  # noqa: E402
 from nexrec_heartbeat import probe_decklink, write_heartbeat  # noqa: E402
-from nexrec_index import backfill_thumbs, open_segment_basename, scan_dir  # noqa: E402
+from nexrec_index import backfill_thumbs, open_segment_basename, scan_dir, write_chunk_thumb  # noqa: E402
 from nexrec_util import (  # noqa: E402
     chunk_dir,
     data_paths,
@@ -144,6 +148,68 @@ def newest_mp4(root: str) -> str | None:
     return open_segment_basename(root)
 
 
+def _drain_side(
+    stop: threading.Event,
+    jobs: queue.Queue,
+    env: dict[str, str],
+    source: dict,
+    ffmpeg: str,
+    ffprobe: str,
+    storage: str,
+    input_id: str,
+) -> None:
+    """Stills and analyze off the index loop. A slow still must not delay the next chunk row."""
+    try:
+        side = connect(env)
+    except Exception as exc:  # noqa: BLE001
+        print(f"side index connect: {exc}", file=sys.stderr, flush=True)
+        return
+    while not stop.is_set() or not jobs.empty():
+        try:
+            job = jobs.get(timeout=0.5)
+        except queue.Empty:
+            if stop.is_set():
+                break
+            continue
+        if job is None:
+            break
+        kind, rec = job
+        try:
+            if kind == "analyze":
+                st = analyze_chunk(
+                    side,
+                    env,
+                    source,
+                    rec,
+                    ffmpeg=ffmpeg,
+                    ffprobe=ffprobe,
+                    storage=storage,
+                )
+                if st.get("events") or st.get("captions"):
+                    print(f"analyze {rec['path']} {st}", flush=True)
+            elif kind == "thumb":
+                write_chunk_thumb(rec["path"], ffmpeg, duration_s=rec.get("duration_s"))
+            elif kind == "backfill":
+                backfill_thumbs(side, ffmpeg, limit=1, input_id=input_id)
+        except Exception as exc:  # noqa: BLE001 — sidecar work must not stop ingest
+            print(f"{kind} skip: {exc}", file=sys.stderr, flush=True)
+        finally:
+            jobs.task_done()
+
+
+def _note_indexed(jobs: queue.Queue, indexed: set[str], recs: list[dict], source: dict) -> None:
+    for rec in recs:
+        path = str(rec.get("path") or "")
+        if not path:
+            continue
+        first = path not in indexed
+        indexed.add(path)
+        print(f"indexed {path} duration={rec.get('duration_s')}", flush=True)
+        jobs.put(("thumb", rec))
+        if first and not is_live_only(source):
+            jobs.put(("analyze", rec))
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description="NexCLIP Recorder segment ingest")
     p.add_argument("--env", default="", help="path to nexrec.env")
@@ -254,6 +320,25 @@ def main(argv: list[str] | None = None) -> int:
     native_root = os.path.join(paths["storage"], "inputs", args.input_id, "native")
     indexed: set[str] = set()
     pending: dict[str, tuple[int, int]] = {}
+    known: dict[str, tuple[int, int]] = {}
+    jobs: queue.Queue = queue.Queue()
+    stop_side = threading.Event()
+    side = threading.Thread(
+        target=_drain_side,
+        args=(
+            stop_side,
+            jobs,
+            env,
+            source,
+            paths["ffmpeg"],
+            paths["ffprobe"],
+            paths["storage"],
+            args.input_id,
+        ),
+        name="nexrec-record-side",
+        daemon=True,
+    )
+    side.start()
 
     try:
         while not STOP:
@@ -272,35 +357,14 @@ def main(argv: list[str] | None = None) -> int:
                     ffprobe=paths["ffprobe"],
                     skip_basename=skip,
                     pending=pending,
-                    ffmpeg=paths["ffmpeg"],
+                    known=known,
                 )
             except Exception as exc:  # noqa: BLE001 — never fail ingest
                 print(f"index skip: {exc}", file=sys.stderr, flush=True)
                 indexed_now = []
-            for rec in indexed_now:
-                if rec["path"] not in indexed:
-                    indexed.add(rec["path"])
-                    print(f"indexed {rec['path']} duration={rec.get('duration_s')}", flush=True)
-                    if is_live_only(source):
-                        continue
-                    try:
-                        st = analyze_chunk(
-                            conn,
-                            env,
-                            source,
-                            rec,
-                            ffmpeg=paths["ffmpeg"],
-                            ffprobe=paths["ffprobe"],
-                            storage=paths["storage"],
-                        )
-                        if st.get("events") or st.get("captions"):
-                            print(f"analyze {rec['path']} {st}", flush=True)
-                    except Exception as exc:  # noqa: BLE001 — never fail ingest
-                        print(f"analyze skip: {exc}", file=sys.stderr, flush=True)
-            try:
-                backfill_thumbs(conn, paths["ffmpeg"], limit=1, input_id=args.input_id)
-            except Exception as exc:  # noqa: BLE001 — a still must not stop ingest
-                print(f"thumb skip: {exc}", file=sys.stderr, flush=True)
+            _note_indexed(jobs, indexed, indexed_now, source)
+            if side.is_alive() and jobs.empty():
+                jobs.put(("backfill", {}))
             try:
                 write_heartbeat(
                     conn,
@@ -329,17 +393,21 @@ def main(argv: list[str] | None = None) -> int:
         # Final index including last file. A fragment with no moov must not
         # replace the process exit.
         try:
-            scan_dir(
+            final = scan_dir(
                 conn,
                 native_root,
                 args.input_id,
                 kind="native",
                 ffprobe=paths["ffprobe"],
                 pending=pending,
-                ffmpeg=paths["ffmpeg"],
+                known=known,
             )
+            _note_indexed(jobs, indexed, final, source)
         except Exception as exc:  # noqa: BLE001
             print(f"index skip: {exc}", file=sys.stderr, flush=True)
+        stop_side.set()
+        jobs.put(None)
+        side.join(timeout=2)
         try:
             write_heartbeat(
                 conn,

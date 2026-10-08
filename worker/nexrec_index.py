@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Probe closed MP4 chunks and upsert them into the chunk index.
 
-Paths that already have a ready chunks row are left alone. The caller
-passes the open segment as skip_basename (latest filename timestamp, not
-mtime). A file ffprobe cannot read because the moov atom is missing is
-left for a later pass instead of failing the scan.
+The caller passes the open segment as skip_basename (latest filename
+timestamp, not mtime). A ready row is left alone until the file's size
+changes, which refreshes duration_s. A file ffprobe cannot read because
+the moov atom is missing is left for a later pass instead of failing the
+scan. Stills are a later pass so a filmstrip cannot delay the chunk row.
 """
 
 from __future__ import annotations
@@ -372,6 +373,34 @@ def ready_chunk_paths(conn, input_id: str, kind: str) -> set[str]:
     return ready
 
 
+def ready_chunk_sizes(conn, input_id: str, kind: str) -> dict[str, int]:
+    """Stored size_bytes for ready chunks, keyed by absolute path."""
+    rows = conn.execute(
+        "SELECT path, size_bytes FROM chunks WHERE input_id=? AND kind=? AND ready=1",
+        (input_id, kind),
+    ).fetchall()
+    sizes: dict[str, int] = {}
+    for row in rows:
+        stored = str(row["path"] or "")
+        if not stored:
+            continue
+        try:
+            size = int(row["size_bytes"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        sizes[os.path.abspath(stored)] = size
+    return sizes
+
+
+def file_stat_sig(path: str) -> tuple[int, int] | None:
+    """Size and mtime. None when the file disappeared between listing and stat."""
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    return (int(st.st_size), int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))))
+
+
 def open_segment_basename(root: str) -> str | None:
     """Basename of the segment still being written.
 
@@ -406,12 +435,27 @@ def scan_dir(
     ffprobe: str = "ffprobe",
     skip_basename: str | None = None,
     pending: dict[str, tuple[int, int]] | None = None,
-    ffmpeg: str | None = None,
+    known: dict[str, tuple[int, int]] | None = None,
 ) -> list[dict[str, Any]]:
+    """Upsert closed MP4s. Returns as soon as the chunk rows are committed.
+
+    ``known`` remembers size and mtime already checked in this process. A
+    ready row whose file size changed is probed again so duration_s matches
+    the file, including a segment shorter than five minutes. Stills are not
+    written here.
+    """
     found: list[dict[str, Any]] = []
     if not os.path.isdir(root):
         return found
     ready = ready_chunk_paths(conn, input_id, kind)
+    sizes: dict[str, int] = {}
+    sizes_ok = known is None
+    if known is not None:
+        try:
+            sizes = ready_chunk_sizes(conn, input_id, kind)
+            sizes_ok = True
+        except Exception:  # noqa: BLE001 — a size lookup must not skip new files
+            sizes_ok = False
     for dirpath, _dirs, files in os.walk(root):
         for name in files:
             if not name.endswith(".mp4"):
@@ -419,13 +463,19 @@ def scan_dir(
             if skip_basename and name == skip_basename:
                 continue
             path = os.path.abspath(os.path.join(dirpath, name))
+            sig = file_stat_sig(path)
+            if sig is None:
+                continue
             if path in ready:
-                continue
-            try:
-                st = os.stat(path)
-            except OSError:
-                continue
-            sig = (int(st.st_size), int(getattr(st, "st_mtime_ns", int(st.st_mtime * 1_000_000_000))))
+                if known is None or not sizes_ok:
+                    continue
+                prev = known.get(path)
+                if prev == sig:
+                    continue
+                stored = sizes.get(path)
+                if prev is None and stored is not None and stored == sig[0]:
+                    known[path] = sig
+                    continue
             if pending is not None and pending.get(path) == sig:
                 continue
             try:
@@ -438,13 +488,14 @@ def scan_dir(
                 continue
             if pending is not None:
                 pending.pop(path, None)
+            if known is not None:
+                known[path] = file_stat_sig(path) or sig
             if rec:
                 found.append(rec)
                 ready.add(path)
                 ready.add(os.path.abspath(rec["path"]))
-                if ffmpeg:
-                    try:
-                        write_chunk_thumb(rec["path"], ffmpeg, duration_s=rec.get("duration_s"))
-                    except OSError as exc:
-                        print(f"thumb skip {rec['path']}: {exc}", file=sys.stderr, flush=True)
+                try:
+                    sizes[path] = int(rec["size_bytes"])
+                except (TypeError, ValueError, KeyError):
+                    pass
     return found

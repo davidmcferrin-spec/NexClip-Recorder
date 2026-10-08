@@ -285,6 +285,71 @@ class TestIndex(unittest.TestCase):
         self.assertNotIn(broken_abs, second)
         self.assertIn(os.path.abspath(good), second)
 
+    def test_scan_refreshes_duration_when_the_file_grew(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        day = os.path.join(tmp.name, "native")
+        os.makedirs(day)
+        path = os.path.join(day, "demo_20260921T150000Z.mp4")
+        with open(path, "wb") as fh:
+            fh.write(b"\x00" * 200)
+        abs_path = os.path.abspath(path)
+        probed: list[str] = []
+        thumbs: list[tuple] = []
+
+        def fake_index(_conn, probe_path, _input_id, kind="native", ffprobe="ffprobe"):
+            del _conn, _input_id, kind, ffprobe
+            probed.append(probe_path)
+            return {"path": probe_path, "duration_s": 12.5, "size_bytes": 200}
+
+        orig_ready = nexrec_index.ready_chunk_paths
+        orig_sizes = nexrec_index.ready_chunk_sizes
+        orig_index = nexrec_index.index_file
+        orig_thumb = nexrec_index.write_chunk_thumb
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_paths", orig_ready))
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_sizes", orig_sizes))
+        self.addCleanup(lambda: setattr(nexrec_index, "index_file", orig_index))
+        self.addCleanup(lambda: setattr(nexrec_index, "write_chunk_thumb", orig_thumb))
+        nexrec_index.ready_chunk_paths = lambda *_a, **_k: {abs_path}
+        nexrec_index.ready_chunk_sizes = lambda *_a, **_k: {abs_path: 128}
+        nexrec_index.index_file = fake_index
+        nexrec_index.write_chunk_thumb = lambda *a, **k: thumbs.append(a)
+
+        known: dict[str, tuple[int, int]] = {}
+        found = scan_dir(object(), day, "demo", known=known)
+        self.assertEqual([rec["duration_s"] for rec in found], [12.5])
+        self.assertEqual(probed, [abs_path])
+        self.assertEqual(thumbs, [])
+        again = scan_dir(object(), day, "demo", known=known)
+        self.assertEqual(again, [])
+        self.assertEqual(probed, [abs_path])
+
+    def test_scan_skips_a_ready_file_whose_size_matches(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        day = os.path.join(tmp.name, "native")
+        os.makedirs(day)
+        path = os.path.join(day, "demo_20260921T150000Z.mp4")
+        with open(path, "wb") as fh:
+            fh.write(b"\x00" * 200)
+        abs_path = os.path.abspath(path)
+        probed: list[str] = []
+        orig_ready = nexrec_index.ready_chunk_paths
+        orig_sizes = nexrec_index.ready_chunk_sizes
+        orig_index = nexrec_index.index_file
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_paths", orig_ready))
+        self.addCleanup(lambda: setattr(nexrec_index, "ready_chunk_sizes", orig_sizes))
+        self.addCleanup(lambda: setattr(nexrec_index, "index_file", orig_index))
+        nexrec_index.ready_chunk_paths = lambda *_a, **_k: {abs_path}
+        nexrec_index.ready_chunk_sizes = lambda *_a, **_k: {abs_path: 200}
+        nexrec_index.index_file = lambda *_a, **_k: probed.append("called")
+
+        known: dict[str, tuple[int, int]] = {}
+        found = scan_dir(object(), day, "demo", known=known)
+        self.assertEqual(found, [])
+        self.assertEqual(probed, [])
+        self.assertIn(abs_path, known)
+
 
 class TestThumbs(unittest.TestCase):
     def test_still_is_written_beside_the_mp4(self):

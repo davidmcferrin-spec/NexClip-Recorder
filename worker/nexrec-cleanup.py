@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
+import time
 from datetime import timedelta
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -15,19 +16,26 @@ if HERE not in sys.path:
 from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
 from nexrec_deliver import export_media_files, release_export  # noqa: E402
 from nexrec_index import (  # noqa: E402
+    IncompleteChunk,
     backfill_thumbs,
+    index_file,
+    open_segment_basename,
     orphan_thumb_paths,
     recording_for_sidecar,
     thumb_sidecar_paths,
 )
 from nexrec_util import (  # noqa: E402
     data_paths,
+    env_int,
     iso_z,
     load_env_file,
     parse_bytes,
     parse_iso,
     utcnow,
 )
+
+# One segment, plus a minute, so the open file and the faststart rewrite survive the hourly pass.
+ORPHAN_GRACE_EXTRA_S = 60
 
 
 def fs_space(path: str) -> tuple[int, int]:
@@ -135,9 +143,50 @@ def expire_chunks(conn, now) -> int:
     return n
 
 
-def orphans(conn, storage: str) -> int:
-    """Files on disk with no row, and rows whose file is gone."""
+def _input_id_from_path(storage: str, path: str) -> str:
+    root = os.path.join(storage, "inputs")
+    rel = os.path.relpath(path, root)
+    part = rel.split(os.sep)[0]
+    if part and part not in (".", ".."):
+        return part
+    return ""
+
+
+def _newest_segments(storage: str) -> dict[str, str]:
+    """Open segment basename per input. Newest filename timestamp, not mtime."""
+    newest: dict[str, str] = {}
+    root = os.path.join(storage, "inputs")
+    if not os.path.isdir(root):
+        return newest
+    for name in os.listdir(root):
+        native = os.path.join(root, name, "native")
+        if not os.path.isdir(native):
+            continue
+        base = open_segment_basename(native)
+        if base:
+            newest[name] = base
+    return newest
+
+
+def orphans(
+    conn,
+    storage: str,
+    *,
+    segment_s: int = 300,
+    ffprobe: str = "ffprobe",
+    now: float | None = None,
+) -> int:
+    """Drop rows whose file is gone. Adopt a closed, readable MP4. Delete only a dead fragment.
+
+    The newest filename in each input is the open segment and is never removed.
+    A file still inside one segment plus a minute is the faststart rewrite and
+    is never removed. An older file ffprobe can read is inserted with its real
+    duration, including a chunk shorter than five minutes. A file with no moov
+    that is older than that grace is deleted.
+    """
     n = 0
+    when = time.time() if now is None else now
+    grace = max(int(segment_s), 30) + ORPHAN_GRACE_EXTRA_S
     rows = fetchall(conn, "SELECT id, path FROM chunks")
     seen = set()
     for row in rows:
@@ -149,23 +198,56 @@ def orphans(conn, storage: str) -> int:
             delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
             n += 1
+    newest = _newest_segments(storage)
     native_root = os.path.join(storage, "inputs")
+    mp4s: list[tuple[str, str]] = []
+    if os.path.isdir(native_root):
+        for dirpath, _d, files in os.walk(native_root):
+            for name in files:
+                if recording_for_sidecar(name) is not None or not name.endswith(".mp4"):
+                    continue
+                mp4s.append((os.path.abspath(os.path.join(dirpath, name)), name))
+    for path, name in mp4s:
+        if path in seen:
+            continue
+        input_id = _input_id_from_path(storage, path)
+        if newest.get(input_id) == name:
+            print(f"orphan keep open {path}", flush=True)
+            continue
+        try:
+            age = when - os.path.getmtime(path)
+        except OSError:
+            continue
+        if age < grace:
+            print(f"orphan keep recent {path}", flush=True)
+            continue
+        try:
+            rec = index_file(conn, path, input_id, ffprobe=ffprobe)
+        except IncompleteChunk as exc:
+            print(f"orphan drop {path}: {exc}", flush=True)
+            unlink_quiet(path)
+            for side in thumb_sidecar_paths(path):
+                unlink_quiet(side)
+            n += 1
+            continue
+        except Exception as exc:  # noqa: BLE001 — a probe failure must not delete a recording
+            print(f"orphan keep {path}: {exc}", flush=True)
+            continue
+        if rec:
+            print(f"orphan index {path} duration={rec.get('duration_s')}", flush=True)
+            seen.add(os.path.abspath(str(rec.get("path") or path)))
+            seen.add(path)
+            continue
+        print(f"orphan drop {path}", flush=True)
+        unlink_quiet(path)
+        for side in thumb_sidecar_paths(path):
+            unlink_quiet(side)
+        n += 1
     if os.path.isdir(native_root):
         for dirpath, _d, files in os.walk(native_root):
             for side in orphan_thumb_paths(dirpath, files, seen):
                 unlink_quiet(side)
                 n += 1
-            for name in files:
-                path = os.path.abspath(os.path.join(dirpath, name))
-                if recording_for_sidecar(name) is not None:
-                    continue
-                if not name.endswith(".mp4"):
-                    continue
-                if path not in seen:
-                    unlink_quiet(path)
-                    for side in thumb_sidecar_paths(path):
-                        unlink_quiet(side)
-                    n += 1
     conn.commit()
     return n
 
@@ -226,7 +308,12 @@ def run(env: dict) -> dict:
     stats = {
         "exports_expired": expire_exports(conn, now_iso),
         "chunks_expired": expire_chunks(conn, now),
-        "orphans": orphans(conn, paths["storage"]),
+        "orphans": orphans(
+            conn,
+            paths["storage"],
+            segment_s=env_int(env, "NEXREC_SEGMENT_SECONDS", 300),
+            ffprobe=paths["ffprobe"],
+        ),
         "freed_for_floor": 0,
         "free_bytes": fs_free(paths["storage"]),
         "thumbs": 0,

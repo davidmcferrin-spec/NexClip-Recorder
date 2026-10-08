@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import time
 import unittest
 from datetime import timedelta
 
@@ -348,9 +349,11 @@ class TestThumbSidecars(unittest.TestCase):
         extra = os.path.join(native, "cam_extra.mp4")
         stray = os.path.join(native, "cam_gone.mp4")
         missing = os.path.join(native, "cam_missing.mp4")
-        for path in (live, extra):
+        opened = os.path.join(native, "cam_20261008T220508Z.mp4")
+        for path in (live, extra, opened):
             with open(path, "wb") as fh:
                 fh.write(b"m" * 16)
+        os.utime(extra, (1, 1))
         for path in (live, extra, stray, missing):
             with open(path + ".jpg", "wb") as fh:
                 fh.write(b"j" * 80)
@@ -364,9 +367,13 @@ class TestThumbSidecars(unittest.TestCase):
             fh.write("30\n")
         os.utime(stale, (1, 1))
 
+        class _Rows:
+            def fetchall(self):
+                return []
+
         class Conn:
             def execute(self, *_a, **_k):
-                return None
+                return _Rows()
 
             def commit(self):
                 return None
@@ -382,6 +389,7 @@ class TestThumbSidecars(unittest.TestCase):
             mod.fetchall = orig
         self.assertGreaterEqual(n, 1)
         self.assertTrue(os.path.isfile(live))
+        self.assertTrue(os.path.isfile(opened))
         self.assertTrue(os.path.isfile(live + ".jpg"))
         self.assertTrue(os.path.isfile(live + ".jpg.n"))
         self.assertTrue(os.path.isfile(fresh))
@@ -393,6 +401,55 @@ class TestThumbSidecars(unittest.TestCase):
         self.assertFalse(os.path.exists(stray + ".jpg.n"))
         self.assertFalse(os.path.exists(missing + ".jpg"))
         self.assertFalse(os.path.exists(missing + ".jpg.n"))
+
+    def test_orphans_index_short_closed_file_and_keep_the_open_one(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        native = os.path.join(tmp.name, "storage", "inputs", "cam", "native")
+        os.makedirs(native)
+        opened = os.path.join(native, "cam_20261008T180000Z.mp4")
+        recent = os.path.join(native, "cam_20261008T175500Z.mp4")
+        closed = os.path.join(native, "cam_20261008T170000Z.mp4")
+        broken = os.path.join(native, "cam_20261008T160000Z.mp4")
+        for path in (opened, recent, closed, broken):
+            with open(path, "wb") as fh:
+                fh.write(b"m" * 128)
+        old = time.time() - 7200
+        os.utime(closed, (old, old))
+        os.utime(broken, (old, old))
+        calls: list[str] = []
+
+        def fake_index(_conn, path, input_id, kind="native", ffprobe="ffprobe"):
+            del _conn, input_id, kind, ffprobe
+            calls.append(os.path.basename(path))
+            if os.path.basename(path) == "cam_20261008T170000Z.mp4":
+                return {"path": path, "duration_s": 12.5}
+            raise mod.IncompleteChunk("moov atom not found")
+
+        class Conn:
+            def execute(self, *_a, **_k):
+                return None
+
+            def commit(self):
+                return None
+
+        orig_index = mod.index_file
+        orig_fetch = mod.fetchall
+        mod.index_file = fake_index
+        mod.fetchall = lambda *_a, **_k: []
+        try:
+            n = mod.orphans(Conn(), os.path.join(tmp.name, "storage"), now=time.time(), segment_s=300)
+        finally:
+            mod.index_file = orig_index
+            mod.fetchall = orig_fetch
+        self.assertTrue(os.path.isfile(opened))
+        self.assertTrue(os.path.isfile(recent))
+        self.assertTrue(os.path.isfile(closed))
+        self.assertFalse(os.path.exists(broken))
+        self.assertEqual(sorted(calls), ["cam_20261008T160000Z.mp4", "cam_20261008T170000Z.mp4"])
+        self.assertGreaterEqual(n, 1)
+        self.assertNotIn("cam_20261008T180000Z.mp4", calls)
+        self.assertNotIn("cam_20261008T175500Z.mp4", calls)
 
 
 if __name__ == "__main__":
