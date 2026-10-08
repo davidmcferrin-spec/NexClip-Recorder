@@ -50,6 +50,8 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("decklink", args)
         self.assertIn("DeckLink Duo (1)", args)
         self.assertEqual(args[args.index("-audio_input") + 1], "embedded")
+        self.assertEqual(args[args.index("-raw_format") + 1], "yuv422p10")
+        self.assertLess(args.index("-raw_format"), args.index("-i"))
         self.assertLess(args.index("-audio_input"), args.index("-i"))
 
     def test_copy_native_no_upconvert(self):
@@ -145,7 +147,10 @@ class TestFfmpeg(unittest.TestCase):
         self.assertEqual(cmd[i + 1], "DeckLink Quad 2 (1)")
         self.assertIn("-segment_atclocktime", cmd)
         self.assertIn("300", cmd)
+        self.assertEqual(cmd[cmd.index("-raw_format") + 1], "yuv422p10")
+        self.assertLess(cmd.index("-raw_format"), i)
         self.assertIn("libx264", cmd)
+        self.assertEqual(cmd[cmd.index("-a53cc") + 1], "1")
         self.assertIn("aac", cmd)
         self.assertIn("+ildct+ilme", cmd)
         self.assertIn("tff=1", cmd)
@@ -173,7 +178,9 @@ class TestFfmpeg(unittest.TestCase):
         self.assertIn("[vrec]", cmd)
         self.assertIn("[vprev]", cmd)
         self.assertIn("-segment_atclocktime", cmd)
+        self.assertEqual(cmd[cmd.index("-raw_format") + 1], "yuv422p10")
         self.assertIn("libx264", cmd)
+        self.assertEqual(cmd[cmd.index("-a53cc") + 1], "1")
         self.assertIn("aac", cmd)
         self.assertNotIn("+ildct+ilme", cmd)
         self.assertIn("4.2", cmd)
@@ -279,6 +286,7 @@ class TestFfmpeg(unittest.TestCase):
             "signal_mode": "1080i59.94",
         }, env)
         self.assertIn("h264_nvenc", args)
+        self.assertEqual(args[args.index("-a53cc") + 1], "1")
         self.assertNotIn("libx264", args)
         self.assertNotIn("tff=1", args)
         self.assertIn("+ildct", args)

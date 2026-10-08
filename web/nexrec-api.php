@@ -200,6 +200,27 @@ function nexrec_parse_byte_range(string $header, int $size): ?array {
     return [$start, $end, true];
 }
 
+/** Frames in the timeline filmstrip. A missing count file is the legacy one-still JPEG. */
+function nexrec_chunk_thumb_frames(string $mp4): int {
+    if ($mp4 === '') {
+        return 1;
+    }
+    $side = $mp4 . '.jpg.n';
+    $realMp4 = realpath($mp4);
+    $realSide = realpath($side);
+    if ($realMp4 === false || $realSide === false || $realSide !== $realMp4 . '.jpg.n') {
+        return 1;
+    }
+    $n = (int) trim((string) file_get_contents($realSide));
+    if ($n < 1) {
+        return 1;
+    }
+    if ($n > 360) {
+        return 360;
+    }
+    return $n;
+}
+
 /**
  * @return array{status:int,start:int,length:int,headers:array<string,string>}
  */
@@ -777,6 +798,7 @@ try {
         $res = $st->execute();
         $out = [];
         while ($res && ($row = $res->fetchArray(SQLITE3_ASSOC))) {
+            $row['thumb_frames'] = nexrec_chunk_thumb_frames((string) ($row['path'] ?? ''));
             $out[] = $row;
         }
         nexrec_api_ok(['chunks' => $out]);

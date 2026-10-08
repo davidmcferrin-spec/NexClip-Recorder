@@ -309,5 +309,91 @@ class TestCleanup(unittest.TestCase):
         self.assertTrue(os.path.isfile(export))
 
 
+class TestThumbSidecars(unittest.TestCase):
+    def test_sidecar_names_point_at_the_recording(self):
+        base = "cam_20261008T150000Z.mp4"
+        self.assertEqual(mod.recording_for_sidecar(base + ".jpg"), base)
+        self.assertEqual(mod.recording_for_sidecar(base + ".jpg.n"), base)
+        self.assertEqual(mod.recording_for_sidecar(base + ".jpg.tmp.jpg"), base)
+        self.assertEqual(mod.recording_for_sidecar(base + ".jpg.n.tmp"), base)
+        self.assertIsNone(mod.recording_for_sidecar(base))
+        self.assertIsNone(mod.recording_for_sidecar("notes.txt"))
+
+    def test_unlink_chunk_removes_the_filmstrip(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        mp4 = os.path.join(tmp.name, "cam_20261008T150000Z.mp4")
+        with open(mp4, "wb") as fh:
+            fh.write(b"m" * 16)
+        for name in (mp4 + ".jpg", mp4 + ".jpg.tmp.jpg"):
+            with open(name, "wb") as fh:
+                fh.write(b"j" * 80)
+        with open(mp4 + ".jpg.n", "w", encoding="ascii") as fh:
+            fh.write("30\n")
+        with open(mp4 + ".jpg.n.tmp", "w", encoding="ascii") as fh:
+            fh.write("30\n")
+        mod.unlink_chunk(mp4)
+        self.assertFalse(os.path.exists(mp4))
+        self.assertFalse(os.path.exists(mp4 + ".jpg"))
+        self.assertFalse(os.path.exists(mp4 + ".jpg.n"))
+        self.assertFalse(os.path.exists(mp4 + ".jpg.tmp.jpg"))
+        self.assertFalse(os.path.exists(mp4 + ".jpg.n.tmp"))
+
+    def test_orphans_drop_stray_strips_and_keep_indexed_ones(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        native = os.path.join(tmp.name, "storage", "inputs", "cam", "native")
+        os.makedirs(native)
+        live = os.path.join(native, "cam_live.mp4")
+        extra = os.path.join(native, "cam_extra.mp4")
+        stray = os.path.join(native, "cam_gone.mp4")
+        missing = os.path.join(native, "cam_missing.mp4")
+        for path in (live, extra):
+            with open(path, "wb") as fh:
+                fh.write(b"m" * 16)
+        for path in (live, extra, stray, missing):
+            with open(path + ".jpg", "wb") as fh:
+                fh.write(b"j" * 80)
+            with open(path + ".jpg.n", "w", encoding="ascii") as fh:
+                fh.write("30\n")
+        fresh = live + ".jpg.tmp.jpg"
+        stale = live + ".jpg.n.tmp"
+        with open(fresh, "wb") as fh:
+            fh.write(b"t" * 8)
+        with open(stale, "w", encoding="ascii") as fh:
+            fh.write("30\n")
+        os.utime(stale, (1, 1))
+
+        class Conn:
+            def execute(self, *_a, **_k):
+                return None
+
+            def commit(self):
+                return None
+
+        orig = mod.fetchall
+        mod.fetchall = lambda _conn, _sql, _args=(): [
+            {"id": "chk_live", "path": live},
+            {"id": "chk_missing", "path": missing},
+        ]
+        try:
+            n = mod.orphans(Conn(), os.path.join(tmp.name, "storage"))
+        finally:
+            mod.fetchall = orig
+        self.assertGreaterEqual(n, 1)
+        self.assertTrue(os.path.isfile(live))
+        self.assertTrue(os.path.isfile(live + ".jpg"))
+        self.assertTrue(os.path.isfile(live + ".jpg.n"))
+        self.assertTrue(os.path.isfile(fresh))
+        self.assertFalse(os.path.exists(stale))
+        self.assertFalse(os.path.exists(extra))
+        self.assertFalse(os.path.exists(extra + ".jpg"))
+        self.assertFalse(os.path.exists(extra + ".jpg.n"))
+        self.assertFalse(os.path.exists(stray + ".jpg"))
+        self.assertFalse(os.path.exists(stray + ".jpg.n"))
+        self.assertFalse(os.path.exists(missing + ".jpg"))
+        self.assertFalse(os.path.exists(missing + ".jpg.n"))
+
+
 if __name__ == "__main__":
     unittest.main()

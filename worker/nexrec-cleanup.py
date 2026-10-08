@@ -14,7 +14,12 @@ if HERE not in sys.path:
 
 from nexrec_db import connect, delete_chunk_side_data, fetchall, migrate, overlay_app_settings  # noqa: E402
 from nexrec_deliver import export_media_files, release_export  # noqa: E402
-from nexrec_index import backfill_thumbs, thumb_path_for  # noqa: E402
+from nexrec_index import (  # noqa: E402
+    backfill_thumbs,
+    orphan_thumb_paths,
+    recording_for_sidecar,
+    thumb_sidecar_paths,
+)
 from nexrec_util import (  # noqa: E402
     data_paths,
     iso_z,
@@ -51,11 +56,12 @@ def needs_space_purge(free: int, total: int, floor: int, max_used_pct: float) ->
 
 
 def unlink_chunk(path: str) -> None:
-    """Remove the recording and the timeline still beside it."""
+    """Remove the recording and the timeline stills beside it."""
     if not path:
         return
     unlink_quiet(path)
-    unlink_quiet(thumb_path_for(path))
+    for side in thumb_sidecar_paths(path):
+        unlink_quiet(side)
 
 
 def unlink_quiet(path: str) -> bool:
@@ -137,7 +143,8 @@ def orphans(conn, storage: str) -> int:
     for row in rows:
         seen.add(os.path.abspath(row["path"]))
         if not os.path.isfile(row["path"]):
-            unlink_quiet(thumb_path_for(row["path"]))
+            for side in thumb_sidecar_paths(row["path"]):
+                unlink_quiet(side)
             conn.execute("UPDATE chunks SET orphan=1 WHERE id=?", (row["id"],))
             delete_chunk_side_data(conn, row["id"])
             conn.execute("DELETE FROM chunks WHERE id=?", (row["id"],))
@@ -145,18 +152,19 @@ def orphans(conn, storage: str) -> int:
     native_root = os.path.join(storage, "inputs")
     if os.path.isdir(native_root):
         for dirpath, _d, files in os.walk(native_root):
+            for side in orphan_thumb_paths(dirpath, files, seen):
+                unlink_quiet(side)
+                n += 1
             for name in files:
                 path = os.path.abspath(os.path.join(dirpath, name))
-                if name.endswith(".mp4.jpg"):
-                    if path[:-4] not in seen:
-                        unlink_quiet(path)
-                        n += 1
+                if recording_for_sidecar(name) is not None:
                     continue
                 if not name.endswith(".mp4"):
                     continue
                 if path not in seen:
                     unlink_quiet(path)
-                    unlink_quiet(thumb_path_for(path))
+                    for side in thumb_sidecar_paths(path):
+                        unlink_quiet(side)
                     n += 1
     conn.commit()
     return n
@@ -234,7 +242,7 @@ def run(env: dict) -> dict:
         stats["freed_for_floor"] = free_space_pass(conn, paths["storage"], floor, max_pct)
         stats["free_bytes"] = fs_free(paths["storage"])
     try:
-        stats["thumbs"] = backfill_thumbs(conn, paths["ffmpeg"], limit=40)
+        stats["thumbs"] = backfill_thumbs(conn, paths["ffmpeg"], limit=40, upgrade=True)
     except Exception as exc:  # noqa: BLE001 — stills must not stop retention
         print(f"thumb skip: {exc}", file=sys.stderr)
     return stats

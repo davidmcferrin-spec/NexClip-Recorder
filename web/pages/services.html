@@ -55,6 +55,22 @@
       <tbody id="signals"></tbody>
     </table>
   </div>
+  <div class="panel">
+    <h2>Support logs</h2>
+    <p class="sub">One zip of the journal for every recorder service, plus metrics and Apache. The last 24, 48, or 72 hours start from now. All is whatever journald still has, up to 20 MB per service.</p>
+    <div class="bar">
+      <label>Window
+        <select id="log-window" aria-label="Log window">
+          <option value="24">Last 24 hours</option>
+          <option value="48">Last 48 hours</option>
+          <option value="72">Last 72 hours</option>
+          <option value="all">All retained</option>
+        </select>
+      </label>
+      <button type="button" id="log-download" title="Download a zip of service journals for support. 24, 48, and 72 hours are from now. All is whatever journald still has, up to 20 MB per service.">Download logs</button>
+      <span class="sub" id="log-pack-msg"></span>
+    </div>
+  </div>
 </main>
 <script src="/assets/nexrec-auth-gate.js"></script>
 <script>
@@ -173,6 +189,42 @@ function refresh() {
   });
 }
 document.getElementById("refresh").onclick = refresh;
+document.getElementById("log-download").onclick = function () {
+  var btn = document.getElementById("log-download");
+  var msg = document.getElementById("log-pack-msg");
+  var windowHours = document.getElementById("log-window").value;
+  btn.disabled = true;
+  msg.textContent = "Collecting…";
+  fetch("/api/ops?action=logs&window=" + encodeURIComponent(windowHours), {
+    credentials: "same-origin",
+    cache: "no-store"
+  }).then(function (res) {
+    var type = res.headers.get("Content-Type") || "";
+    if (!res.ok || type.indexOf("application/zip") === -1) {
+      return res.json().then(function (data) {
+        throw new Error((data && data.error) || "download failed");
+      });
+    }
+    var name = "nexrec-logs.zip";
+    var cd = res.headers.get("Content-Disposition") || "";
+    var match = /filename="([^"]+)"/.exec(cd);
+    if (match) name = match[1];
+    return res.blob().then(function (blob) { return { blob: blob, name: name }; });
+  }).then(function (got) {
+    var a = document.createElement("a");
+    a.href = URL.createObjectURL(got.blob);
+    a.download = got.name;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(a.href);
+    msg.textContent = "Saved " + got.name;
+  }).catch(function (e) {
+    msg.textContent = String(e.message || e);
+  }).then(function () {
+    btn.disabled = false;
+  });
+};
 </script>
 </body>
 </html>

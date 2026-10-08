@@ -14,6 +14,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import timedelta
 from typing import Any
 
@@ -89,46 +90,152 @@ def probe(path: str, ffprobe: str = "ffprobe") -> dict[str, Any]:
     }
 
 
+# One timeline frame this many seconds. The recording chunk stays 5 minutes.
+THUMB_STEP_S = 10.0
+THUMB_LEAD_S = 1.0
+
+
 def thumb_path_for(mp4: str) -> str:
-    """JPEG still stored beside the recording. Removed with the MP4."""
+    """JPEG filmstrip stored beside the recording. Removed with the MP4."""
     return mp4 + ".jpg"
+
+
+def thumb_count_path_for(mp4: str) -> str:
+    """How many 10-second frames are in the filmstrip. Missing means one legacy still."""
+    return mp4 + ".jpg.n"
+
+
+def thumb_sidecar_paths(mp4: str) -> list[str]:
+    """Still, frame count, and the in-progress JPEG. All go away with the MP4."""
+    jpg = thumb_path_for(mp4)
+    return [jpg, thumb_count_path_for(mp4), jpg + ".tmp.jpg", thumb_count_path_for(mp4) + ".tmp"]
+
+
+def recording_for_sidecar(name: str) -> str | None:
+    """Recording basename for a timeline still, or None when ``name`` is not one.
+
+    Longer suffixes are checked first so ``file.mp4.jpg.tmp.jpg`` is not
+    treated as the finished JPEG.
+    """
+    for suffix in (".jpg.tmp.jpg", ".jpg.n.tmp", ".jpg.n", ".jpg"):
+        tail = ".mp4" + suffix
+        if name.endswith(tail):
+            return name[: -len(suffix)]
+    return None
+
+
+def orphan_thumb_paths(dirpath: str, names: list[str], seen: set[str], now: float | None = None) -> list[str]:
+    """Timeline files in this directory that no indexed recording owns.
+
+    An in-progress JPEG younger than 10 minutes stays, so a still being
+    written is not removed out from under ffmpeg.
+    """
+    when = time.time() if now is None else now
+    drop: list[str] = []
+    for name in names:
+        owner_name = recording_for_sidecar(name)
+        if owner_name is None:
+            continue
+        path = os.path.abspath(os.path.join(dirpath, name))
+        owner = os.path.abspath(os.path.join(dirpath, owner_name))
+        if name.endswith(".mp4.jpg.tmp.jpg") or name.endswith(".mp4.jpg.n.tmp"):
+            try:
+                age = when - os.path.getmtime(path)
+            except OSError:
+                age = 99999
+            if age >= 600:
+                drop.append(path)
+            continue
+        if owner not in seen:
+            drop.append(path)
+    return drop
+
+
+def thumb_frame_count(duration_s: float | None) -> int:
+    """Frames at 1s, 11s, 21s, … while the timestamp is inside the file."""
+    try:
+        duration = float(duration_s) if duration_s is not None else 0.0
+    except (TypeError, ValueError):
+        duration = 0.0
+    if duration <= THUMB_LEAD_S:
+        return 1
+    n = 0
+    t = THUMB_LEAD_S
+    while t < duration - 0.05 and n < 360:
+        n += 1
+        t += THUMB_STEP_S
+    return n if n else 1
+
+
+def _thumb_count_value(count_path: str) -> int | None:
+    try:
+        with open(count_path, encoding="ascii") as fh:
+            raw = fh.read().strip()
+    except OSError:
+        return None
+    try:
+        n = int(raw)
+    except ValueError:
+        return None
+    if n < 1:
+        return None
+    return n
+
+
+def _thumb_current(dest: str, count_path: str, n: int) -> bool:
+    if not (os.path.isfile(dest) and os.path.getsize(dest) > 64):
+        return False
+    got = _thumb_count_value(count_path)
+    if got is None:
+        return n <= 1
+    return got == n
+
+
+def _write_thumb_count(count_path: str, n: int) -> None:
+    tmp = count_path + ".tmp"
+    with open(tmp, "w", encoding="ascii") as fh:
+        fh.write(str(int(n)) + "\n")
+    os.replace(tmp, count_path)
 
 
 _thumb_failed: set[str] = set()
 
 
-def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
-    """One frame from the start of a closed chunk. Safe to call again."""
+def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg", duration_s: float | None = None) -> bool:
+    """Filmstrip of one frame every 10 seconds. Safe to call again.
+
+    A chunk that already has a still and no frame-count file is a legacy
+    single picture. Callers that pass upgrade replace it. A short file
+    keeps the one frame at 1 second.
+    """
     dest = thumb_path_for(mp4)
-    if os.path.isfile(dest) and os.path.getsize(dest) > 64:
+    count_path = thumb_count_path_for(mp4)
+    n = thumb_frame_count(duration_s)
+    if _thumb_current(dest, count_path, n):
         return True
     if mp4 in _thumb_failed or not os.path.isfile(mp4):
         return False
     # image2 on this FFmpeg refuses a single still unless the name ends in
     # .jpg and -update 1 is set. A .part suffix makes it skip the file.
     tmp = dest + ".tmp.jpg"
-    cmd = [
-        ffmpeg,
-        "-hide_banner",
-        "-loglevel",
-        "error",
-        "-ss",
-        "1",
-        "-i",
-        mp4,
-        "-frames:v",
-        "1",
-        "-vf",
-        "scale=320:-2",
-        "-q:v",
-        "5",
-        "-update",
-        "1",
-        "-y",
-        tmp,
-    ]
+    if n <= 1:
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-ss", "1", "-i", mp4,
+            "-frames:v", "1", "-vf", "scale=320:-2",
+            "-q:v", "5", "-update", "1", "-y", tmp,
+        ]
+        timeout = 30
+    else:
+        cmd = [
+            ffmpeg, "-hide_banner", "-loglevel", "error",
+            "-i", mp4,
+            "-vf", f"fps=fps=1/{int(THUMB_STEP_S)}:start_time={int(THUMB_LEAD_S)},scale=320:-2,tile={n}x1",
+            "-frames:v", "1", "-q:v", "5", "-update", "1", "-y", tmp,
+        ]
+        timeout = 120
     try:
-        proc = subprocess.run(cmd, check=False, timeout=30, capture_output=True)
+        proc = subprocess.run(cmd, check=False, timeout=timeout, capture_output=True)
     except (OSError, subprocess.TimeoutExpired) as exc:
         _thumb_failed.add(mp4)
         print(f"thumb {mp4}: {exc}", file=sys.stderr)
@@ -149,6 +256,11 @@ def write_chunk_thumb(mp4: str, ffmpeg: str = "ffmpeg") -> bool:
             pass
         return False
     os.replace(tmp, dest)
+    try:
+        _write_thumb_count(count_path, n)
+    except OSError as exc:
+        print(f"thumb count {mp4}: {exc}", file=sys.stderr)
+        return False
     return True
 
 
@@ -159,14 +271,17 @@ def backfill_thumbs(
     input_id: str | None = None,
     scan_limit: int | None = 500,
     on_result=None,
+    upgrade: bool = False,
 ) -> int:
     """Write stills for closed chunks that do not have one yet. Newest first.
 
     ``limit`` is how many new stills to write. ``scan_limit`` is how many
     chunk rows to consider. None on either means no cap, which is the
-    archive pass.
+    archive pass. ``upgrade`` replaces a legacy one-frame JPEG with a
+    10-second filmstrip. The record loop leaves upgrade off so it does not
+    re-encode the archive while a channel is recording.
     """
-    sql = "SELECT path FROM chunks WHERE ready=1 AND orphan=0"
+    sql = "SELECT path, duration_s FROM chunks WHERE ready=1 AND orphan=0"
     args: list[Any] = []
     if input_id:
         sql += " AND input_id=?"
@@ -180,10 +295,18 @@ def backfill_thumbs(
         path = str(row["path"] or "")
         if not path or not os.path.isfile(path):
             continue
+        try:
+            duration = row["duration_s"]
+        except (KeyError, IndexError):
+            duration = None
         dest = thumb_path_for(path)
-        if os.path.isfile(dest) and os.path.getsize(dest) > 64:
+        count_path = thumb_count_path_for(path)
+        if upgrade:
+            if _thumb_current(dest, count_path, thumb_frame_count(duration)):
+                continue
+        elif os.path.isfile(dest) and os.path.getsize(dest) > 64:
             continue
-        ok = write_chunk_thumb(path, ffmpeg)
+        ok = write_chunk_thumb(path, ffmpeg, duration_s=duration)
         if on_result is not None:
             on_result(path, ok)
         if ok:
@@ -321,7 +444,7 @@ def scan_dir(
                 ready.add(os.path.abspath(rec["path"]))
                 if ffmpeg:
                     try:
-                        write_chunk_thumb(rec["path"], ffmpeg)
+                        write_chunk_thumb(rec["path"], ffmpeg, duration_s=rec.get("duration_s"))
                     except OSError as exc:
                         print(f"thumb skip {rec['path']}: {exc}", file=sys.stderr, flush=True)
     return found

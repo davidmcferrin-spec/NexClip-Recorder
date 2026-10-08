@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Write timeline stills for closed recordings that do not have one yet.
+"""Write timeline filmstrips for closed recordings.
 
-Newest first, then back through the whole archive. Skips a chunk that
-already has a JPEG beside the MP4. Safe to stop and run again.
+One frame every 10 seconds. Newest first, then the whole archive.
+A JPEG with no frame-count file is a legacy single still and is replaced.
+Safe to stop and run again.
 
     sudo -u www-data python3 /opt/NexClip-Recorder/worker/nexrec-thumbs.py --env /etc/nexrec/nexrec.env
     sudo -u www-data python3 /opt/NexClip-Recorder/worker/nexrec-thumbs.py --env /etc/nexrec/nexrec.env --input studio-a
@@ -38,6 +39,7 @@ def run(env: dict, input_id: str | None) -> dict:
         limit=None,
         input_id=input_id,
         scan_limit=None,
+        upgrade=True,
         on_result=report,
     )
     return {"thumbs": n, "input_id": input_id or ""}

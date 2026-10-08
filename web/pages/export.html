@@ -594,7 +594,7 @@
     var sig = [selected, t0, t1, width, lanes.map(function (lane) { return lane.slot + ":" + lane.inp.id; }).join(",")];
     lanes.forEach(function (lane) {
       (chunksByInput[lane.inp.id] || []).forEach(function (c) {
-        sig.push(c.id, c.start_at, c.end_at);
+        sig.push(c.id, c.start_at, c.end_at, c.thumb_frames || 1);
       });
     });
     asrunRows.forEach(function (ev) {
@@ -649,6 +649,7 @@
     (chunksByInput[sel.id] || []).forEach(function (c) {
       var bounds = chunkBounds(c);
       if (!bounds) return;
+      var frames = Math.max(1, Number(c.thumb_frames) || 1);
       NexRecUI.spansOnRows(bounds.a, bounds.b, t0, t1, tlRows).forEach(function (part) {
         var thumb = document.createElement("div");
         thumb.className = "tl-thumb";
@@ -656,8 +657,16 @@
         thumb.style.width = Math.max(part.width, 0.15) + "%";
         thumb.style.top = (strip + labelH + part.row * 55) + "px";
         thumb.style.height = "55px";
-        if (c.id) thumb.style.backgroundImage = "url(/api/chunks/" + encodeURIComponent(c.id) + "/thumb)";
-        thumb.title = (sel.name || sel.id) + " " + station(bounds.a);
+        if (c.id) {
+          thumb.style.backgroundImage = "url(/api/chunks/" + encodeURIComponent(c.id) + "/thumb?v=" + frames + ")";
+          var stripStyle = NexRecUI.thumbStripStyle(bounds.a, bounds.b, part.start, part.end, frames);
+          if (stripStyle) {
+            thumb.style.backgroundSize = stripStyle.size;
+            thumb.style.backgroundPosition = stripStyle.position;
+            thumb.style.backgroundRepeat = "no-repeat";
+          }
+        }
+        thumb.title = (sel.name || sel.id) + " " + station(part.start || bounds.a);
         bar.appendChild(thumb);
       });
     });

@@ -241,6 +241,22 @@
     return rows;
   }
 
+  function thumbStripStyle(chunkStart, chunkEnd, viewStart, viewEnd, frames) {
+    var n = Number(frames) || 1;
+    if (n < 2) return null;
+    var cd = Number(chunkEnd) - Number(chunkStart);
+    if (!(cd > 0)) return null;
+    var ps = Math.max(Number(viewStart), Number(chunkStart));
+    var pe = Math.min(Number(viewEnd), Number(chunkEnd));
+    if (!(pe > ps)) return null;
+    var rel0 = (ps - Number(chunkStart)) / cd;
+    var vis = (pe - ps) / cd;
+    if (vis >= 0.999) return { size: "100% 100%", position: "0% 0%" };
+    var pos = 100 * rel0 / (1 - vis);
+    if (!isFinite(pos)) pos = 0;
+    return { size: (100 / vis) + "% 100%", position: pos + "% 0%" };
+  }
+
   function spansOnRows(startMs, endMs, t0, t1, rows) {
     var n = rows > 0 ? rows : 1;
     if (n > 3) n = 3;
@@ -256,6 +272,8 @@
       if (!(rightT > leftT)) continue;
       out.push({
         row: r,
+        start: leftT,
+        end: rightT,
         left: ((leftT - rs) / rowSpan) * 100,
         width: ((rightT - leftT) / rowSpan) * 100
       });
@@ -463,6 +481,7 @@
     coverageSpans: coverageSpans,
     laneColor: laneColor,
     thumbRows: thumbRows,
+    thumbStripStyle: thumbStripStyle,
     spansOnRows: spansOnRows,
     exportDurationMs: exportDurationMs,
     exportRemainingMs: exportRemainingMs,

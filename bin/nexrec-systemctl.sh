@@ -10,8 +10,9 @@
 #   /etc/sudoers.d/nexrec-systemctl
 #   www-data ALL=(root) NOPASSWD: /opt/NexClip-Recorder/bin/nexrec-systemctl.sh
 #
-# Invoke: sudo -n nexrec-systemctl.sh <verb> <unit> [lines]
-# Verbs: start stop restart enable disable is-active is-enabled show journal
+# Invoke: sudo -n nexrec-systemctl.sh <verb> <unit> [lines|window]
+# Verbs: start stop restart enable disable is-active is-enabled show journal journal-since
+# journal-since window is 24, 48, 72, or all. all is whatever journald still has.
 #
 # Tests may point NEXREC_SYSTEMCTL_BIN / NEXREC_JOURNALCTL_BIN at fakes.
 set -euo pipefail
@@ -39,7 +40,7 @@ if [[ -z "$JOURNALCTL" ]]; then
 fi
 
 usage() {
-  echo "usage: nexrec-systemctl.sh <verb> <unit> [lines]" >&2
+  echo "usage: nexrec-systemctl.sh <verb> <unit> [lines|window]" >&2
   exit 2
 }
 
@@ -55,6 +56,9 @@ case "$VERB" in
     ;;
   journal)
     ;;
+  journal-since)
+    [[ $# -eq 3 ]] || usage
+    ;;
   *)
     echo "verb not allowed" >&2
     exit 2
@@ -64,7 +68,14 @@ esac
 # Fixed units plus per-input record/preview instances.
 # Input ids match the app: [a-z0-9][a-z0-9-]{0,31}
 UNIT_RE='^(mediamtx\.service|nexrec-export\.service|nexrec-deliver\.service|nexrec-cleanup\.(service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(service|timer)|nexrec-decklink-configure\.service|nexrec-(record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$'
-if [[ ! "$UNIT" =~ $UNIT_RE ]]; then
+# Support packs also include metrics and Apache. Those stay off the start/stop list.
+LOG_UNIT_RE='^(mediamtx\.service|nexrec-export\.service|nexrec-deliver\.service|nexrec-cleanup\.(service|timer)|nexrec-analyze\.service|nexrec-nexclip\.(service|timer)|nexrec-decklink-configure\.service|nexrec-metrics\.service|apache2\.service|nexrec-(record|preview)@[a-z0-9][a-z0-9-]{0,31}\.service)$'
+if [[ "$VERB" == "journal-since" ]]; then
+  if [[ ! "$UNIT" =~ $LOG_UNIT_RE ]]; then
+    echo "unit not allowed" >&2
+    exit 2
+  fi
+elif [[ ! "$UNIT" =~ $UNIT_RE ]]; then
   echo "unit not allowed" >&2
   exit 2
 fi
@@ -90,5 +101,19 @@ case "$VERB" in
       exit 2
     fi
     exec "$JOURNALCTL" -u "$UNIT" -n "$LINES" --no-pager -o short-iso
+    ;;
+  journal-since)
+    case "$LINES" in
+      24|48|72)
+        exec "$JOURNALCTL" -u "$UNIT" --since "${LINES} hours ago" --no-pager -o short-iso
+        ;;
+      all)
+        exec "$JOURNALCTL" -u "$UNIT" --no-pager -o short-iso
+        ;;
+      *)
+        echo "bad window" >&2
+        exit 2
+        ;;
+    esac
     ;;
 esac

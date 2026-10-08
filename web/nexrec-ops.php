@@ -7,8 +7,10 @@ declare(strict_types=1);
 
 require_once __DIR__ . '/nexrec-decklink.php';
 
-const NEXREC_OPS_VERBS = ['start', 'stop', 'restart', 'enable', 'disable', 'is-active', 'is-enabled', 'show', 'journal'];
+const NEXREC_OPS_VERBS = ['start', 'stop', 'restart', 'enable', 'disable', 'is-active', 'is-enabled', 'show', 'journal', 'journal-since'];
 const NEXREC_OPS_CONTROL_VERBS = ['start', 'stop', 'restart', 'enable', 'disable'];
+const NEXREC_OPS_LOG_WINDOWS = ['24', '48', '72', 'all'];
+const NEXREC_OPS_LOG_CAP = 20971520;
 
 function nexrec_ops_unit_allowed(string $unit): bool {
     return (bool) preg_match(
@@ -104,6 +106,9 @@ function nexrec_ops_use_sudo(): bool {
 function nexrec_ops_wrapper(string $verb, string $unit, ?int $lines = null): array {
     if (!nexrec_ops_verb_allowed($verb)) {
         throw new InvalidArgumentException('verb not allowed');
+    }
+    if ($verb === 'journal-since') {
+        throw new InvalidArgumentException('journal-since uses nexrec_ops_journal_since_cmd');
     }
     if (!nexrec_ops_unit_allowed($unit)) {
         throw new InvalidArgumentException('unit not allowed');
@@ -303,6 +308,265 @@ function nexrec_ops_units_payload(): array {
         $out[] = $row;
     }
     return $out;
+}
+
+function nexrec_ops_log_window_ok(string $window): bool {
+    return in_array($window, NEXREC_OPS_LOG_WINDOWS, true);
+}
+
+function nexrec_ops_log_unit_allowed(string $unit): bool {
+    if (nexrec_ops_unit_allowed($unit)) {
+        return true;
+    }
+    return $unit === 'nexrec-metrics.service' || $unit === 'apache2.service';
+}
+
+/** @param list<string> $inputIds */
+function nexrec_ops_log_unit_names(array $inputIds): array {
+    $units = nexrec_ops_unit_names($inputIds);
+    $units[] = 'nexrec-metrics.service';
+    $units[] = 'apache2.service';
+    return $units;
+}
+
+function nexrec_ops_log_input_ids(): array {
+    if (!function_exists('nexrec_db')) {
+        return [];
+    }
+    $ids = [];
+    $res = nexrec_db()->query('SELECT id FROM inputs ORDER BY id');
+    if ($res !== false) {
+        while ($row = $res->fetchArray(SQLITE3_ASSOC)) {
+            $ids[] = (string) $row['id'];
+        }
+    }
+    return $ids;
+}
+
+function nexrec_ops_log_download_name(string $host, string $window, string $stamp): string {
+    $safe = preg_replace('/[^A-Za-z0-9._-]/', '', $host) ?? '';
+    if ($safe === '') {
+        $safe = 'recorder';
+    }
+    $label = $window === 'all' ? 'all' : $window . 'h';
+    return 'nexrec-logs-' . $safe . '-' . $stamp . '-' . $label . '.zip';
+}
+
+/**
+ * @param list<array{unit:string,bytes:int,truncated:bool,rc:int,err:string}> $rows
+ */
+function nexrec_ops_log_manifest(string $host, string $window, string $stamp, array $rows): string {
+    $label = $window === 'all' ? 'all retained' : ($window . ' hours');
+    $lines = [
+        'NexCLIP Recorder support logs',
+        'host: ' . $host,
+        'collected_at: ' . $stamp,
+        'window: ' . $label,
+        'cap_bytes: ' . (string) NEXREC_OPS_LOG_CAP,
+        'units:',
+    ];
+    foreach ($rows as $row) {
+        $line = '  ' . $row['unit']
+            . '  bytes=' . (string) $row['bytes']
+            . '  truncated=' . (!empty($row['truncated']) ? 'yes' : 'no')
+            . '  rc=' . (string) $row['rc'];
+        $note = str_replace(["\r", "\n"], ' ', (string) ($row['err'] ?? ''));
+        if ($note !== '') {
+            $line .= '  note=' . $note;
+        }
+        $lines[] = $line;
+    }
+    return implode("\n", $lines) . "\n";
+}
+
+/** @return list<string> */
+function nexrec_ops_journal_since_cmd(string $unit, string $window): array {
+    if (!nexrec_ops_log_window_ok($window)) {
+        throw new InvalidArgumentException('window not allowed');
+    }
+    if (!nexrec_ops_log_unit_allowed($unit)) {
+        throw new InvalidArgumentException('unit not allowed');
+    }
+    $args = [nexrec_ops_wrapper_path(), 'journal-since', $unit, $window];
+    if (nexrec_ops_use_sudo()) {
+        return array_merge(['/usr/bin/sudo', '-n'], $args);
+    }
+    return $args;
+}
+
+/**
+ * @param list<string> $cmd
+ * @return array{bytes:int,truncated:bool,rc:int,err:string}
+ */
+function nexrec_ops_capture_to_file(array $cmd, string $dest, int $cap): array {
+    $desc = [1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $proc = proc_open($cmd, $desc, $pipes, null, null, ['bypass_shell' => true]);
+    if (!is_resource($proc)) {
+        return ['bytes' => 0, 'truncated' => false, 'rc' => 1, 'err' => 'proc_open failed'];
+    }
+    $fh = fopen($dest, 'wb');
+    if ($fh === false) {
+        fclose($pipes[1]);
+        fclose($pipes[2]);
+        proc_close($proc);
+        return ['bytes' => 0, 'truncated' => false, 'rc' => 1, 'err' => 'could not write log'];
+    }
+    $n = 0;
+    $truncated = false;
+    while ($n < $cap) {
+        $chunk = fread($pipes[1], 65536);
+        if (!is_string($chunk) || $chunk === '') {
+            break;
+        }
+        $room = $cap - $n;
+        if (strlen($chunk) > $room) {
+            fwrite($fh, substr($chunk, 0, $room));
+            $n = $cap;
+            $truncated = true;
+            break;
+        }
+        fwrite($fh, $chunk);
+        $n += strlen($chunk);
+    }
+    fclose($fh);
+    fclose($pipes[1]);
+    $err = stream_get_contents($pipes[2]);
+    fclose($pipes[2]);
+    $rc = proc_close($proc);
+    $err = is_string($err) ? trim($err) : '';
+    if (strlen($err) > 4000) {
+        $err = substr($err, 0, 4000);
+    }
+    return ['bytes' => $n, 'truncated' => $truncated, 'rc' => $rc, 'err' => $err];
+}
+
+/** @param list<array{name:string,path:string}> $entries */
+function nexrec_ops_zip_store(string $dest, array $entries): void {
+    $out = fopen($dest, 'wb');
+    if ($out === false) {
+        throw new RuntimeException('could not write zip');
+    }
+    $central = '';
+    $offset = 0;
+    $count = 0;
+    foreach ($entries as $entry) {
+        $name = (string) $entry['name'];
+        $path = (string) $entry['path'];
+        $size = filesize($path);
+        if ($size === false) {
+            fclose($out);
+            throw new RuntimeException('missing log file');
+        }
+        $crc = hexdec((string) hash_file('crc32b', $path));
+        $nameLen = strlen($name);
+        fwrite($out, pack('VvvvvvVVVvv', 0x04034b50, 20, 0, 0, 0, 0, $crc, $size, $size, $nameLen, 0));
+        fwrite($out, $name);
+        $in = fopen($path, 'rb');
+        if ($in === false) {
+            fclose($out);
+            throw new RuntimeException('could not read log file');
+        }
+        stream_copy_to_stream($in, $out);
+        fclose($in);
+        $central .= pack(
+            'VvvvvvvVVVvvvvvVV',
+            0x02014b50,
+            20,
+            20,
+            0,
+            0,
+            0,
+            0,
+            $crc,
+            $size,
+            $size,
+            $nameLen,
+            0,
+            0,
+            0,
+            0,
+            0,
+            $offset
+        );
+        $central .= $name;
+        $offset += 30 + $nameLen + $size;
+        $count++;
+    }
+    $centralLen = strlen($central);
+    fwrite($out, $central);
+    fwrite($out, pack('VvvvvVVv', 0x06054b50, 0, 0, $count, $count, $centralLen, $offset, 0));
+    fclose($out);
+}
+
+function nexrec_ops_rm_tree(string $dir): void {
+    if (!is_dir($dir)) {
+        return;
+    }
+    $names = scandir($dir);
+    if (is_array($names)) {
+        foreach ($names as $name) {
+            if ($name === '.' || $name === '..') {
+                continue;
+            }
+            $path = $dir . DIRECTORY_SEPARATOR . $name;
+            if (is_dir($path)) {
+                nexrec_ops_rm_tree($path);
+            } else {
+                unlink($path);
+            }
+        }
+    }
+    rmdir($dir);
+}
+
+/** @return array{dir:string,path:string,name:string} */
+function nexrec_ops_build_log_bundle(string $window): array {
+    if (!nexrec_ops_log_window_ok($window)) {
+        throw new InvalidArgumentException('window not allowed');
+    }
+    $wrapper = nexrec_ops_wrapper_path();
+    if (!is_file($wrapper)) {
+        throw new RuntimeException('helper missing');
+    }
+    $dir = sys_get_temp_dir() . DIRECTORY_SEPARATOR . 'nexrec-logs-' . bin2hex(random_bytes(4));
+    if (!mkdir($dir, 0700, true) && !is_dir($dir)) {
+        throw new RuntimeException('could not create log folder');
+    }
+    try {
+        $rows = [];
+        $entries = [];
+        foreach (nexrec_ops_log_unit_names(nexrec_ops_log_input_ids()) as $unit) {
+            $path = $dir . DIRECTORY_SEPARATOR . str_replace('@', '_at_', $unit) . '.log';
+            $cap = nexrec_ops_capture_to_file(nexrec_ops_journal_since_cmd($unit, $window), $path, NEXREC_OPS_LOG_CAP);
+            $rows[] = [
+                'unit' => $unit,
+                'bytes' => $cap['bytes'],
+                'truncated' => $cap['truncated'],
+                'rc' => $cap['rc'],
+                'err' => $cap['err'],
+            ];
+            $entries[] = ['name' => 'journal/' . $unit . '.log', 'path' => $path];
+        }
+        $host = gethostname();
+        if (!is_string($host) || $host === '') {
+            $host = 'recorder';
+        }
+        $stamp = gmdate('Ymd\THis\Z');
+        $shown = gmdate('Y-m-d\TH:i:s\Z');
+        $man = $dir . DIRECTORY_SEPARATOR . 'manifest.txt';
+        file_put_contents($man, nexrec_ops_log_manifest($host, $window, $shown, $rows));
+        $entries[] = ['name' => 'manifest.txt', 'path' => $man];
+        $zip = $dir . DIRECTORY_SEPARATOR . 'logs.zip';
+        nexrec_ops_zip_store($zip, $entries);
+        return [
+            'dir' => $dir,
+            'path' => $zip,
+            'name' => nexrec_ops_log_download_name($host, $window, $stamp),
+        ];
+    } catch (Throwable $e) {
+        nexrec_ops_rm_tree($dir);
+        throw $e;
+    }
 }
 
 function nexrec_ops_journal(string $unit, int $n = 80): array {
@@ -588,7 +852,7 @@ $action = $_GET['action'] ?? ($body['action'] ?? 'units');
 $action = is_string($action) ? trim($action) : 'units';
 
 try {
-    if ($action === 'control') {
+    if ($action === 'control' || $action === 'logs') {
         nexrec_require_roles(['admin']);
     } else {
         nexrec_require_roles(['admin', 'operator']);
@@ -626,6 +890,23 @@ try {
             http_response_code(502);
         }
         echo json_encode($result, JSON_UNESCAPED_SLASHES);
+        exit;
+    }
+    if ($action === 'logs') {
+        $window = (string) ($_GET['window'] ?? $body['window'] ?? '');
+        if (!nexrec_ops_log_window_ok($window)) {
+            http_response_code(400);
+            echo json_encode(['ok' => false, 'error' => 'window must be 24, 48, 72, or all']);
+            exit;
+        }
+        set_time_limit(180);
+        $bundle = nexrec_ops_build_log_bundle($window);
+        header('Content-Type: application/zip');
+        header('Content-Disposition: attachment; filename="' . $bundle['name'] . '"');
+        header('Content-Length: ' . (string) filesize($bundle['path']));
+        header('Cache-Control: no-store');
+        readfile($bundle['path']);
+        nexrec_ops_rm_tree($bundle['dir']);
         exit;
     }
     if ($action === 'signals') {

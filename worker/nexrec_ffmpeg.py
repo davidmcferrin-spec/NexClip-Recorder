@@ -87,7 +87,12 @@ def input_args(source: dict[str, Any]) -> list[str]:
         # Unset audio input follows Desktop Video, which is often analog.
         # SDI program audio is the embedded pairs. Channel count stays at
         # FFmpeg's default of 2 (pair 1) until multi-pair metering exists.
-        args += ["-f", "decklink", "-audio_input", "embedded"]
+        # 8-bit UYVY skips VANC. yuv422p10 is what makes FFmpeg read the
+        # CEA-708 CDP (DID 0x61 / SDID 0x01, which carries 608 and 708) and
+        # attach it as A53 closed-caption side data. The record encoder
+        # writes that into each MP4 as H.264 SEI. FFmpeg's reader covers
+        # 720 and 1080 only; 2160 is wider than its VANC window.
+        args += ["-f", "decklink", "-raw_format", "yuv422p10", "-audio_input", "embedded"]
         if fmt:
             args += ["-format_code", fmt]
         args += ["-i", device]
@@ -388,7 +393,12 @@ def _h264_video_args(
     low_latency: bool = False,
 ) -> list[str]:
     if use_nvenc(env):
-        args = ["-c:v", "h264_nvenc", "-preset", "p1" if low_latency else nvenc_preset(preset)]
+        # a53cc stores DeckLink VANC captions (and any A53 side data already
+        # on an IP transcode) in the H.264 SEI of the file.
+        args = [
+            "-c:v", "h264_nvenc", "-a53cc", "1",
+            "-preset", "p1" if low_latency else nvenc_preset(preset),
+        ]
         if low_latency:
             args += ["-tune", "ull", "-rc", "cbr", "-bf", "0"]
         else:
@@ -413,6 +423,7 @@ def _h264_video_args(
         return args
     args = [
         "-c:v", "libx264",
+        "-a53cc", "1",
         "-preset", "ultrafast" if low_latency else preset,
     ]
     if low_latency:
