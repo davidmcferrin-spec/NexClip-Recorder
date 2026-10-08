@@ -222,6 +222,7 @@
   var LANE_COLORS = ["#3ecf8e", "#4c9aff", "#f5a524", "#e35d6a", "#c084fc", "#2dd4bf"];
   var THUMB_MIN_PX = 96;
   var THUMB_SLICE_MS = 5 * 60 * 1000;
+  var THUMB_FRAME_MS = 10 * 1000;
 
   function laneColor(index) {
     var i = index | 0;
@@ -255,6 +256,38 @@
     var pos = 100 * rel0 / (1 - vis);
     if (!isFinite(pos)) pos = 0;
     return { size: (100 / vis) + "% 100%", position: pos + "% 0%" };
+  }
+
+  function thumbCount(piecePx, pieceMs, frames) {
+    var px = Number(piecePx);
+    var ms = Number(pieceMs);
+    var n = Math.max(1, Number(frames) || 1);
+    if (!isFinite(px) || px < 1 || !isFinite(ms) || ms <= 0) return 1;
+    var slots = Math.ceil(ms / THUMB_FRAME_MS);
+    if (slots > n) slots = n;
+    if (slots < 1) slots = 1;
+    var byPx = Math.floor(px / THUMB_MIN_PX);
+    if (byPx < 1) return 1;
+    if (byPx > slots) return slots;
+    return byPx;
+  }
+
+  function thumbFrameIndex(chunkStart, timeMs, frames) {
+    var n = Math.max(1, Number(frames) || 1);
+    var i = Math.floor((Number(timeMs) - Number(chunkStart)) / THUMB_FRAME_MS);
+    if (!isFinite(i) || i < 0) i = 0;
+    if (i > n - 1) i = n - 1;
+    return i;
+  }
+
+  function thumbCellStyle(frames, index) {
+    var n = Math.max(1, Number(frames) || 1);
+    if (n < 2) return null;
+    var i = Math.floor(Number(index));
+    if (!isFinite(i) || i < 0) i = 0;
+    if (i > n - 1) i = n - 1;
+    var pos = (i * 100) / (n - 1);
+    return { size: (n * 100) + "% 100%", position: pos + "% 0%" };
   }
 
   function spansOnRows(startMs, endMs, t0, t1, rows) {
@@ -482,6 +515,9 @@
     laneColor: laneColor,
     thumbRows: thumbRows,
     thumbStripStyle: thumbStripStyle,
+    thumbCount: thumbCount,
+    thumbFrameIndex: thumbFrameIndex,
+    thumbCellStyle: thumbCellStyle,
     spansOnRows: spansOnRows,
     exportDurationMs: exportDurationMs,
     exportRemainingMs: exportRemainingMs,
