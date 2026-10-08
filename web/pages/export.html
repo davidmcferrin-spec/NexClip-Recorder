@@ -561,7 +561,20 @@
     });
   }
 
+  function fitThumbSpan() {
+    var bar = document.getElementById("timeline");
+    var minSpan = NexRecUI.thumbMinSpan(bar ? bar.clientWidth : 0);
+    if (!(minSpan > 0) || t1 - t0 >= minSpan) return;
+    var mid = (t0 + t1) / 2;
+    t0 = mid - minSpan / 2;
+    t1 = mid + minSpan / 2;
+    if (play < t0) play = t0;
+    if (play > t1) play = t1;
+    fillRangeFields();
+  }
+
   function paintChrome() {
+    fitThumbSpan();
     ensureAsrunBand();
     document.getElementById("tlabel").textContent = station(play);
     document.getElementById("scale-start").textContent = station(t0);

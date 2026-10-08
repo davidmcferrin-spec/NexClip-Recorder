@@ -230,6 +230,12 @@
     return LANE_COLORS[i % LANE_COLORS.length];
   }
 
+  function thumbMinSpan(widthPx) {
+    var width = Number(widthPx);
+    if (!isFinite(width) || width < 1) return 0;
+    return width * (THUMB_FRAME_MS / THUMB_MIN_PX);
+  }
+
   function thumbRows(spanMs, widthPx) {
     var span = Number(spanMs);
     var width = Number(widthPx);
@@ -513,6 +519,7 @@
     writePaneSlots: writePaneSlots,
     coverageSpans: coverageSpans,
     laneColor: laneColor,
+    thumbMinSpan: thumbMinSpan,
     thumbRows: thumbRows,
     thumbStripStyle: thumbStripStyle,
     thumbCount: thumbCount,
